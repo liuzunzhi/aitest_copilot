@@ -4,15 +4,19 @@
 后插入的那条会撞 `uk_app_pending`，映射成 409 而不是 500。
 """
 
+from sqlalchemy import update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.common.audit import write_audit
 from app.common.errors import (
     AlreadyProjectMember,
+    ApplicationNotFound,
+    ApplicationNotPending,
     ApplyDisabled,
     DuplicateApplication,
     InvalidDesiredRole,
+    NotApplicationOwner,
     ProjectNotFound,
     ReasonRequired,
 )
@@ -79,4 +83,44 @@ def submit(
     return application
 
 
-__all__ = ["DESIRED_ROLES", "submit"]
+def withdraw(
+    session: Session, *, user: User, project_id: int, application_id: int
+) -> None:
+    """撤回自己的待审批申请（AC-20）。
+
+    先判归属再判状态：别人的申请无论什么状态都只回 403，
+    不通过「状态不对」泄露该申请是否存在。
+    """
+    application = session.get(ProjectApplication, application_id)
+    if application is None or application.project_id != project_id:
+        raise ApplicationNotFound("申请不存在")
+
+    if application.applicant_id != user.id:
+        raise NotApplicationOwner("只能撤回自己的申请")
+
+    updated = session.execute(
+        update(ProjectApplication)
+        .where(
+            ProjectApplication.id == application_id,
+            ProjectApplication.status == "pending",
+        )
+        .values(status="withdrawn")
+    )
+    if updated.rowcount == 0:
+        raise ApplicationNotPending("只能撤回待审批的申请")
+
+    write_audit(
+        session,
+        "project.apply.withdraw",
+        actor_id=user.id,
+        actor_role=user.global_role,
+        project_id=project_id,
+        target_type="project_application",
+        target_id=application_id,
+        before_data={"status": "pending"},
+        after_data={"status": "withdrawn"},
+    )
+    session.commit()
+
+
+__all__ = ["DESIRED_ROLES", "submit", "withdraw"]

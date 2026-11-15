@@ -141,6 +141,21 @@ class ApplyDisabled(AppError):
     code = "APPLY_DISABLED"
 
 
+class ApplicationNotFound(AppError):
+    status_code = 404
+    code = "APPLICATION_NOT_FOUND"
+
+
+class NotApplicationOwner(AppError):
+    status_code = 403
+    code = "NOT_APPLICATION_OWNER"
+
+
+class ApplicationNotPending(AppError):
+    status_code = 409
+    code = "APPLICATION_NOT_PENDING"
+
+
 def install_error_handlers(app: FastAPI) -> None:
     """把 AppError 统一渲染成 {"code","message",**extra}。"""
 
@@ -157,6 +172,8 @@ __all__ = [
     "AccountLocked",
     "AlreadyProjectMember",
     "AppError",
+    "ApplicationNotFound",
+    "ApplicationNotPending",
     "ApplyDisabled",
     "CaptchaInvalid",
     "CaptchaRequired",
@@ -166,6 +183,7 @@ __all__ = [
     "InvalidCredentials",
     "InvalidDesiredRole",
     "InvalidResetCode",
+    "NotApplicationOwner",
     "NotProjectMember",
     "ProjectNotFound",
     "RateLimited",

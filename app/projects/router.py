@@ -77,3 +77,20 @@ def submit_application(
         desired_role=payload.desired_role,
     )
     return ApplicationStatusOut(status=application.status)
+
+
+@router.post(
+    "/{project_id}/applications/{application_id}/withdraw",
+    response_model=ApplicationStatusOut,
+    summary="撤回项目申请",
+)
+def withdraw_application(
+    project_id: int,
+    application_id: int,
+    session: Session = Depends(get_db),
+    user: User = Depends(current_user),
+) -> ApplicationStatusOut:
+    apply_service.withdraw(
+        session, user=user, project_id=project_id, application_id=application_id
+    )
+    return ApplicationStatusOut(status="withdrawn")

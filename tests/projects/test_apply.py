@@ -204,3 +204,113 @@ def test_submit_requires_login(client: TestClient, db: Session):
 
     assert response.status_code == 401
     assert response.json()["code"] == "UNAUTHENTICATED"
+
+
+WITHDRAW = "/api/projects/{project_id}/applications/{application_id}/withdraw"
+
+
+def _application(db: Session, user: User, project: Project) -> ProjectApplication:
+    return db.execute(
+        select(ProjectApplication).where(
+            ProjectApplication.applicant_id == user.id,
+            ProjectApplication.project_id == project.id,
+        )
+    ).scalar_one()
+
+
+def _withdraw(client: TestClient, user: User, project: Project, application_id: int):
+    return client.post(
+        WITHDRAW.format(project_id=project.id, application_id=application_id),
+        headers=_headers(client, user),
+    )
+
+
+def test_ac_20_withdraw_success(client: TestClient, db: Session):
+    user = _user(db)
+    project = _project(db)
+    assert _submit(client, user, project).status_code == 201
+    application = _application(db, user, project)
+
+    response = _withdraw(client, user, project, application.id)
+
+    assert response.status_code == 200
+    assert response.json() == {"status": "withdrawn"}
+    db.refresh(application)
+    assert application.status == "withdrawn"
+
+    audits = db.execute(
+        select(func.count())
+        .select_from(AuditLog)
+        .where(
+            AuditLog.action == "project.apply.withdraw",
+            AuditLog.target_id == str(application.id),
+        )
+    ).scalar_one()
+    assert audits == 1
+
+
+def test_ac_20_withdraw_frees_pending_slot(client: TestClient, db: Session):
+    """撤回归入终态，pending_key 变 NULL，可以再次申请（AC-20）。"""
+    user = _user(db)
+    project = _project(db)
+    assert _submit(client, user, project).status_code == 201
+    application = _application(db, user, project)
+
+    assert _withdraw(client, user, project, application.id).status_code == 200
+    assert _submit(client, user, project).status_code == 201
+
+
+def test_ac_20_withdraw_not_owner(client: TestClient, db: Session):
+    owner = _user(db)
+    other = _user(db)
+    project = _project(db)
+    assert _submit(client, owner, project).status_code == 201
+    application = _application(db, owner, project)
+
+    response = _withdraw(client, other, project, application.id)
+
+    assert response.status_code == 403
+    assert response.json()["code"] == "NOT_APPLICATION_OWNER"
+    db.refresh(application)
+    assert application.status == "pending"
+
+
+def test_withdraw_wrong_project_not_found(client: TestClient, db: Session):
+    """申请不属于该路径下的项目时按不存在处理。"""
+    user = _user(db)
+    project = _project(db)
+    other_project = _project(db)
+    assert _submit(client, user, project).status_code == 201
+    application = _application(db, user, project)
+
+    response = _withdraw(client, user, other_project, application.id)
+
+    assert response.status_code == 404
+    assert response.json()["code"] == "APPLICATION_NOT_FOUND"
+
+
+def test_withdraw_twice(client: TestClient, db: Session):
+    user = _user(db)
+    project = _project(db)
+    assert _submit(client, user, project).status_code == 201
+    application = _application(db, user, project)
+    assert _withdraw(client, user, project, application.id).status_code == 200
+
+    now = _withdraw(client, user, project, application.id)
+
+    assert now.status_code == 409
+    assert now.json()["code"] == "APPLICATION_NOT_PENDING"
+
+
+def test_withdraw_requires_login(client: TestClient, db: Session):
+    user = _user(db)
+    project = _project(db)
+    assert _submit(client, user, project).status_code == 201
+    application = _application(db, user, project)
+
+    response = client.post(
+        WITHDRAW.format(project_id=project.id, application_id=application.id)
+    )
+
+    assert response.status_code == 401
+    assert response.json()["code"] == "UNAUTHENTICATED"
