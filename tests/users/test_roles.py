@@ -199,3 +199,50 @@ def test_ac_45_requires_login(client: TestClient, db: Session):
 
     assert response.status_code == 401
     assert response.json()["code"] == "UNAUTHENTICATED"
+
+
+ADMIN_CALLS = [
+    ("get", "/api/admin/users", None),
+    ("patch", "/api/admin/users/{uid}/status", {"status": "disabled"}),
+    ("patch", "/api/admin/users/{uid}/password", None),
+    ("patch", "/api/admin/users/{uid}/role", {"global_role": "system_admin"}),
+    ("get", "/api/admin/applications", None),
+]
+
+
+@pytest.mark.parametrize("method,url,payload", ADMIN_CALLS)
+def test_ac_48_regular_user_forbidden(
+    client: TestClient, db: Session, method: str, url: str, payload
+):
+    """普通用户跑全部 /api/admin/* 一律 403 FORBIDDEN。"""
+    target = _user(db)
+    actor = _user(db)
+    request = getattr(client, method)
+
+    if payload is None:
+        response = request(url.format(uid=target.id), headers=_headers(client, actor))
+    else:
+        response = request(
+            url.format(uid=target.id),
+            json=payload,
+            headers=_headers(client, actor),
+        )
+
+    assert response.status_code == 403
+    assert response.json()["code"] == "FORBIDDEN"
+
+
+@pytest.mark.parametrize("method,url,payload", ADMIN_CALLS)
+def test_ac_48_requires_login(
+    client: TestClient, db: Session, method: str, url: str, payload
+):
+    target = _user(db)
+    request = getattr(client, method)
+
+    if payload is None:
+        response = request(url.format(uid=target.id))
+    else:
+        response = request(url.format(uid=target.id), json=payload)
+
+    assert response.status_code == 401
+    assert response.json()["code"] == "UNAUTHENTICATED"

@@ -9,11 +9,14 @@ from sqlalchemy.orm import Session
 from app.common import scoped_repo
 from app.common.db import get_db
 from app.common.deps import (
+    SYSTEM_ADMIN,
     current_user,
     require_project_admin_or_system_admin,
     require_project_member_or_system_admin,
     require_system_admin,
 )
+from app.common.errors import NotProjectAdmin
+from app.models.project import ProjectMember
 from app.models.user import User
 from app.projects import apply_service, query_service, service
 
@@ -320,9 +323,18 @@ def list_project_applications(
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=20, ge=1, le=100),
     session: Session = Depends(get_db),
-    _: User = Depends(require_project_admin_or_system_admin),
+    user: User = Depends(require_project_member_or_system_admin),
 ) -> ApplicationPageOut:
-    """项目管理员看本项目全部申请；status 缺省返回全部状态。"""
+    """项目管理员看本项目全部申请；status 缺省返回全部状态。
+
+    非成员报 NOT_PROJECT_MEMBER、member/guest 报 NOT_PROJECT_ADMIN（AC-47）：
+    「不是成员」和「是成员但角色不够」是两种不同处置，前端提示也不同。
+    """
+    if user.global_role != SYSTEM_ADMIN:
+        member = session.get(ProjectMember, (project_id, user.id))
+        if member.role != "project_admin":
+            raise NotProjectAdmin("需要项目管理员权限")
+
     return query_service.list_project_applications(
         session,
         project_id=project_id,
