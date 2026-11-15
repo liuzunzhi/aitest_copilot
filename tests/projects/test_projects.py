@@ -313,3 +313,58 @@ def test_ac_32_system_admin_can_edit_without_membership(client: TestClient, db: 
 
     assert response.status_code == 200
     assert response.json()["description"] == "系统管理员修改"
+
+
+def test_ac_34_archived_project_rejects_edit(client: TestClient, db: Session):
+    """归档项目不可编辑：409 且数据保持不变。"""
+    admin = _user(db, global_role="system_admin")
+    headers = _auth(client, admin)
+    project = _create(client, headers, name="归档前名称")
+    db.get(Project, project["id"]).status = "archived"
+    db.flush()
+
+    response = client.patch(
+        f"{PROJECTS}/{project['id']}", json={"name": "归档后改名"}, headers=headers
+    )
+
+    assert response.status_code == 409
+    assert response.json()["code"] == "PROJECT_ARCHIVED"
+
+    db.expire_all()
+    assert db.get(Project, project["id"]).name == "归档前名称"
+
+
+def test_ac_34_edit_missing_project(client: TestClient, db: Session):
+    admin = _user(db, global_role="system_admin")
+
+    response = client.patch(
+        f"{PROJECTS}/999999999", json={"name": "不存在"}, headers=_auth(client, admin)
+    )
+
+    assert response.status_code == 404
+    assert response.json()["code"] == "PROJECT_NOT_FOUND"
+
+
+def test_ac_34_read_still_works_after_archive(client: TestClient, db: Session):
+    """读接口不受归档影响：我的项目仍能看到，可申请列表不再出现。"""
+    admin = _user(db, global_role="system_admin")
+    headers = _auth(client, admin)
+    project = _create(client, headers, name="归档可读")
+    db.get(Project, project["id"]).status = "archived"
+    db.flush()
+
+    mine = client.get(PROJECTS, headers=headers)
+    available = client.get(f"{PROJECTS}/available", headers=headers)
+
+    assert mine.status_code == 200
+    assert mine.json() == [
+        {
+            "id": project["id"],
+            "name": "归档可读",
+            "description": None,
+            "status": "archived",
+            "role": "project_admin",
+        }
+    ]
+    assert available.status_code == 200
+    assert project["id"] not in [row["id"] for row in available.json()]

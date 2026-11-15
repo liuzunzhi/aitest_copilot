@@ -1,4 +1,4 @@
-"""项目生命周期（T24 归档；T28 创建；T26 补 close 审计）。"""
+"""项目生命周期（T24 归档；T28 创建；T29 编辑；T31 归档只读）。"""
 
 from sqlalchemy import select, update
 from sqlalchemy.orm import Session
@@ -18,6 +18,23 @@ from app.models.user import User
 CLOSED_REASON_ARCHIVED = "project_archived"
 NAME_MAX_LENGTH = 128
 DESCRIPTION_MAX_LENGTH = 500
+
+
+def _locked_active_project(session: Session, project_id: int) -> Project:
+    """锁住项目行并确认可写（AC-34）。
+
+    所有项目内写操作都从这里进入：行锁同时承担两件事——
+    归档判定不被并发绕过，以及成员角色变更串行化（T34 / T35）。
+    读接口不走这里，归档后仍可查看历史。
+    """
+    project = session.execute(
+        select(Project).where(Project.id == project_id).with_for_update()
+    ).scalar_one_or_none()
+    if project is None:
+        raise ProjectNotFound("项目不存在")
+    if project.status != "active":
+        raise ProjectArchived("项目已归档，不可编辑")
+    return project
 
 
 def create_project(
@@ -74,11 +91,7 @@ def update_project(
     只处理请求里显式出现的字段：未传保持不变，显式传 null 清空简介。
     归档项目只读，编辑一律 409。
     """
-    project = session.get(Project, project_id)
-    if project is None:
-        raise ProjectNotFound("项目不存在")
-    if project.status == "archived":
-        raise ProjectArchived("项目已归档，不可编辑")
+    project = _locked_active_project(session, project_id)
 
     before = {"name": project.name, "description": project.description}
 
