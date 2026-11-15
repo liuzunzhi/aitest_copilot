@@ -575,3 +575,116 @@ def test_ac_37_concurrent_downgrade_keeps_one_admin() -> None:
                     "second": f"race-role-second-{suffix}",
                 },
             )
+
+
+def test_ac_38_remove_member(client: TestClient, db: Session) -> None:
+    """移除成员：200、记录删除、审计留角色、目标用户立即失去项目访问。"""
+    project = _project(db)
+    admin = _user(db)
+    _join(db, project, admin, "project_admin")
+    target = _user(db)
+    _join(db, project, target, "member")
+    headers = _auth(client, target)
+
+    response = client.delete(_member_url(project, target), headers=_auth(client, admin))
+
+    assert response.status_code == 200
+    assert response.json() == {"status": "removed"}
+
+    db.expire_all()
+    assert db.get(ProjectMember, (project.id, target.id)) is None
+
+    audit = db.execute(
+        select(AuditLog).where(AuditLog.action == "project.member.remove")
+    ).scalar_one()
+    assert audit.before_data == {"role": "member"}
+    assert audit.target_id == str(target.id)
+
+    assert client.get(_url(project), headers=headers).status_code == 403
+    assert client.get("/api/projects", headers=headers).json() == []
+
+
+def test_ac_38_cannot_remove_self(client: TestClient, db: Session) -> None:
+    project = _project(db)
+    admin = _user(db)
+    _join(db, project, admin, "project_admin")
+
+    response = client.delete(_member_url(project, admin), headers=_auth(client, admin))
+
+    assert response.status_code == 400
+    assert response.json()["code"] == "CANNOT_REMOVE_SELF"
+
+    db.expire_all()
+    assert db.get(ProjectMember, (project.id, admin.id)) is not None
+
+
+def test_ac_38_project_admin_cannot_remove_system_admin(
+    client: TestClient, db: Session
+) -> None:
+    project = _project(db)
+    admin = _user(db)
+    target = _user(db, global_role="system_admin")
+    _join(db, project, admin, "project_admin")
+    _join(db, project, target, "member")
+
+    response = client.delete(_member_url(project, target), headers=_auth(client, admin))
+
+    assert response.status_code == 403
+    assert response.json()["code"] == "FORBIDDEN"
+
+    db.expire_all()
+    assert db.get(ProjectMember, (project.id, target.id)) is not None
+
+
+def test_ac_38_last_project_admin_cannot_be_removed(
+    client: TestClient, db: Session
+) -> None:
+    project = _project(db)
+    sole_admin = _user(db)
+    _join(db, project, sole_admin, "project_admin")
+    system_admin = _user(db, global_role="system_admin")
+
+    response = client.delete(
+        _member_url(project, sole_admin), headers=_auth(client, system_admin)
+    )
+
+    assert response.status_code == 409
+    assert response.json()["code"] == "LAST_PROJECT_ADMIN"
+
+
+def test_ac_38_member_not_found(client: TestClient, db: Session) -> None:
+    project = _project(db)
+    admin = _user(db)
+    _join(db, project, admin, "project_admin")
+    outsider = _user(db)
+
+    response = client.delete(_member_url(project, outsider), headers=_auth(client, admin))
+
+    assert response.status_code == 404
+    assert response.json()["code"] == "MEMBER_NOT_FOUND"
+
+
+def test_ac_38_archived_project_read_only(client: TestClient, db: Session) -> None:
+    project = _project(db, status="archived")
+    admin = _user(db)
+    target = _user(db)
+    _join(db, project, admin, "project_admin")
+    _join(db, project, target, "member")
+
+    response = client.delete(_member_url(project, target), headers=_auth(client, admin))
+
+    assert response.status_code == 409
+    assert response.json()["code"] == "PROJECT_ARCHIVED"
+
+
+def test_ac_38_member_cannot_remove(client: TestClient, db: Session) -> None:
+    project = _project(db)
+    member = _user(db)
+    target = _user(db)
+    _join(db, project, member, "member")
+    _join(db, project, target, "guest")
+
+    response = client.delete(_member_url(project, target), headers=_auth(client, member))
+
+    assert response.status_code == 403
+    assert response.json()["code"] == "NOT_PROJECT_ADMIN"

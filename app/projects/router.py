@@ -234,6 +234,23 @@ def update_member_role(
     )
 
 
+@router.delete(
+    "/{project_id}/members/{user_id}",
+    response_model=ProjectStatusOut,
+    summary="移除项目成员",
+)
+def remove_member(
+    project_id: int,
+    user_id: int,
+    session: Session = Depends(get_db),
+    actor: User = Depends(require_project_admin_or_system_admin),
+) -> ProjectStatusOut:
+    service.remove_member(
+        session, actor=actor, project_id=project_id, user_id=user_id
+    )
+    return ProjectStatusOut(status="removed")
+
+
 @router.post(
     "/{project_id}/archive", response_model=ProjectStatusOut, summary="归档项目"
 )

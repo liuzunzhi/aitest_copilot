@@ -236,6 +236,13 @@ class LastProjectAdmin(AppError):
     code = "LAST_PROJECT_ADMIN"
 
 
+class CannotRemoveSelf(AppError):
+    """AC-38：成员不能通过成员管理移除自己。"""
+
+    status_code = 400
+    code = "CANNOT_REMOVE_SELF"
+
+
 def install_error_handlers(app: FastAPI) -> None:
     """把 AppError 统一渲染成 {"code","message",**extra}。"""
 
@@ -258,6 +265,7 @@ __all__ = [
     "ApplyDisabled",
     "CaptchaInvalid",
     "CaptchaRequired",
+    "CannotRemoveSelf",
     "ContactTaken",
     "DuplicateApplication",
     "Forbidden",

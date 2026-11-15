@@ -7,6 +7,8 @@ from sqlalchemy.orm import Session
 from app.common.audit import write_audit
 from app.common.errors import (
     AlreadyProjectMember,
+    CannotRemoveSelf,
+    Forbidden,
     InvalidProjectDescription,
     InvalidProjectName,
     InvalidRoleAssignment,
@@ -258,6 +260,57 @@ def update_member_role(
     return member, username
 
 
+def remove_member(
+    session: Session, *, actor: User, project_id: int, user_id: int
+) -> None:
+    """移除项目成员（AC-38）。
+
+    移除自己走 400、最后一名项目管理员走 409；项目管理员不能移除系统管理员。
+    成员记录删除后，目标用户下一次项目内请求的成员校验立即失败，不需要重新登录。
+    """
+    _locked_active_project(session, project_id)
+
+    row = session.execute(
+        select(ProjectMember, User.global_role)
+        .join(User, User.id == ProjectMember.user_id)
+        .where(
+            ProjectMember.project_id == project_id,
+            ProjectMember.user_id == user_id,
+        )
+    ).first()
+    if row is None:
+        raise MemberNotFound("该用户不是项目成员")
+    member, target_global_role = row
+
+    if user_id == actor.id:
+        raise CannotRemoveSelf("不能移除自己")
+    if actor.global_role != "system_admin" and target_global_role == "system_admin":
+        raise Forbidden("项目管理员不能移除系统管理员")
+
+    if member.role == "project_admin":
+        roles = session.execute(
+            select(ProjectMember.role)
+            .where(ProjectMember.project_id == project_id)
+            .with_for_update()
+        ).scalars()
+        if sum(1 for value in roles if value == "project_admin") == 1:
+            raise LastProjectAdmin("项目至少保留一名项目管理员")
+
+    before = {"role": member.role}
+    session.delete(member)
+    write_audit(
+        session,
+        "project.member.remove",
+        actor_id=actor.id,
+        actor_role=actor.global_role,
+        project_id=project_id,
+        target_type="project_member",
+        target_id=user_id,
+        before_data=before,
+    )
+    session.commit()
+
+
 def archive_project(
     session: Session, *, project_id: int, actor: User | None = None
 ) -> None:
@@ -328,6 +381,7 @@ __all__ = [
     "archive_project",
     "create_project",
     "list_members",
+    "remove_member",
     "update_member_role",
     "update_project",
 ]
