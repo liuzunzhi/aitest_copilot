@@ -95,6 +95,13 @@ class RateLimited(AppError):
     code = "RATE_LIMITED"
 
 
+class Forbidden(AppError):
+    """AC-27 / AC-23：已登录但没有该资源或该操作的权限。"""
+
+    status_code = 403
+    code = "FORBIDDEN"
+
+
 def install_error_handlers(app: FastAPI) -> None:
     """把 AppError 统一渲染成 {"code","message",**extra}。"""
 
@@ -113,6 +120,7 @@ __all__ = [
     "CaptchaInvalid",
     "CaptchaRequired",
     "ContactTaken",
+    "Forbidden",
     "InvalidCredentials",
     "InvalidResetCode",
     "RateLimited",

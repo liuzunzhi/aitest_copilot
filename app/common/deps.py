@@ -1,11 +1,21 @@
-"""鉴权依赖：从请求中提取令牌。
+"""鉴权与权限依赖。
 
-`current_user` 与角色依赖在 T18 补充，这里先提供登出所需的令牌提取。
+`current_user` 是认证的唯一入口：命中令牌 → 未吊销 → 未过期 → 用户 active。
+前三条在 `tokens.authenticate` 里，这里补第四条。
 """
 
-from fastapi import Header
+from collections.abc import Callable
 
-from app.common.errors import Unauthenticated
+from fastapi import Depends, Header
+from sqlalchemy.orm import Session
+
+from app.auth import tokens
+from app.common.db import get_db
+from app.common.errors import AccountDisabled, Forbidden, Unauthenticated
+from app.models.project import ProjectMember
+from app.models.user import User
+
+SYSTEM_ADMIN = "system_admin"
 
 
 def bearer_token(authorization: str | None = Header(default=None)) -> str:
@@ -23,4 +33,53 @@ def bearer_token(authorization: str | None = Header(default=None)) -> str:
     return credentials.strip()
 
 
-__all__ = ["bearer_token"]
+def current_user(
+    session: Session = Depends(get_db),
+    token: str = Depends(bearer_token),
+) -> User:
+    """四重校验（AC-06）。
+
+    禁用账号返回 403 而不是 401：账号本身有效，禁用是可解释的状态，
+    前端据此提示「账号已被禁用」而不是跳登录页。
+    """
+    user, _ = tokens.authenticate(session, token)
+    if user.status != "active":
+        raise AccountDisabled("账号已被禁用")
+    return user
+
+
+def require_system_admin(user: User = Depends(current_user)) -> User:
+    """系统管理员兜底权限（AC-23）。"""
+    if user.global_role != SYSTEM_ADMIN:
+        raise Forbidden("需要系统管理员权限")
+    return user
+
+
+def require_project_role(*roles: str) -> Callable[..., ProjectMember]:
+    """生成「必须是该项目指定角色」的依赖。
+
+    用法：`member = Depends(require_project_role("project_admin"))`。
+    路径参数名固定为 `project_id`，与接口路径保持一致。
+    非成员与角色不符都是 403，不区分——否则等于告诉对方「这个项目存在」。
+    """
+
+    def dependency(
+        project_id: int,
+        session: Session = Depends(get_db),
+        user: User = Depends(current_user),
+    ) -> ProjectMember:
+        member = session.get(ProjectMember, (project_id, user.id))
+        if member is None or member.role not in roles:
+            raise Forbidden("无权访问该项目")
+        return member
+
+    return dependency
+
+
+__all__ = [
+    "SYSTEM_ADMIN",
+    "bearer_token",
+    "current_user",
+    "require_project_role",
+    "require_system_admin",
+]
