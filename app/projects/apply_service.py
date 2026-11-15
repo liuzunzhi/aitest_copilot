@@ -88,6 +88,7 @@ def submit(
         "project.apply.submit",
         actor_id=user.id,
         actor_role=user.global_role,
+        applicant_id=user.id,
         project_id=project_id,
         target_type="project_application",
         target_id=application.id,
@@ -128,6 +129,7 @@ def withdraw(
         "project.apply.withdraw",
         actor_id=user.id,
         actor_role=user.global_role,
+        applicant_id=user.id,
         project_id=project_id,
         target_type="project_application",
         target_id=application_id,
@@ -175,6 +177,7 @@ def approve(
         "project.apply.approve",
         actor_id=reviewer.id,
         actor_role=reviewer.global_role,
+        applicant_id=application.applicant_id,
         project_id=project_id,
         target_type="project_application",
         target_id=application_id,
@@ -197,7 +200,7 @@ def reject(
     if not reason:
         raise ReasonRequired("驳回理由必填")
 
-    _pending_application(session, project_id, application_id)
+    application = _pending_application(session, project_id, application_id)
     now = utcnow_naive()
     _transition(
         session,
@@ -214,6 +217,7 @@ def reject(
         "project.apply.reject",
         actor_id=reviewer.id,
         actor_role=reviewer.global_role,
+        applicant_id=application.applicant_id,
         project_id=project_id,
         target_type="project_application",
         target_id=application_id,

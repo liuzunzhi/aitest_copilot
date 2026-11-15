@@ -46,6 +46,7 @@ class AuditLog(Base):
     __table_args__ = (
         Index("idx_audit_project", "project_id", "created_at"),
         Index("idx_audit_actor", "actor_id", "created_at"),
+        Index("idx_audit_applicant", "applicant_id", "created_at"),
         Index("idx_audit_action", "action", "created_at"),
         _TABLE_OPTS,
     )
@@ -54,6 +55,7 @@ class AuditLog(Base):
     action: Mapped[str] = mapped_column(String(64), nullable=False)
     actor_id: Mapped[int | None] = mapped_column(BIGINT(unsigned=True), nullable=True)
     actor_role: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    applicant_id: Mapped[int | None] = mapped_column(BIGINT(unsigned=True), nullable=True)
     project_id: Mapped[int | None] = mapped_column(BIGINT(unsigned=True), nullable=True)
     target_type: Mapped[str | None] = mapped_column(String(32), nullable=True)
     target_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
