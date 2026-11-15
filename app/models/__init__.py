@@ -6,6 +6,7 @@ Alembic 通过这里的 `target_metadata` 自动发现表结构。
 
 from app.common.db import Base
 from app.models.application import ProjectApplication
+from app.models.document import BaselineSnapshot, Document, DocumentChapter, DocumentVersion
 from app.models.project import Project, ProjectMember
 from app.models.system import AuditLog, SystemSetting
 from app.models.token import AccessToken
@@ -17,6 +18,10 @@ __all__ = [
     "AccessToken",
     "AuditLog",
     "Base",
+    "BaselineSnapshot",
+    "Document",
+    "DocumentChapter",
+    "DocumentVersion",
     "Project",
     "ProjectApplication",
     "ProjectMember",
