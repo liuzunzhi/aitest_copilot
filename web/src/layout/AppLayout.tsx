@@ -20,18 +20,30 @@ export default function AppLayout() {
 
   const items = [
     { key: '/projects', label: <Link to="/projects">我的项目</Link> },
+    {
+      key: '/projects/available',
+      label: <Link to="/projects/available">可申请项目</Link>,
+    },
     { key: '/applications/mine', label: <Link to="/applications/mine">我的申请</Link> },
   ]
   if (user?.global_role === 'system_admin') {
-    items.push({
-      key: '/admin/applications',
-      label: <Link to="/admin/applications">全局申请</Link>,
-    })
+    items.push(
+      {
+        key: '/admin/applications',
+        label: <Link to="/admin/applications">全局申请</Link>,
+      },
+      {
+        key: '/admin/users',
+        label: <Link to="/admin/users">用户管理</Link>,
+      },
+    )
   }
 
-  const selected = items
-    .map((item) => item.key)
-    .filter((key) => location.pathname.startsWith(key))
+  // `/projects/available` 也以 `/projects` 开头，取匹配最长的那一项。
+  const matched = items.filter((item) => location.pathname.startsWith(item.key))
+  const selected = matched.length
+    ? [matched.reduce((longest, item) => (item.key.length > longest.key.length ? item : longest)).key]
+    : []
 
   async function handleLogout() {
     await logout()

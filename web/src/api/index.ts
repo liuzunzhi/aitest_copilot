@@ -50,6 +50,16 @@ export interface Me {
   must_change_password: boolean
 }
 
+export interface AdminUser {
+  id: number
+  username: string
+  email: string | null
+  phone: string | null
+  status: string
+  global_role: string
+  created_at: string
+}
+
 export async function login(username: string, password: string): Promise<string> {
   const { data } = await client.post<{ access_token: string }>('/auth/login', {
     username,
@@ -167,4 +177,31 @@ export async function rejectApplication(
   reason: string,
 ): Promise<void> {
   await client.post(`/projects/${projectId}/applications/${applicationId}/reject`, { reason })
+}
+
+export async function submitApplication(
+  projectId: number,
+  reason: string,
+  desiredRole: string,
+): Promise<void> {
+  await client.post(`/projects/${projectId}/applications`, {
+    reason,
+    desired_role: desiredRole,
+  })
+}
+
+export async function listUsers(): Promise<AdminUser[]> {
+  const { data } = await client.get<AdminUser[]>('/admin/users')
+  return data
+}
+
+export async function updateUserRole(
+  userId: number,
+  globalRole: string,
+): Promise<{ id: number; username: string; global_role: string }> {
+  const { data } = await client.patch<{ id: number; username: string; global_role: string }>(
+    `/admin/users/${userId}/role`,
+    { global_role: globalRole },
+  )
+  return data
 }
