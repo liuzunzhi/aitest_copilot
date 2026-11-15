@@ -180,6 +180,13 @@ class InvalidStatus(AppError):
     code = "INVALID_STATUS"
 
 
+class PasswordChangeRequired(AppError):
+    """管理员重置密码后，改密前除改密接口外一律拒绝。"""
+
+    status_code = 403
+    code = "PASSWORD_CHANGE_REQUIRED"
+
+
 class NotProjectAdmin(AppError):
     """AC-23：不是该项目管理员（系统管理员除外）。"""
 
@@ -220,6 +227,7 @@ __all__ = [
     "NotApplicationOwner",
     "NotProjectAdmin",
     "NotProjectMember",
+    "PasswordChangeRequired",
     "ProjectNotFound",
     "RateLimited",
     "ReasonRequired",

@@ -30,6 +30,7 @@ LOGIN = "/api/auth/login"
 LOGOUT = "/api/auth/logout"
 SEND_CODE = "/api/auth/password/send-code"
 RESET = "/api/auth/password/reset"
+CHANGE = "/api/auth/password/change"
 SUBMIT = "/api/projects/{project_id}/applications"
 WITHDRAW = "/api/projects/{project_id}/applications/{application_id}/withdraw"
 APPROVE = "/api/projects/{project_id}/applications/{application_id}/approve"
@@ -161,6 +162,17 @@ def _password_reset(client: TestClient, db: Session, monkeypatch) -> None:
     assert response.status_code == 200, response.text
 
 
+def _password_change(client: TestClient, db: Session, monkeypatch) -> None:
+    user = _user(db)
+    headers = _headers(client, user)
+    response = client.post(
+        CHANGE,
+        json={"old_password": PASSWORD, "new_password": "Newpass123"},
+        headers=headers,
+    )
+    assert response.status_code == 200, response.text
+
+
 def _apply_submit(client: TestClient, db: Session, monkeypatch) -> None:
     user = _user(db)
     project = _project(db)
@@ -244,7 +256,6 @@ def _user_password_reset(client: TestClient, db: Session, monkeypatch) -> None:
     victim = _user(db)
     response = client.patch(
         ADMIN_PASSWORD.format(uid=victim.id),
-        json={"new_password": "Newpass123"},
         headers=_headers(client, admin),
     )
     assert response.status_code == 200
@@ -258,6 +269,7 @@ SCENARIOS = {
     "login.unlocked": _login_unlocked,
     "logout": _logout,
     "password.reset": _password_reset,
+    "password.change": _password_change,
     "project.apply.submit": _apply_submit,
     "project.apply.withdraw": _apply_withdraw,
     "project.apply.approve": _apply_approve,

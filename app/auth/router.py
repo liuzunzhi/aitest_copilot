@@ -11,7 +11,8 @@ from sqlalchemy.orm import Session
 
 from app.auth import service
 from app.common.db import get_db
-from app.common.deps import bearer_token
+from app.common.deps import authenticated_user, bearer_token
+from app.models.user import User
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
@@ -39,6 +40,12 @@ class LoginRequest(BaseModel):
 class LoginResponse(BaseModel):
     access_token: str
     expires_at: str
+    must_change_password: bool = False
+
+
+class ChangePasswordRequest(BaseModel):
+    old_password: str
+    new_password: str
 
 
 class SendResetCodeRequest(BaseModel):
@@ -72,6 +79,21 @@ def reset_password(
     return {"status": "ok"}
 
 
+@router.post("/password/change", summary="修改密码（含管理员重置后的首次改密）")
+def change_password(
+    payload: ChangePasswordRequest,
+    session: Session = Depends(get_db),
+    user: User = Depends(authenticated_user),
+) -> dict[str, str]:
+    service.change_password(
+        session,
+        user=user,
+        old_password=payload.old_password,
+        new_password=payload.new_password,
+    )
+    return {"status": "ok"}
+
+
 @router.post("/logout", summary="登出")
 def logout(
     session: Session = Depends(get_db), token: str = Depends(bearer_token)
@@ -97,6 +119,7 @@ def login(
     return LoginResponse(
         access_token=result.access_token,
         expires_at=result.expires_at.replace(tzinfo=timezone.utc).isoformat(),
+        must_change_password=result.must_change_password,
     )
 
 

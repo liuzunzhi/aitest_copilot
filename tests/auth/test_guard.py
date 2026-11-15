@@ -1,4 +1,4 @@
-"""鉴权与权限依赖（T18，AC-06 / AC-03）。
+﻿"""鉴权与权限依赖（T18，AC-06 / AC-03）。
 
 当前还没有业务接口消费这些依赖（T19/T20 才开始），
 所以用例直接调用依赖函数——它们带 `Depends` 默认值，
@@ -17,7 +17,7 @@ from app.common import clock as clock_module
 from app.common.clock import FixedClock
 from app.common.deps import (
     bearer_token,
-    current_user,
+    authenticated_user,
     require_project_role,
     require_system_admin,
 )
@@ -74,14 +74,14 @@ def test_disabled_user_token_rejected(client: TestClient, db: Session):
     db.flush()
 
     with pytest.raises(AccountDisabled):
-        current_user(session=db, token=token)
+        authenticated_user(session=db, token=token)
 
 
 def test_active_user_token_accepted(client: TestClient, db: Session):
     user = _user(db)
     token = _token(client, user.username)
 
-    assert current_user(session=db, token=token).id == user.id
+    assert authenticated_user(session=db, token=token).id == user.id
 
 
 def test_missing_and_malformed_token():
@@ -98,7 +98,7 @@ def test_missing_and_malformed_token():
 
 def test_unknown_token(db: Session):
     with pytest.raises(Unauthenticated):
-        current_user(session=db, token="not-a-real-token")
+        authenticated_user(session=db, token="not-a-real-token")
 
 
 def test_expired_token(client: TestClient, db: Session, monkeypatch):
@@ -111,7 +111,7 @@ def test_expired_token(client: TestClient, db: Session, monkeypatch):
     fixed.advance(timedelta(hours=9))
 
     with pytest.raises(TokenExpired):
-        current_user(session=db, token=token)
+        authenticated_user(session=db, token=token)
 
 
 def test_revoked_token(client: TestClient, db: Session):
@@ -121,7 +121,7 @@ def test_revoked_token(client: TestClient, db: Session):
     client.post(LOGOUT, headers={"Authorization": f"Bearer {token}"})
 
     with pytest.raises(TokenRevoked):
-        current_user(session=db, token=token)
+        authenticated_user(session=db, token=token)
 
 
 def test_require_system_admin(db: Session):

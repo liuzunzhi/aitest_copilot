@@ -5,6 +5,7 @@
 重新启用后旧 token 也随状态恢复，不会出现「禁用时没吊销、启用后不知能否用」的歧义。
 """
 
+import secrets
 from datetime import datetime
 
 from fastapi import APIRouter, Depends
@@ -12,7 +13,6 @@ from pydantic import BaseModel, ConfigDict
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.auth.service import ensure_password_strength
 from app.auth.tokens import revoke_all
 from app.common.audit import write_audit
 from app.common.clock import utcnow_naive
@@ -43,12 +43,22 @@ class StatusRequest(BaseModel):
     status: str | None = None
 
 
-class PasswordResetRequest(BaseModel):
-    new_password: str | None = None
-
-
 class StatusOut(BaseModel):
     status: str
+
+
+class PasswordResetOut(BaseModel):
+    status: str
+    temporary_password: str
+    must_change_password: bool
+
+
+def _generate_temporary_password() -> str:
+    """随机临时密码，直接满足 AC-10（长度、字母、数字）。
+
+    追加 `aA1` 是为了不依赖 token_urlsafe 恰好抽到数字/大小写。
+    """
+    return secrets.token_urlsafe(9) + "aA1"
 
 
 @router.get("", response_model=list[UserOut], summary="用户列表")
@@ -93,22 +103,24 @@ def update_status(
     return StatusOut(status=user.status)
 
 
-@router.patch("/{uid}/password", response_model=StatusOut, summary="管理员重置密码")
+@router.patch("/{uid}/password", response_model=PasswordResetOut, summary="管理员重置密码")
 def reset_password(
     uid: int,
-    payload: PasswordResetRequest,
     session: Session = Depends(get_db),
     admin: User = Depends(require_system_admin),
-) -> StatusOut:
+) -> PasswordResetOut:
+    """随机强密码 + 强制首登修改（spec 待确认 4 的落地）。
+
+    临时密码只在本次响应里出现一次，库里只有 bcrypt 哈希。
+    """
     user = session.get(User, uid)
     if user is None:
         raise UserNotFound("用户不存在")
 
-    # 管理员重置同样走 AC-10 强度校验，避免绕过注册时的底线
-    ensure_password_strength(payload.new_password or "")
-
-    user.password_hash = hash_password(payload.new_password)
+    temporary_password = _generate_temporary_password()
+    user.password_hash = hash_password(temporary_password)
     user.password_changed_at = utcnow_naive()
+    user.must_change_password = True
     revoke_all(session, user.id)
 
     write_audit(
@@ -120,4 +132,8 @@ def reset_password(
         target_id=uid,
     )
     session.commit()
-    return StatusOut(status="ok")
+    return PasswordResetOut(
+        status="ok",
+        temporary_password=temporary_password,
+        must_change_password=True,
+    )

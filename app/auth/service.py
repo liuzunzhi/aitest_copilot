@@ -45,6 +45,7 @@ MYSQL_DUPLICATE_ENTRY = 1062
 class LoginResult:
     access_token: str
     expires_at: datetime  # naive UTC，响应时补时区
+    must_change_password: bool = False
 
 
 def register(
@@ -115,6 +116,7 @@ def login(
             User.password_hash,
             User.status,
             User.locked_until,
+            User.must_change_password,
         ).where(User.username == username)
     ).one_or_none()
 
@@ -180,7 +182,11 @@ def login(
         target_id=row.id,
     )
     session.commit()
-    return LoginResult(access_token=token, expires_at=expires_at)
+    return LoginResult(
+        access_token=token,
+        expires_at=expires_at,
+        must_change_password=bool(row.must_change_password),
+    )
 
 
 def logout(session: Session, token: str) -> None:
@@ -245,6 +251,33 @@ def reset_password(
     )
     session.commit()
     return user
+
+
+def change_password(
+    session: Session, *, user: User, old_password: str, new_password: str
+) -> None:
+    """修改密码：管理员重置后的首次改密，也用于普通用户主动改密。
+
+    不清除其他令牌：当前令牌在改密后继续有效，避免用户刚改完就被踢出。
+    """
+    if not verify_password(old_password, user.password_hash):
+        raise InvalidCredentials("用户名或密码错误")
+
+    ensure_password_strength(new_password)
+
+    user.password_hash = hash_password(new_password)
+    user.password_changed_at = utcnow_naive()
+    user.must_change_password = False
+
+    write_audit(
+        session,
+        "password.change",
+        actor_id=user.id,
+        actor_role=user.global_role,
+        target_type="user",
+        target_id=user.id,
+    )
+    session.commit()
 
 
 def _find_by_contact(session: Session, contact: str) -> User | None:

@@ -2,7 +2,7 @@
 
 from datetime import datetime
 
-from sqlalchemy import CheckConstraint, Index, Integer, String, text
+from sqlalchemy import Boolean, CheckConstraint, Index, Integer, String, text
 from sqlalchemy.dialects.mysql import BIGINT, DATETIME
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -43,6 +43,9 @@ class User(Base):
     )
     failed_login_count: Mapped[int] = mapped_column(
         Integer, nullable=False, server_default=text("0")
+    )
+    must_change_password: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=text("0"), comment="管理员重置后强制改密"
     )
     locked_until: Mapped[datetime | None] = mapped_column(DATETIME(fsp=3), nullable=True)
     password_changed_at: Mapped[datetime] = mapped_column(

@@ -15,6 +15,7 @@ from app.common.errors import (
     AccountDisabled,
     Forbidden,
     NotProjectAdmin,
+    PasswordChangeRequired,
     Unauthenticated,
 )
 from app.models.project import ProjectMember
@@ -39,18 +40,28 @@ def bearer_token(authorization: str | None = Header(default=None)) -> str:
     return credentials.strip()
 
 
-def current_user(
+def authenticated_user(
     session: Session = Depends(get_db),
     token: str = Depends(bearer_token),
 ) -> User:
-    """四重校验（AC-06）。
+    """只校验令牌与账号状态，不检查是否待改密。
 
-    禁用账号返回 403 而不是 401：账号本身有效，禁用是可解释的状态，
-    前端据此提示「账号已被禁用」而不是跳登录页。
+    仅供改密接口使用——待改密用户必须能调用它，否则永远出不来。
     """
     user, _ = tokens.authenticate(session, token)
     if user.status != "active":
         raise AccountDisabled("账号已被禁用")
+    return user
+
+
+def current_user(user: User = Depends(authenticated_user)) -> User:
+    """四重校验（AC-06）+ 待改密拦截。
+
+    禁用账号返回 403 而不是 401：账号本身有效，禁用是可解释的状态，
+    前端据此提示「账号已被禁用」而不是跳登录页。
+    """
+    if user.must_change_password:
+        raise PasswordChangeRequired("请先修改初始密码")
     return user
 
 
@@ -104,6 +115,7 @@ def require_project_role(*roles: str) -> Callable[..., ProjectMember]:
 __all__ = [
     "PROJECT_ADMIN",
     "SYSTEM_ADMIN",
+    "authenticated_user",
     "bearer_token",
     "current_user",
     "require_project_admin_or_system_admin",

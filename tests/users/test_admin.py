@@ -157,25 +157,55 @@ def test_invalid_status(client: TestClient, db: Session, admin: User, status):
 
 
 def test_admin_reset_password(client: TestClient, db: Session, admin: User):
+    """管理员重置：随机临时密码只回显一次 + 强制首登改密。"""
     victim = _user(db)
     old_headers = _headers(client, victim)
 
     response = client.patch(
-        PASSWORD_API.format(uid=victim.id),
-        json={"new_password": "Newpass123"},
-        headers=_headers(client, admin),
+        PASSWORD_API.format(uid=victim.id), headers=_headers(client, admin)
     )
 
     assert response.status_code == 200
-    assert response.json() == {"status": "ok"}
+    body = response.json()
+    temporary_password = body["temporary_password"]
+    assert body["must_change_password"] is True
+    assert len(temporary_password) >= 8
+    assert any(char.isdigit() for char in temporary_password)
+    assert any(char.isalpha() for char in temporary_password)
 
+    # 旧令牌已吊销，旧密码失效
     assert client.get(PROJECTS, headers=old_headers).json()["code"] == "TOKEN_REVOKED"
     assert client.post(
         "/api/auth/login", json={"username": victim.username, "password": PASSWORD}
     ).status_code == 401
-    assert client.post(
-        "/api/auth/login", json={"username": victim.username, "password": "Newpass123"}
-    ).status_code == 200
+
+    # 临时密码可登录，但登录响应要求先改密
+    relogin = client.post(
+        "/api/auth/login",
+        json={"username": victim.username, "password": temporary_password},
+    )
+    assert relogin.status_code == 200
+    assert relogin.json()["must_change_password"] is True
+    temp_headers = {"Authorization": f"Bearer {relogin.json()['access_token']}"}
+
+    blocked = client.get(PROJECTS, headers=temp_headers)
+    assert blocked.status_code == 403
+    assert blocked.json()["code"] == "PASSWORD_CHANGE_REQUIRED"
+
+    changed = client.post(
+        "/api/auth/password/change",
+        json={"old_password": temporary_password, "new_password": "Newpass123"},
+        headers=temp_headers,
+    )
+    assert changed.status_code == 200
+    assert client.get(PROJECTS, headers=temp_headers).status_code == 200
+
+    final = client.post(
+        "/api/auth/login",
+        json={"username": victim.username, "password": "Newpass123"},
+    )
+    assert final.status_code == 200
+    assert final.json()["must_change_password"] is False
 
     assert db.execute(
         select(func.count())
@@ -187,25 +217,9 @@ def test_admin_reset_password(client: TestClient, db: Session, admin: User):
     ).scalar_one() == 1
 
 
-@pytest.mark.parametrize("new_password", ["short1", "12345678", "abcdefgh", None])
-def test_admin_reset_password_weak(client: TestClient, db: Session, admin: User, new_password):
-    victim = _user(db)
-
-    response = client.patch(
-        PASSWORD_API.format(uid=victim.id),
-        json={"new_password": new_password},
-        headers=_headers(client, admin),
-    )
-
-    assert response.status_code == 400
-    assert response.json()["code"] == "WEAK_PASSWORD"
-
-
 def test_admin_reset_unknown_user(client: TestClient, admin: User):
     response = client.patch(
-        PASSWORD_API.format(uid=999_999_999),
-        json={"new_password": "Newpass123"},
-        headers=_headers(client, admin),
+        PASSWORD_API.format(uid=999_999_999), headers=_headers(client, admin)
     )
 
     assert response.status_code == 404
@@ -221,9 +235,7 @@ def test_admin_endpoints_forbidden_for_regular_user(client: TestClient, db: Sess
         STATUS.format(uid=victim.id), json={"status": "disabled"}, headers=headers
     )
     password_response = client.patch(
-        PASSWORD_API.format(uid=victim.id),
-        json={"new_password": "Newpass123"},
-        headers=headers,
+        PASSWORD_API.format(uid=victim.id), headers=headers
     )
 
     assert status_response.status_code == 403
