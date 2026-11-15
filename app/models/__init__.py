@@ -5,7 +5,8 @@ Alembic 通过这里的 `target_metadata` 自动发现表结构。
 """
 
 from app.common.db import Base
+from app.models.user import User
 
 target_metadata = Base.metadata
 
-__all__ = ["Base", "target_metadata"]
+__all__ = ["Base", "User", "target_metadata"]
