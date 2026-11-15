@@ -119,17 +119,20 @@ def update_project(
 def archive_project(
     session: Session, *, project_id: int, actor: User | None = None
 ) -> None:
-    """归档项目，并在同一事务里关闭所有待审批申请（AC-24）。
+    """归档项目，并在同一事务里关闭所有待审批申请（AC-24 / AC-33）。
 
     pending 申请直接进终态 `closed` 而不是 `rejected`：
     它没有被任何人审批过，也不应触发驳回冷却。
 
+    已归档时直接返回，不重复写 `project.archive`（AC-33 幂等）。
     关闭是按申请逐条记审计（AC-25 要按 applicant_id 检索）；
     `actor` 为空表示系统触发（例如定时归档）。
     """
     project = session.get(Project, project_id)
     if project is None:
         raise ProjectNotFound("项目不存在")
+    if project.status == "archived":
+        return
 
     pending = session.execute(
         select(ProjectApplication.id, ProjectApplication.applicant_id).where(
@@ -139,6 +142,17 @@ def archive_project(
     ).all()
 
     project.status = "archived"
+    write_audit(
+        session,
+        "project.archive",
+        actor_id=None if actor is None else actor.id,
+        actor_role=None if actor is None else actor.global_role,
+        project_id=project_id,
+        target_type="project",
+        target_id=project_id,
+        before_data={"status": "active"},
+        after_data={"status": "archived"},
+    )
     session.execute(
         update(ProjectApplication)
         .where(

@@ -42,6 +42,10 @@ class ProjectUpdateRequest(BaseModel):
     description: str | None = None
 
 
+class ProjectStatusOut(BaseModel):
+    status: str
+
+
 class SubmitApplicationRequest(BaseModel):
     """字段都允许缺省，由服务层给「理由必填 / 角色白名单」的稳定错误码。
 
@@ -131,6 +135,19 @@ def update_project(
         description=project.description,
         status=project.status,
     )
+
+
+@router.post(
+    "/{project_id}/archive", response_model=ProjectStatusOut, summary="归档项目"
+)
+def archive_project(
+    project_id: int,
+    session: Session = Depends(get_db),
+    admin: User = Depends(require_system_admin),
+) -> ProjectStatusOut:
+    """平台不提供物理删除，归档即删除入口；重复归档保持幂等。"""
+    service.archive_project(session, project_id=project_id, actor=admin)
+    return ProjectStatusOut(status="archived")
 
 
 @router.post(

@@ -1,15 +1,17 @@
-"""项目归档关闭待审批（T24，AC-24）。"""
+"""项目归档关闭待审批（T24，AC-24）与归档接口（T30，AC-33）。"""
 
 import uuid
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.common.errors import ProjectNotFound
 from app.common.security import hash_password
 from app.models.application import ProjectApplication
 from app.models.project import Project, ProjectMember
+from app.models.system import AuditLog
 from app.models.user import User
 from app.projects.service import CLOSED_REASON_ARCHIVED, archive_project
 
@@ -17,8 +19,12 @@ PASSWORD = "Passw0rd"
 PASSWORD_HASH = hash_password(PASSWORD)
 
 
-def _user(db: Session) -> User:
-    user = User(username=f"arch-{uuid.uuid4().hex[:8]}", password_hash=PASSWORD_HASH)
+def _user(db: Session, *, global_role: str = "user") -> User:
+    user = User(
+        username=f"arch-{uuid.uuid4().hex[:8]}",
+        password_hash=PASSWORD_HASH,
+        global_role=global_role,
+    )
     db.add(user)
     db.flush()
     return user
@@ -120,3 +126,84 @@ def test_archive_is_idempotent(db: Session):
     db.expire_all()
     assert db.get(Project, project.id).status == "archived"
     assert db.get(ProjectApplication, application.id).status == "closed"
+
+
+def test_ac_33_archive_via_api(client: TestClient, db: Session):
+    """系统管理员走接口归档：项目归档、待审批关闭、审计落库。"""
+    admin = _user(db, global_role="system_admin")
+    project = _project(db)
+    pending = _application(db, project, _user(db), "pending")
+
+    response = client.post(
+        f"/api/projects/{project.id}/archive", headers=_headers(client, admin)
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"status": "archived"}
+
+    db.expire_all()
+    assert db.get(Project, project.id).status == "archived"
+    assert db.get(ProjectApplication, pending.id).status == "closed"
+
+    audit = db.execute(
+        select(AuditLog).where(AuditLog.action == "project.archive")
+    ).scalar_one()
+    assert audit.actor_id == admin.id
+    assert audit.project_id == project.id
+    assert audit.before_data == {"status": "active"}
+    assert audit.after_data == {"status": "archived"}
+
+
+def test_ac_33_repeat_archive_does_not_duplicate_audit(client: TestClient, db: Session):
+    """重复归档保持 200，但不重复写 `project.archive`。"""
+    admin = _user(db, global_role="system_admin")
+    project = _project(db)
+    headers = _headers(client, admin)
+
+    first = client.post(f"/api/projects/{project.id}/archive", headers=headers)
+    second = client.post(f"/api/projects/{project.id}/archive", headers=headers)
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert second.json() == {"status": "archived"}
+
+    db.expire_all()
+    audits = (
+        db.execute(select(AuditLog).where(AuditLog.action == "project.archive"))
+        .scalars()
+        .all()
+    )
+    assert len(audits) == 1
+
+
+def test_ac_33_archive_requires_system_admin(client: TestClient, db: Session):
+    """项目管理员也不能归档，项目保持 active。"""
+    project = _project(db)
+    project_admin = _user(db)
+    db.add(
+        ProjectMember(
+            project_id=project.id, user_id=project_admin.id, role="project_admin"
+        )
+    )
+    db.flush()
+
+    response = client.post(
+        f"/api/projects/{project.id}/archive", headers=_headers(client, project_admin)
+    )
+
+    assert response.status_code == 403
+    assert response.json()["code"] == "FORBIDDEN"
+
+    db.expire_all()
+    assert db.get(Project, project.id).status == "active"
+
+
+def test_ac_33_archive_missing_project(client: TestClient, db: Session):
+    admin = _user(db, global_role="system_admin")
+
+    response = client.post(
+        "/api/projects/999999999/archive", headers=_headers(client, admin)
+    )
+
+    assert response.status_code == 404
+    assert response.json()["code"] == "PROJECT_NOT_FOUND"
