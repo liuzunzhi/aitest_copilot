@@ -1,4 +1,6 @@
-"""项目列表、可申请列表与项目管理（T19 / T28）。"""
+"""项目列表、可申请列表与项目管理（T19 / T28 / T32）。"""
+
+from datetime import datetime
 
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
@@ -9,6 +11,7 @@ from app.common.db import get_db
 from app.common.deps import (
     current_user,
     require_project_admin_or_system_admin,
+    require_project_member_or_system_admin,
     require_system_admin,
 )
 from app.models.user import User
@@ -44,6 +47,13 @@ class ProjectUpdateRequest(BaseModel):
 
 class ProjectStatusOut(BaseModel):
     status: str
+
+
+class ProjectMemberOut(BaseModel):
+    user_id: int
+    username: str
+    role: str
+    joined_at: datetime
 
 
 class SubmitApplicationRequest(BaseModel):
@@ -135,6 +145,28 @@ def update_project(
         description=project.description,
         status=project.status,
     )
+
+
+@router.get(
+    "/{project_id}/members",
+    response_model=list[ProjectMemberOut],
+    summary="项目成员列表",
+)
+def list_members(
+    project_id: int,
+    session: Session = Depends(get_db),
+    _: User = Depends(require_project_member_or_system_admin),
+) -> list[ProjectMemberOut]:
+    """成员与系统管理员可读，只暴露用户名，不带邮箱手机号。"""
+    return [
+        ProjectMemberOut(
+            user_id=member.user_id,
+            username=username,
+            role=member.role,
+            joined_at=member.joined_at,
+        )
+        for member, username in service.list_members(session, project_id=project_id)
+    ]
 
 
 @router.post(

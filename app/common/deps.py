@@ -15,6 +15,7 @@ from app.common.errors import (
     AccountDisabled,
     Forbidden,
     NotProjectAdmin,
+    NotProjectMember,
     PasswordChangeRequired,
     Unauthenticated,
 )
@@ -98,6 +99,24 @@ def require_project_admin_or_system_admin(
     return user
 
 
+def require_project_member_or_system_admin(
+    project_id: int,
+    session: Session = Depends(get_db),
+    user: User = Depends(current_user),
+) -> User:
+    """AC-35 / AC-47：项目内读接口对所有成员开放，系统管理员兜底。
+
+    写接口继续用 `require_project_admin_or_system_admin`；
+    这里只要求「是成员」，角色不限。
+    """
+    if user.global_role == SYSTEM_ADMIN:
+        return user
+
+    if session.get(ProjectMember, (project_id, user.id)) is None:
+        raise NotProjectMember("不是该项目成员")
+    return user
+
+
 def require_project_role(*roles: str) -> Callable[..., ProjectMember]:
     """生成「必须是该项目指定角色」的依赖。
 
@@ -127,6 +146,7 @@ __all__ = [
     "bearer_token",
     "current_user",
     "require_project_admin_or_system_admin",
+    "require_project_member_or_system_admin",
     "require_project_role",
     "require_system_admin",
 ]

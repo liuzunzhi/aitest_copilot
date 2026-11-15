@@ -129,6 +129,24 @@ def update_project(
     return project
 
 
+def list_members(
+    session: Session, *, project_id: int
+) -> list[tuple[ProjectMember, str]]:
+    """成员列表（AC-35）。
+
+    归档项目仍可查看历史，所以不经过 `_locked_active_project`。
+    一次 join 取用户名避免逐行查询；`user_id` 兜底保证同一时刻加入时顺序稳定。
+    """
+    return list(
+        session.execute(
+            select(ProjectMember, User.username)
+            .join(User, User.id == ProjectMember.user_id)
+            .where(ProjectMember.project_id == project_id)
+            .order_by(ProjectMember.joined_at, ProjectMember.user_id)
+        ).all()
+    )
+
+
 def archive_project(
     session: Session, *, project_id: int, actor: User | None = None
 ) -> None:
@@ -196,5 +214,6 @@ __all__ = [
     "CLOSED_REASON_ARCHIVED",
     "archive_project",
     "create_project",
+    "list_members",
     "update_project",
 ]
