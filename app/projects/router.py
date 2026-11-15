@@ -37,6 +37,14 @@ class ApplicationStatusOut(BaseModel):
     status: str
 
 
+class ApproveRequest(BaseModel):
+    role: str | None = None
+
+
+class RejectRequest(BaseModel):
+    reason: str | None = None
+
+
 @router.get("", response_model=list[MyProjectOut], summary="我参与的项目")
 def list_projects(
     session: Session = Depends(get_db), user: User = Depends(current_user)
@@ -94,3 +102,47 @@ def withdraw_application(
         session, user=user, project_id=project_id, application_id=application_id
     )
     return ApplicationStatusOut(status="withdrawn")
+
+
+@router.post(
+    "/{project_id}/applications/{application_id}/approve",
+    response_model=ApplicationStatusOut,
+    summary="审批通过",
+)
+def approve_application(
+    project_id: int,
+    application_id: int,
+    payload: ApproveRequest,
+    session: Session = Depends(get_db),
+    user: User = Depends(current_user),
+) -> ApplicationStatusOut:
+    apply_service.approve(
+        session,
+        reviewer=user,
+        project_id=project_id,
+        application_id=application_id,
+        role=payload.role,
+    )
+    return ApplicationStatusOut(status="approved")
+
+
+@router.post(
+    "/{project_id}/applications/{application_id}/reject",
+    response_model=ApplicationStatusOut,
+    summary="驳回申请",
+)
+def reject_application(
+    project_id: int,
+    application_id: int,
+    payload: RejectRequest,
+    session: Session = Depends(get_db),
+    user: User = Depends(current_user),
+) -> ApplicationStatusOut:
+    apply_service.reject(
+        session,
+        reviewer=user,
+        project_id=project_id,
+        application_id=application_id,
+        reason=payload.reason,
+    )
+    return ApplicationStatusOut(status="rejected")

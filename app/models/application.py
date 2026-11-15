@@ -58,6 +58,7 @@ class ProjectApplication(Base):
     reviewer_id: Mapped[int | None] = mapped_column(BIGINT(unsigned=True), nullable=True)
     reviewed_at: Mapped[datetime | None] = mapped_column(DATETIME(fsp=3), nullable=True)
     reject_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    rejected_at: Mapped[datetime | None] = mapped_column(DATETIME(fsp=3), nullable=True)
     closed_reason: Mapped[str | None] = mapped_column(String(32), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DATETIME(fsp=3), nullable=False, server_default=text("CURRENT_TIMESTAMP(3)")

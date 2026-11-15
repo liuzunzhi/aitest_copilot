@@ -156,6 +156,20 @@ class ApplicationNotPending(AppError):
     code = "APPLICATION_NOT_PENDING"
 
 
+class InvalidRoleAssignment(AppError):
+    """AC-21：审批通过时授予的角色只允许 project_admin / member / guest。"""
+
+    status_code = 400
+    code = "INVALID_ROLE_ASSIGNMENT"
+
+
+class ApplyCooldown(AppError):
+    """AC-22：驳回后的冷却期内再次申请，extra 带 next_available_at。"""
+
+    status_code = 429
+    code = "APPLY_COOLDOWN"
+
+
 def install_error_handlers(app: FastAPI) -> None:
     """把 AppError 统一渲染成 {"code","message",**extra}。"""
 
@@ -174,6 +188,7 @@ __all__ = [
     "AppError",
     "ApplicationNotFound",
     "ApplicationNotPending",
+    "ApplyCooldown",
     "ApplyDisabled",
     "CaptchaInvalid",
     "CaptchaRequired",
@@ -183,6 +198,7 @@ __all__ = [
     "InvalidCredentials",
     "InvalidDesiredRole",
     "InvalidResetCode",
+    "InvalidRoleAssignment",
     "NotApplicationOwner",
     "NotProjectMember",
     "ProjectNotFound",
