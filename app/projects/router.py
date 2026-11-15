@@ -56,6 +56,13 @@ class ProjectMemberOut(BaseModel):
     joined_at: datetime
 
 
+class MemberAddRequest(BaseModel):
+    """角色交给服务层校验，保证非法角色返回 400 而不是 422。"""
+
+    user_id: int
+    role: str | None = None
+
+
 class SubmitApplicationRequest(BaseModel):
     """字段都允许缺省，由服务层给「理由必填 / 角色白名单」的稳定错误码。
 
@@ -167,6 +174,33 @@ def list_members(
         )
         for member, username in service.list_members(session, project_id=project_id)
     ]
+
+
+@router.post(
+    "/{project_id}/members",
+    status_code=201,
+    response_model=ProjectMemberOut,
+    summary="添加项目成员",
+)
+def add_member(
+    project_id: int,
+    payload: MemberAddRequest,
+    session: Session = Depends(get_db),
+    actor: User = Depends(require_project_admin_or_system_admin),
+) -> ProjectMemberOut:
+    member, username = service.add_member(
+        session,
+        actor=actor,
+        project_id=project_id,
+        user_id=payload.user_id,
+        role=payload.role,
+    )
+    return ProjectMemberOut(
+        user_id=member.user_id,
+        username=username,
+        role=member.role,
+        joined_at=member.joined_at,
+    )
 
 
 @router.post(

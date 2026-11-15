@@ -1,15 +1,19 @@
 """项目生命周期（T24 归档；T28 创建；T29 编辑；T31 归档只读）。"""
 
 from sqlalchemy import select, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.common.audit import write_audit
 from app.common.errors import (
+    AlreadyProjectMember,
     InvalidProjectDescription,
     InvalidProjectName,
+    InvalidRoleAssignment,
     ProjectArchived,
     ProjectNameRequired,
     ProjectNotFound,
+    UserNotFound,
 )
 from app.models.application import ProjectApplication
 from app.models.project import Project, ProjectMember
@@ -18,6 +22,7 @@ from app.models.user import User
 CLOSED_REASON_ARCHIVED = "project_archived"
 NAME_MAX_LENGTH = 128
 DESCRIPTION_MAX_LENGTH = 500
+MEMBER_ROLES = ("project_admin", "member", "guest")
 
 
 def _locked_active_project(session: Session, project_id: int) -> Project:
@@ -147,6 +152,52 @@ def list_members(
     )
 
 
+def add_member(
+    session: Session,
+    *,
+    actor: User,
+    project_id: int,
+    user_id: int,
+    role: str | None,
+) -> tuple[ProjectMember, str]:
+    """添加项目成员（AC-36）。
+
+    重复添加不先查后插：`project_members` 是复合主键，
+    并发两个请求都通过预检查时，后插入的撞 1062，映射成 409。
+    """
+    _locked_active_project(session, project_id)
+
+    if role not in MEMBER_ROLES:
+        raise InvalidRoleAssignment("角色仅支持 project_admin / member / guest")
+
+    user = session.get(User, user_id)
+    if user is None:
+        raise UserNotFound("用户不存在")
+
+    member = ProjectMember(project_id=project_id, user_id=user_id, role=role)
+    session.add(member)
+    try:
+        session.flush()
+    except IntegrityError as exc:
+        session.rollback()
+        if "PRIMARY" in str(exc.orig) or exc.orig.args[0] == 1062:
+            raise AlreadyProjectMember("该用户已是项目成员") from exc
+        raise
+
+    write_audit(
+        session,
+        "project.member.add",
+        actor_id=actor.id,
+        actor_role=actor.global_role,
+        project_id=project_id,
+        target_type="project_member",
+        target_id=user_id,
+        after_data={"role": role},
+    )
+    session.commit()
+    return member, user.username
+
+
 def archive_project(
     session: Session, *, project_id: int, actor: User | None = None
 ) -> None:
@@ -212,6 +263,8 @@ def archive_project(
 
 __all__ = [
     "CLOSED_REASON_ARCHIVED",
+    "MEMBER_ROLES",
+    "add_member",
     "archive_project",
     "create_project",
     "list_members",

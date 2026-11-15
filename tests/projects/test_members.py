@@ -1,15 +1,21 @@
-"""项目成员列表（T32，AC-35）。"""
+"""项目成员列表（T32，AC-35）与添加成员（T33，AC-36）。"""
 
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import func, select, text
 from sqlalchemy.orm import Session
 
+from app.common.db import session_scope
+from app.common.errors import AlreadyProjectMember
 from app.common.security import hash_password
 from app.models.project import Project, ProjectMember
+from app.models.system import AuditLog
 from app.models.user import User
+from app.projects import service
 
 PASSWORD = "Passw0rd"
 PASSWORD_HASH = hash_password(PASSWORD)
@@ -156,3 +162,200 @@ def test_ac_35_requires_login(client: TestClient, db: Session) -> None:
 
     assert response.status_code == 401
     assert response.json()["code"] == "UNAUTHENTICATED"
+
+
+def _add(
+    client: TestClient,
+    project: Project,
+    target: User,
+    *,
+    role: str | None = "member",
+    headers: dict[str, str],
+):
+    payload: dict = {"user_id": target.id}
+    if role is not None:
+        payload["role"] = role
+    return client.post(_url(project), json=payload, headers=headers)
+
+
+def test_ac_36_add_member(client: TestClient, db: Session) -> None:
+    """项目管理员添加成员：201、落成员表、写 project.member.add 审计。"""
+    project = _project(db)
+    admin = _user(db)
+    _join(db, project, admin, "project_admin")
+    target = _user(db)
+
+    response = _add(client, project, target, headers=_auth(client, admin))
+
+    assert response.status_code == 201
+    body = response.json()
+    assert (body["user_id"], body["username"], body["role"]) == (
+        target.id,
+        target.username,
+        "member",
+    )
+    assert isinstance(body["joined_at"], str)
+
+    db.expire_all()
+    assert db.get(ProjectMember, (project.id, target.id)).role == "member"
+
+    audit = db.execute(
+        select(AuditLog).where(AuditLog.action == "project.member.add")
+    ).scalar_one()
+    assert audit.actor_id == admin.id
+    assert audit.target_type == "project_member"
+    assert audit.target_id == str(target.id)
+    assert audit.after_data == {"role": "member"}
+
+
+def test_ac_36_system_admin_can_add_without_membership(
+    client: TestClient, db: Session
+) -> None:
+    project = _project(db)
+    target = _user(db)
+    admin = _user(db, global_role="system_admin")
+
+    response = _add(client, project, target, headers=_auth(client, admin))
+
+    assert response.status_code == 201
+
+
+@pytest.mark.parametrize("role", ["system_admin", "owner", None])
+def test_ac_36_invalid_role(client: TestClient, db: Session, role) -> None:
+    project = _project(db)
+    admin = _user(db)
+    _join(db, project, admin, "project_admin")
+    target = _user(db)
+
+    response = _add(client, project, target, role=role, headers=_auth(client, admin))
+
+    assert response.status_code == 400
+    assert response.json()["code"] == "INVALID_ROLE_ASSIGNMENT"
+
+
+def test_ac_36_user_not_found(client: TestClient, db: Session) -> None:
+    project = _project(db)
+    admin = _user(db)
+    _join(db, project, admin, "project_admin")
+
+    response = client.post(
+        _url(project), json={"user_id": 999999999, "role": "member"}, headers=_auth(client, admin)
+    )
+
+    assert response.status_code == 404
+    assert response.json()["code"] == "USER_NOT_FOUND"
+
+
+def test_ac_36_duplicate_member(client: TestClient, db: Session) -> None:
+    project = _project(db)
+    admin = _user(db)
+    _join(db, project, admin, "project_admin")
+    target = _user(db)
+    _join(db, project, target, "guest")
+
+    response = _add(client, project, target, headers=_auth(client, admin))
+
+    assert response.status_code == 409
+    assert response.json()["code"] == "ALREADY_PROJECT_MEMBER"
+
+
+def test_ac_36_archived_project_read_only(client: TestClient, db: Session) -> None:
+    project = _project(db, status="archived")
+    admin = _user(db)
+    _join(db, project, admin, "project_admin")
+    target = _user(db)
+
+    response = _add(client, project, target, headers=_auth(client, admin))
+
+    assert response.status_code == 409
+    assert response.json()["code"] == "PROJECT_ARCHIVED"
+
+
+def test_ac_36_member_cannot_add(client: TestClient, db: Session) -> None:
+    project = _project(db)
+    member = _user(db)
+    _join(db, project, member, "member")
+    target = _user(db)
+
+    response = _add(client, project, target, headers=_auth(client, member))
+
+    assert response.status_code == 403
+    assert response.json()["code"] == "NOT_PROJECT_ADMIN"
+
+
+def test_ac_36_concurrent_add_only_one_wins() -> None:
+    """并发重复添加：一条成功、一条 409，成员与审计都只落一条。
+
+    这条用例必须真实提交，因此自己建数据、结束时清理。
+    """
+    suffix = uuid.uuid4().hex[:8]
+    with session_scope() as session:
+        admin = User(username=f"race-add-admin-{suffix}", password_hash=PASSWORD_HASH)
+        target = User(username=f"race-add-target-{suffix}", password_hash=PASSWORD_HASH)
+        project = Project(name=f"race-add-{suffix}")
+        session.add_all([admin, target, project])
+        session.flush()
+        session.add(
+            ProjectMember(
+                project_id=project.id, user_id=admin.id, role="project_admin"
+            )
+        )
+        session.flush()
+        project_id, admin_id, target_id = project.id, admin.id, target.id
+
+    def attempt(_: int) -> str:
+        with session_scope() as session:
+            admin_obj = session.get(User, admin_id)
+            try:
+                service.add_member(
+                    session,
+                    actor=admin_obj,
+                    project_id=project_id,
+                    user_id=target_id,
+                    role="member",
+                )
+            except AlreadyProjectMember:
+                return "conflict"
+            return "added"
+
+    try:
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            assert sorted(pool.map(attempt, range(2))) == ["added", "conflict"]
+
+        with session_scope() as session:
+            members = session.execute(
+                select(func.count())
+                .select_from(ProjectMember)
+                .where(
+                    ProjectMember.project_id == project_id,
+                    ProjectMember.user_id == target_id,
+                )
+            ).scalar_one()
+            audits = session.execute(
+                select(func.count())
+                .select_from(AuditLog)
+                .where(
+                    AuditLog.action == "project.member.add",
+                    AuditLog.project_id == project_id,
+                )
+            ).scalar_one()
+            assert (members, audits) == (1, 1)
+    finally:
+        with session_scope() as session:
+            session.execute(
+                text("DELETE FROM audit_logs WHERE project_id = :pid"), {"pid": project_id}
+            )
+            session.execute(
+                text("DELETE FROM project_members WHERE project_id = :pid"),
+                {"pid": project_id},
+            )
+            session.execute(
+                text("DELETE FROM projects WHERE id = :pid"), {"pid": project_id}
+            )
+            session.execute(
+                text("DELETE FROM users WHERE username IN (:admin, :target)"),
+                {
+                    "admin": f"race-add-admin-{suffix}",
+                    "target": f"race-add-target-{suffix}",
+                },
+            )
