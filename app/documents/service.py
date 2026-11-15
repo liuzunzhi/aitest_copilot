@@ -18,6 +18,7 @@ from app.common.errors import (
     DocumentNameTaken,
     DocumentNotFound,
     DocumentTooLarge,
+    DocumentVersionNotFound,
     EmptyDocument,
     ProjectArchived,
     ProjectNotFound,
@@ -136,6 +137,115 @@ def upload_document(
     return document, version, int(version_count or 0)
 
 
+def list_documents(session: Session, project_id: int) -> list[dict]:
+    """文档列表：一次取全量版本再在内存分组，避免按文档逐个查版本（N+1）。"""
+    documents = session.scalars(
+        select(Document).where(Document.project_id == project_id).order_by(Document.id)
+    ).all()
+    versions = session.scalars(
+        select(DocumentVersion)
+        .join(Document, Document.id == DocumentVersion.document_id)
+        .where(Document.project_id == project_id)
+        .order_by(DocumentVersion.document_id, DocumentVersion.version_no.desc())
+    ).all()
+
+    grouped: dict[int, list[DocumentVersion]] = {}
+    for version in versions:
+        grouped.setdefault(version.document_id, []).append(version)
+
+    items: list[dict] = []
+    for document in documents:
+        doc_versions = grouped.get(document.id, [])
+        items.append(
+            {
+                "id": document.id,
+                "name": document.name,
+                "created_at": document.created_at,
+                "version_count": len(doc_versions),
+                "pending_count": sum(1 for v in doc_versions if v.status == "pending"),
+                "active_version": next(
+                    (v for v in doc_versions if v.status == "active"), None
+                ),
+            }
+        )
+    return items
+
+
+def list_versions(
+    session: Session, *, project_id: int, document_id: int
+) -> list[DocumentVersion]:
+    """版本列表，新版本在前。"""
+    _load_document(session, project_id=project_id, document_id=document_id)
+    return list(
+        session.scalars(
+            select(DocumentVersion)
+            .where(DocumentVersion.document_id == document_id)
+            .order_by(DocumentVersion.version_no.desc())
+        ).all()
+    )
+
+
+def list_chapters(
+    session: Session, *, project_id: int, document_id: int, version_id: int
+) -> list[dict]:
+    """章节树。按 `seq` 升序取回，再按 `parent_id` 在内存组树。"""
+    _load_document(session, project_id=project_id, document_id=document_id)
+    _load_version(session, document_id=document_id, version_id=version_id)
+
+    rows = session.scalars(
+        select(DocumentChapter)
+        .where(DocumentChapter.version_id == version_id)
+        .order_by(DocumentChapter.seq)
+    ).all()
+    nodes = {
+        row.id: {
+            "id": row.id,
+            "seq": row.seq,
+            "level": row.level,
+            "title": row.title,
+            "content": row.content,
+            "char_count": row.char_count,
+            "children": [],
+        }
+        for row in rows
+    }
+    roots: list[dict] = []
+    for row in rows:
+        node = nodes[row.id]
+        if row.parent_id is None:
+            roots.append(node)
+        else:
+            nodes[row.parent_id]["children"].append(node)
+    return roots
+
+
+def _load_document(
+    session: Session, *, project_id: int, document_id: int
+) -> Document:
+    document = session.scalar(
+        select(Document).where(
+            Document.id == document_id, Document.project_id == project_id
+        )
+    )
+    if document is None:
+        raise DocumentNotFound("文档不存在")
+    return document
+
+
+def _load_version(
+    session: Session, *, document_id: int, version_id: int
+) -> DocumentVersion:
+    version = session.scalar(
+        select(DocumentVersion).where(
+            DocumentVersion.id == version_id,
+            DocumentVersion.document_id == document_id,
+        )
+    )
+    if version is None:
+        raise DocumentVersionNotFound("版本不存在")
+    return version
+
+
 def _count(nodes: list[ChapterNode]) -> int:
     return sum(1 + _count(node.children) for node in nodes)
 
@@ -181,4 +291,4 @@ def _insert_chapters(
         )
 
 
-__all__ = ["upload_document"]
+__all__ = ["list_chapters", "list_documents", "list_versions", "upload_document"]

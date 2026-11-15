@@ -2,7 +2,7 @@
 
 from datetime import datetime
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 
 class DocumentBrief(BaseModel):
@@ -12,6 +12,8 @@ class DocumentBrief(BaseModel):
 
 
 class VersionOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     id: int
     version_no: int
     status: str
@@ -19,6 +21,28 @@ class VersionOut(BaseModel):
     file_name: str
     file_size: int
     created_at: datetime
+
+
+class DocumentListItem(BaseModel):
+    id: int
+    name: str
+    created_at: datetime
+    version_count: int
+    pending_count: int
+    active_version: VersionOut | None
+
+
+class ChapterOut(BaseModel):
+    id: int
+    seq: int
+    level: int
+    title: str
+    content: str
+    char_count: int
+    children: list["ChapterOut"] = []
+
+
+ChapterOut.model_rebuild()
 
 
 class UploadResponse(BaseModel):

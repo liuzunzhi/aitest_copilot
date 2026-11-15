@@ -5,10 +5,21 @@ from sqlalchemy.orm import Session
 
 from app.common.config import get_settings
 from app.common.db import get_db
-from app.common.deps import SYSTEM_ADMIN, current_user
+from app.common.deps import (
+    SYSTEM_ADMIN,
+    current_user,
+    require_project_member_or_system_admin,
+)
 from app.common.errors import Forbidden, NotProjectMember
 from app.documents import service
-from app.documents.schemas import DocumentBrief, UploadResponse, VersionOut
+from app.documents.schemas import (
+    ChapterOut,
+    DocumentBrief,
+    DocumentListItem,
+    UploadResponse,
+    VersionOut,
+)
+from app.models.document import DocumentVersion
 from app.models.project import ProjectMember
 from app.models.user import User
 
@@ -64,13 +75,75 @@ def upload_document(
         document=DocumentBrief(
             id=document.id, name=document.name, version_count=version_count
         ),
-        version=VersionOut(
-            id=version.id,
-            version_no=version.version_no,
-            status=version.status,
-            chapter_count=version.chapter_count,
-            file_name=version.file_name,
-            file_size=version.file_size,
-            created_at=version.created_at,
-        ),
+        version=_version_out(version),
+    )
+
+
+@router.get("/{project_id}/documents", response_model=list[DocumentListItem])
+def list_documents(
+    project_id: int,
+    session: Session = Depends(get_db),
+    user: User = Depends(require_project_member_or_system_admin),
+) -> list[DocumentListItem]:
+    """项目成员（含访客）可读；非成员 403。响应刻意不含 `file_path`。"""
+    return [
+        DocumentListItem(
+            id=item["id"],
+            name=item["name"],
+            created_at=item["created_at"],
+            version_count=item["version_count"],
+            pending_count=item["pending_count"],
+            active_version=(
+                _version_out(item["active_version"]) if item["active_version"] else None
+            ),
+        )
+        for item in service.list_documents(session, project_id)
+    ]
+
+
+@router.get(
+    "/{project_id}/documents/{document_id}/versions",
+    response_model=list[VersionOut],
+)
+def list_versions(
+    project_id: int,
+    document_id: int,
+    session: Session = Depends(get_db),
+    user: User = Depends(require_project_member_or_system_admin),
+) -> list[VersionOut]:
+    versions = service.list_versions(
+        session, project_id=project_id, document_id=document_id
+    )
+    return [_version_out(version) for version in versions]
+
+
+@router.get(
+    "/{project_id}/documents/{document_id}/versions/{version_id}/chapters",
+    response_model=list[ChapterOut],
+)
+def list_chapters(
+    project_id: int,
+    document_id: int,
+    version_id: int,
+    session: Session = Depends(get_db),
+    user: User = Depends(require_project_member_or_system_admin),
+) -> list[ChapterOut]:
+    """章节树。扁平列表在服务层按 `parent_id` 组好，这里只做响应校验。"""
+    return service.list_chapters(
+        session,
+        project_id=project_id,
+        document_id=document_id,
+        version_id=version_id,
+    )
+
+
+def _version_out(version: DocumentVersion) -> VersionOut:
+    return VersionOut(
+        id=version.id,
+        version_no=version.version_no,
+        status=version.status,
+        chapter_count=version.chapter_count,
+        file_name=version.file_name,
+        file_size=version.file_size,
+        created_at=version.created_at,
     )
