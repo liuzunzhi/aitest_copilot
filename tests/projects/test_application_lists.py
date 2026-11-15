@@ -4,11 +4,13 @@ import uuid
 from datetime import datetime
 
 from fastapi.testclient import TestClient
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.common.security import hash_password
 from app.models.application import ProjectApplication
 from app.models.project import Project, ProjectMember
+from app.models.system import AuditLog
 from app.models.user import User
 
 PASSWORD = "Passw0rd"
@@ -424,3 +426,72 @@ def test_ac_43_requires_login(client: TestClient, db: Session) -> None:
 
     assert response.status_code == 401
     assert response.json()["code"] == "UNAUTHENTICATED"
+
+
+def test_ac_44_system_admin_approves_from_global_list(
+    client: TestClient, db: Session
+) -> None:
+    """全局列表 → 审批 → 状态回写全局列表；系统管理员不需要是项目成员。"""
+    admin = _user(db, global_role="system_admin")
+    applicant = _user(db)
+    project = _project(db)
+    application = _application(db, project, applicant)
+    headers = _auth(client, admin)
+
+    pending = client.get(
+        "/api/admin/applications", params={"status": "pending"}, headers=headers
+    )
+    assert [item["id"] for item in pending.json()["items"]] == [application.id]
+
+    response = client.post(
+        f"/api/projects/{project.id}/applications/{application.id}/approve",
+        json={"role": "member"},
+        headers=headers,
+    )
+    assert response.status_code == 200
+
+    approved = client.get(
+        "/api/admin/applications",
+        params={"project_id": project.id, "status": "approved"},
+        headers=headers,
+    )
+    assert approved.status_code == 200
+    item = approved.json()["items"][0]
+    assert item["id"] == application.id
+    assert item["reviewer"]["username"] == admin.username
+    assert item["reviewed_at"] is not None
+
+    db.expire_all()
+    assert db.get(ProjectMember, (project.id, applicant.id)).role == "member"
+    audit = db.execute(
+        select(AuditLog).where(AuditLog.action == "project.apply.approve")
+    ).scalar_one()
+    assert audit.actor_role == "system_admin"
+    assert audit.actor_id == admin.id
+
+
+def test_ac_44_system_admin_rejects_from_global_list(
+    client: TestClient, db: Session
+) -> None:
+    admin = _user(db, global_role="system_admin")
+    project = _project(db)
+    application = _application(db, project, _user(db))
+    headers = _auth(client, admin)
+
+    response = client.post(
+        f"/api/projects/{project.id}/applications/{application.id}/reject",
+        json={"reason": "不符合项目方向"},
+        headers=headers,
+    )
+    assert response.status_code == 200
+
+    rejected = client.get(
+        "/api/admin/applications", params={"status": "rejected"}, headers=headers
+    )
+    item = rejected.json()["items"][0]
+    assert item["id"] == application.id
+    assert item["reject_reason"] == "不符合项目方向"
+    assert item["reviewer"]["username"] == admin.username
+
+    db.expire_all()
+    assert db.get(ProjectMember, (project.id, application.applicant_id)) is None
