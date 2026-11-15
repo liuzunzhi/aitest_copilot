@@ -39,10 +39,27 @@ client.interceptors.response.use(
 )
 
 /** 后端错误体固定为 `{code, message}`，这里统一取人话。 */
+const CODE_TEXT: Record<string, string> = {
+  PROJECT_ARCHIVED: '项目已归档，不能再修改',
+  NOT_PROJECT_MEMBER: '你不是该项目成员',
+  NOT_PROJECT_ADMIN: '只有项目管理员可以操作',
+  LAST_PROJECT_ADMIN: '项目至少保留一名项目管理员',
+  CANNOT_REMOVE_SELF: '不能移除自己',
+  INVALID_APPLICATION_STATUS: '该申请已处理，不能重复操作',
+  INVALID_GLOBAL_ROLE: '角色不合法',
+  FORBIDDEN: '没有权限执行该操作',
+}
+
 export function errorMessage(error: unknown): string {
   if (axios.isAxiosError(error)) {
-    const data = error.response?.data as { message?: string } | undefined
-    return data?.message ?? error.message
+    const data = error.response?.data as { code?: string; message?: string } | undefined
+    if (data?.code && CODE_TEXT[data.code]) {
+      return CODE_TEXT[data.code]
+    }
+    if (data?.message && data.message !== data.code) {
+      return data.message
+    }
+    return '请求失败'
   }
   return error instanceof Error ? error.message : '请求失败'
 }

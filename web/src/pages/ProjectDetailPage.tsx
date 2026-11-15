@@ -286,6 +286,7 @@ export default function ProjectDetailPage() {
         onOk={submitAddMember}
         okText="添加"
         cancelText="取消"
+        okButtonProps={{ 'data-testid': 'modal-ok' }}
         destroyOnHidden
       >
         <Form form={form} layout="vertical" initialValues={{ role: 'member' }} requiredMark={false}>

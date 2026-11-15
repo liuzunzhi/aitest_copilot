@@ -213,6 +213,7 @@ export default function ProjectListPage() {
         confirmLoading={saving}
         okText="保存"
         cancelText="取消"
+        okButtonProps={{ 'data-testid': 'modal-ok' }}
         destroyOnHidden
       >
         <Form<ProjectForm> form={form} layout="vertical" requiredMark={false}>

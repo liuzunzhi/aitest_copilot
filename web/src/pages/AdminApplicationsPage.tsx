@@ -73,7 +73,7 @@ export default function AdminApplicationsPage() {
   async function handleApprove(application: Application) {
     if (!application.project) return
     try {
-      await approveApplication(application.project.id, application.id)
+      await approveApplication(application.project.id, application.id, application.desired_role)
       message.success('已通过')
       await reload()
     } catch (error) {
@@ -191,6 +191,7 @@ export default function AdminApplicationsPage() {
         title="驳回申请"
         okText="确认驳回"
         cancelText="取消"
+        okButtonProps={{ 'data-testid': 'modal-ok' }}
         onCancel={() => setRejecting(null)}
         onOk={submitReject}
       >
