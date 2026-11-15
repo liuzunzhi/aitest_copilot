@@ -123,8 +123,57 @@ def list_my_applications(
     return result
 
 
+def list_all_applications(
+    session: Session,
+    *,
+    project_id: int | None,
+    status: str | None,
+    applicant_id: int | None,
+    page: int,
+    page_size: int,
+) -> dict[str, Any]:
+    """系统管理员全局申请记录（AC-43）：三个筛选条件可任意组合。"""
+    _validate_status(status)
+
+    Applicant = aliased(User)
+    Reviewer = aliased(User)
+    stmt = (
+        select(ProjectApplication, Project, Applicant, Reviewer)
+        .join(Project, Project.id == ProjectApplication.project_id)
+        .join(Applicant, Applicant.id == ProjectApplication.applicant_id)
+        .outerjoin(Reviewer, Reviewer.id == ProjectApplication.reviewer_id)
+        .order_by(ProjectApplication.created_at.desc(), ProjectApplication.id.desc())
+    )
+    if project_id is not None:
+        stmt = stmt.where(ProjectApplication.project_id == project_id)
+    if status is not None:
+        stmt = stmt.where(ProjectApplication.status == status)
+    if applicant_id is not None:
+        stmt = stmt.where(ProjectApplication.applicant_id == applicant_id)
+
+    result = _page(session, stmt, page=page, page_size=page_size)
+    result["items"] = [
+        {
+            "id": application.id,
+            "project": {"id": project.id, "name": project.name},
+            "applicant": _user_brief(applicant),
+            "reason": application.reason,
+            "desired_role": application.desired_role,
+            "status": application.status,
+            "created_at": application.created_at,
+            "reviewer": _user_brief(reviewer),
+            "reviewed_at": application.reviewed_at,
+            "reject_reason": application.reject_reason,
+            "closed_reason": application.closed_reason,
+        }
+        for application, project, applicant, reviewer in result.pop("rows")
+    ]
+    return result
+
+
 __all__ = [
     "APPLICATION_STATUSES",
+    "list_all_applications",
     "list_my_applications",
     "list_project_applications",
 ]

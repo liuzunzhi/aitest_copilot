@@ -3,6 +3,7 @@
 from fastapi import FastAPI
 
 from app import __version__
+from app.admin.applications_router import router as admin_applications_router
 from app.applications.router import router as applications_router
 from app.auth.router import router as auth_router
 from app.common.errors import install_error_handlers
@@ -12,6 +13,7 @@ from app.users.router import router as users_router
 app = FastAPI(title="AI 辅助测试平台", version=__version__)
 
 install_error_handlers(app)
+app.include_router(admin_applications_router)
 app.include_router(applications_router)
 app.include_router(auth_router)
 app.include_router(projects_router)

@@ -324,3 +324,103 @@ def test_ac_42_requires_login(client: TestClient, db: Session) -> None:
 
     assert response.status_code == 401
     assert response.json()["code"] == "UNAUTHENTICATED"
+
+
+ADMIN_ITEM_KEYS = MY_ITEM_KEYS | {"applicant", "reviewer"}
+
+
+def test_ac_43_system_admin_sees_all(client: TestClient, db: Session) -> None:
+    """全局列表跨项目，按时间降序，带项目 / 申请人 / 审批人摘要。"""
+    admin = _user(db, global_role="system_admin")
+    reviewer = _user(db, global_role="system_admin")
+    first_project = _project(db)
+    second_project = _project(db)
+    older = _application(
+        db, first_project, _user(db), created_at=datetime(2026, 3, 1, 0, 0, 0)
+    )
+    newer = _application(
+        db,
+        second_project,
+        _user(db),
+        status="approved",
+        reviewer=reviewer,
+        created_at=datetime(2026, 3, 2, 0, 0, 0),
+    )
+
+    response = client.get("/api/admin/applications", headers=_auth(client, admin))
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["total"] == 2
+    assert [item["id"] for item in body["items"]] == [newer.id, older.id]
+    assert set(body["items"][0]) == ADMIN_ITEM_KEYS
+    assert body["items"][0]["project"] == {
+        "id": second_project.id,
+        "name": second_project.name,
+    }
+    assert body["items"][0]["reviewer"]["username"] == reviewer.username
+    assert body["items"][1]["reviewer"] is None
+
+
+def test_ac_43_filters_combine(client: TestClient, db: Session) -> None:
+    admin = _user(db, global_role="system_admin")
+    headers = _auth(client, admin)
+    first_project = _project(db)
+    second_project = _project(db)
+    target_user = _user(db)
+    hit = _application(db, first_project, target_user, status="rejected")
+    _application(db, first_project, _user(db), status="rejected")
+    _application(db, second_project, target_user, status="pending")
+
+    by_project = client.get(
+        "/api/admin/applications",
+        params={"project_id": first_project.id},
+        headers=headers,
+    )
+    by_applicant = client.get(
+        "/api/admin/applications",
+        params={"applicant_id": target_user.id},
+        headers=headers,
+    )
+    combined = client.get(
+        "/api/admin/applications",
+        params={
+            "project_id": first_project.id,
+            "status": "rejected",
+            "applicant_id": target_user.id,
+        },
+        headers=headers,
+    )
+
+    assert by_project.json()["total"] == 2
+    assert by_applicant.json()["total"] == 2
+    assert [item["id"] for item in combined.json()["items"]] == [hit.id]
+
+
+def test_ac_43_invalid_status(client: TestClient, db: Session) -> None:
+    admin = _user(db, global_role="system_admin")
+
+    response = client.get(
+        "/api/admin/applications",
+        params={"status": "unknown"},
+        headers=_auth(client, admin),
+    )
+
+    assert response.status_code == 400
+    assert response.json()["code"] == "INVALID_APPLICATION_STATUS"
+
+
+def test_ac_43_non_admin_forbidden(client: TestClient, db: Session) -> None:
+    user = _user(db)
+
+    response = client.get("/api/admin/applications", headers=_auth(client, user))
+
+    assert response.status_code == 403
+    assert response.json()["code"] == "FORBIDDEN"
+
+
+def test_ac_43_requires_login(client: TestClient, db: Session) -> None:
+    response = client.get("/api/admin/applications")
+
+    assert response.status_code == 401
+    assert response.json()["code"] == "UNAUTHENTICATED"
