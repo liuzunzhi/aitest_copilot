@@ -334,6 +334,28 @@ def test_ac_34_archived_project_rejects_edit(client: TestClient, db: Session):
     assert db.get(Project, project["id"]).name == "归档前名称"
 
 
+def test_ac_32_rejects_too_long_fields(client: TestClient, db: Session):
+    """编辑时同样校验长度上限，400 且原值不变。"""
+    admin = _user(db, global_role="system_admin")
+    headers = _auth(client, admin)
+    project = _create(client, headers, name="长度校验")
+    url = f"{PROJECTS}/{project['id']}"
+
+    long_name = client.patch(url, json={"name": "名" * 129}, headers=headers)
+    long_description = client.patch(
+        url, json={"description": "述" * 501}, headers=headers
+    )
+
+    assert long_name.status_code == 400
+    assert long_name.json()["code"] == "INVALID_PROJECT_NAME"
+    assert long_description.status_code == 400
+    assert long_description.json()["code"] == "INVALID_PROJECT_DESCRIPTION"
+
+    db.expire_all()
+    unchanged = db.get(Project, project["id"])
+    assert (unchanged.name, unchanged.description) == ("长度校验", None)
+
+
 def test_ac_34_edit_missing_project(client: TestClient, db: Session):
     admin = _user(db, global_role="system_admin")
 
