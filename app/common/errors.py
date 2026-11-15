@@ -264,6 +264,34 @@ class CannotChangeOwnRole(AppError):
     code = "CANNOT_CHANGE_OWN_ROLE"
 
 
+class UnsupportedDocType(AppError):
+    """AC-50：只接受 docx / md / txt，PDF 留待后续。"""
+
+    status_code = 400
+    code = "UNSUPPORTED_DOC_TYPE"
+
+
+class DocumentTooLarge(AppError):
+    """AC-50：单文件上限 10MB。"""
+
+    status_code = 400
+    code = "DOC_TOO_LARGE"
+
+
+class EmptyDocument(AppError):
+    """AC-50：0 字节或解析后没有任何正文。"""
+
+    status_code = 400
+    code = "EMPTY_DOCUMENT"
+
+
+class DocumentParseFailed(AppError):
+    """AC-52：docx 结构损坏、无法识别编码等解析失败。"""
+
+    status_code = 400
+    code = "DOCUMENT_PARSE_FAILED"
+
+
 def install_error_handlers(app: FastAPI) -> None:
     """把 AppError 统一渲染成 {"code","message",**extra}。"""
 
