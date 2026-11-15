@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session, aliased
 
 from app.common.errors import InvalidApplicationStatus
 from app.models.application import ProjectApplication
+from app.models.project import Project
 from app.models.user import User
 
 APPLICATION_STATUSES = ("pending", "approved", "rejected", "withdrawn", "closed")
@@ -84,4 +85,46 @@ def list_project_applications(
     return result
 
 
-__all__ = ["APPLICATION_STATUSES", "list_project_applications"]
+def list_my_applications(
+    session: Session,
+    *,
+    applicant_id: int,
+    status: str | None,
+    page: int,
+    page_size: int,
+) -> dict[str, Any]:
+    """我的申请（AC-42）：只返回本人记录，带项目名称。"""
+    _validate_status(status)
+
+    stmt = (
+        select(ProjectApplication, Project)
+        .join(Project, Project.id == ProjectApplication.project_id)
+        .where(ProjectApplication.applicant_id == applicant_id)
+        .order_by(ProjectApplication.created_at.desc(), ProjectApplication.id.desc())
+    )
+    if status is not None:
+        stmt = stmt.where(ProjectApplication.status == status)
+
+    result = _page(session, stmt, page=page, page_size=page_size)
+    result["items"] = [
+        {
+            "id": application.id,
+            "project": {"id": project.id, "name": project.name},
+            "reason": application.reason,
+            "desired_role": application.desired_role,
+            "status": application.status,
+            "created_at": application.created_at,
+            "reviewed_at": application.reviewed_at,
+            "reject_reason": application.reject_reason,
+            "closed_reason": application.closed_reason,
+        }
+        for application, project in result.pop("rows")
+    ]
+    return result
+
+
+__all__ = [
+    "APPLICATION_STATUSES",
+    "list_my_applications",
+    "list_project_applications",
+]

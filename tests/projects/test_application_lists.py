@@ -236,3 +236,91 @@ def test_ac_41_requires_login(client: TestClient, db: Session) -> None:
 
     assert response.status_code == 401
     assert response.json()["code"] == "UNAUTHENTICATED"
+
+
+MY_ITEM_KEYS = {
+    "id",
+    "project",
+    "reason",
+    "desired_role",
+    "status",
+    "created_at",
+    "reviewed_at",
+    "reject_reason",
+    "closed_reason",
+}
+
+
+def test_ac_42_only_my_applications(client: TestClient, db: Session) -> None:
+    """只返回本人记录，按时间降序，带项目名称。"""
+    user = _user(db)
+    other = _user(db)
+    first_project = _project(db)
+    second_project = _project(db)
+    older = _application(
+        db,
+        first_project,
+        user,
+        created_at=datetime(2026, 2, 1, 0, 0, 0),
+    )
+    newer = _application(
+        db,
+        second_project,
+        user,
+        status="approved",
+        reviewer=_user(db),
+        created_at=datetime(2026, 2, 2, 0, 0, 0),
+    )
+    _application(db, first_project, other)
+
+    response = client.get("/api/applications/mine", headers=_auth(client, user))
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["total"] == 2
+    assert [item["id"] for item in body["items"]] == [newer.id, older.id]
+    assert set(body["items"][0]) == MY_ITEM_KEYS
+    assert body["items"][0]["project"] == {
+        "id": second_project.id,
+        "name": second_project.name,
+    }
+    assert body["items"][1]["project"]["name"] == first_project.name
+
+
+def test_ac_42_status_filter(client: TestClient, db: Session) -> None:
+    user = _user(db)
+    project = _project(db)
+    rejected = _application(
+        db, project, user, status="rejected", reject_reason="资料不全"
+    )
+    _application(db, project, user, status="withdrawn")
+
+    response = client.get(
+        "/api/applications/mine",
+        params={"status": "rejected"},
+        headers=_auth(client, user),
+    )
+
+    assert response.status_code == 200
+    assert [item["id"] for item in response.json()["items"]] == [rejected.id]
+    assert response.json()["items"][0]["reject_reason"] == "资料不全"
+
+
+def test_ac_42_invalid_status(client: TestClient, db: Session) -> None:
+    user = _user(db)
+
+    response = client.get(
+        "/api/applications/mine",
+        params={"status": "unknown"},
+        headers=_auth(client, user),
+    )
+
+    assert response.status_code == 400
+    assert response.json()["code"] == "INVALID_APPLICATION_STATUS"
+
+
+def test_ac_42_requires_login(client: TestClient, db: Session) -> None:
+    response = client.get("/api/applications/mine")
+
+    assert response.status_code == 401
+    assert response.json()["code"] == "UNAUTHENTICATED"
