@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 
 from app.models.application import ProjectApplication
 from app.models.project import Project, ProjectMember
+from app.models.system import SystemSetting
 from app.models.user import User
 
 
@@ -138,3 +139,27 @@ def test_pending_unique(db: Session):
     second = _application(db, project.id, user.id)
     db.refresh(second)
     assert second.pending_key == f"{project.id}:{user.id}"
+
+
+def test_seed_settings(db: Session):
+    """种子迁移写入 6 个默认配置（T08）。
+
+    断言 JSON 标量的类型：`28800` 必须是数字而非字符串 "28800"，
+    否则后续 `get_setting` 里的数值比较与运算会出错。
+    """
+    settings = {row.key: row.value for row in db.query(SystemSetting)}
+
+    assert set(settings) == {
+        "enable_project_apply",
+        "token_ttl_seconds",
+        "remember_ttl_seconds",
+        "max_login_failures",
+        "lock_duration_minutes",
+        "apply_cooldown_hours",
+    }
+    assert settings["token_ttl_seconds"] == 28800
+    assert settings["remember_ttl_seconds"] == 2592000
+    assert settings["max_login_failures"] == 5
+    assert settings["lock_duration_minutes"] == 30
+    assert settings["apply_cooldown_hours"] == 24
+    assert settings["enable_project_apply"] is True
