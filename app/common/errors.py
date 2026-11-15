@@ -222,6 +222,20 @@ class NotProjectAdmin(AppError):
     code = "NOT_PROJECT_ADMIN"
 
 
+class MemberNotFound(AppError):
+    """AC-37 / AC-38：目标用户不是该项目成员。"""
+
+    status_code = 404
+    code = "MEMBER_NOT_FOUND"
+
+
+class LastProjectAdmin(AppError):
+    """AC-37 / AC-38：项目至少保留一名项目管理员。"""
+
+    status_code = 409
+    code = "LAST_PROJECT_ADMIN"
+
+
 def install_error_handlers(app: FastAPI) -> None:
     """把 AppError 统一渲染成 {"code","message",**extra}。"""
 
@@ -254,6 +268,8 @@ __all__ = [
     "InvalidResetCode",
     "InvalidRoleAssignment",
     "InvalidStatus",
+    "LastProjectAdmin",
+    "MemberNotFound",
     "NotApplicationOwner",
     "NotProjectAdmin",
     "NotProjectMember",

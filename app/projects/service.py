@@ -10,6 +10,8 @@ from app.common.errors import (
     InvalidProjectDescription,
     InvalidProjectName,
     InvalidRoleAssignment,
+    LastProjectAdmin,
+    MemberNotFound,
     ProjectArchived,
     ProjectNameRequired,
     ProjectNotFound,
@@ -198,6 +200,64 @@ def add_member(
     return member, user.username
 
 
+def update_member_role(
+    session: Session,
+    *,
+    actor: User,
+    project_id: int,
+    user_id: int,
+    role: str | None,
+) -> tuple[ProjectMember, str]:
+    """修改成员角色（AC-37）。
+
+    「最后一名 project_admin」是跨行约束，先锁项目行再计数，
+    否则两人同时降级仅剩的两位管理员会双双通过，项目失去管理员。
+    """
+    _locked_active_project(session, project_id)
+
+    if role not in MEMBER_ROLES:
+        raise InvalidRoleAssignment("角色仅支持 project_admin / member / guest")
+
+    row = session.execute(
+        select(ProjectMember, User.username)
+        .join(User, User.id == ProjectMember.user_id)
+        .where(
+            ProjectMember.project_id == project_id,
+            ProjectMember.user_id == user_id,
+        )
+    ).first()
+    if row is None:
+        raise MemberNotFound("该用户不是项目成员")
+    member, username = row
+
+    if member.role == "project_admin" and role != "project_admin":
+        # 必须用锁定读取：普通 SELECT 在 REPEATABLE READ 下读的是事务开始时的快照，
+        # 并发降级时另一名管理员已提交的变更看不到，两人会同时通过。
+        roles = session.execute(
+            select(ProjectMember.role)
+            .where(ProjectMember.project_id == project_id)
+            .with_for_update()
+        ).scalars()
+        if sum(1 for value in roles if value == "project_admin") == 1:
+            raise LastProjectAdmin("项目至少保留一名项目管理员")
+
+    before = {"role": member.role}
+    member.role = role
+    write_audit(
+        session,
+        "project.member.role",
+        actor_id=actor.id,
+        actor_role=actor.global_role,
+        project_id=project_id,
+        target_type="project_member",
+        target_id=user_id,
+        before_data=before,
+        after_data={"role": role},
+    )
+    session.commit()
+    return member, username
+
+
 def archive_project(
     session: Session, *, project_id: int, actor: User | None = None
 ) -> None:
@@ -268,5 +328,6 @@ __all__ = [
     "archive_project",
     "create_project",
     "list_members",
+    "update_member_role",
     "update_project",
 ]

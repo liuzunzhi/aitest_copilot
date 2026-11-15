@@ -63,6 +63,10 @@ class MemberAddRequest(BaseModel):
     role: str | None = None
 
 
+class MemberRoleRequest(BaseModel):
+    role: str | None = None
+
+
 class SubmitApplicationRequest(BaseModel):
     """字段都允许缺省，由服务层给「理由必填 / 角色白名单」的稳定错误码。
 
@@ -193,6 +197,33 @@ def add_member(
         actor=actor,
         project_id=project_id,
         user_id=payload.user_id,
+        role=payload.role,
+    )
+    return ProjectMemberOut(
+        user_id=member.user_id,
+        username=username,
+        role=member.role,
+        joined_at=member.joined_at,
+    )
+
+
+@router.patch(
+    "/{project_id}/members/{user_id}",
+    response_model=ProjectMemberOut,
+    summary="修改成员角色",
+)
+def update_member_role(
+    project_id: int,
+    user_id: int,
+    payload: MemberRoleRequest,
+    session: Session = Depends(get_db),
+    actor: User = Depends(require_project_admin_or_system_admin),
+) -> ProjectMemberOut:
+    member, username = service.update_member_role(
+        session,
+        actor=actor,
+        project_id=project_id,
+        user_id=user_id,
         role=payload.role,
     )
     return ProjectMemberOut(

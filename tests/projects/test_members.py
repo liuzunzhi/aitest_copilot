@@ -10,7 +10,7 @@ from sqlalchemy import func, select, text
 from sqlalchemy.orm import Session
 
 from app.common.db import session_scope
-from app.common.errors import AlreadyProjectMember
+from app.common.errors import AlreadyProjectMember, LastProjectAdmin
 from app.common.security import hash_password
 from app.models.project import Project, ProjectMember
 from app.models.system import AuditLog
@@ -357,5 +357,221 @@ def test_ac_36_concurrent_add_only_one_wins() -> None:
                 {
                     "admin": f"race-add-admin-{suffix}",
                     "target": f"race-add-target-{suffix}",
+                },
+            )
+
+
+def _member_url(project: Project, user: User) -> str:
+    return f"/api/projects/{project.id}/members/{user.id}"
+
+
+def test_ac_37_update_role(client: TestClient, db: Session) -> None:
+    """项目管理员改角色：200、落库、审计 before/after 都是 {"role": ...}。"""
+    project = _project(db)
+    admin = _user(db)
+    _join(db, project, admin, "project_admin")
+    target = _user(db)
+    _join(db, project, target, "member")
+
+    response = client.patch(
+        _member_url(project, target),
+        json={"role": "guest"},
+        headers=_auth(client, admin),
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert (body["user_id"], body["username"], body["role"]) == (
+        target.id,
+        target.username,
+        "guest",
+    )
+
+    db.expire_all()
+    assert db.get(ProjectMember, (project.id, target.id)).role == "guest"
+
+    audit = db.execute(
+        select(AuditLog).where(AuditLog.action == "project.member.role")
+    ).scalar_one()
+    assert audit.before_data == {"role": "member"}
+    assert audit.after_data == {"role": "guest"}
+    assert audit.target_type == "project_member"
+    assert audit.target_id == str(target.id)
+
+
+@pytest.mark.parametrize("role", ["system_admin", "owner", None])
+def test_ac_37_invalid_role(client: TestClient, db: Session, role) -> None:
+    project = _project(db)
+    admin = _user(db)
+    _join(db, project, admin, "project_admin")
+    target = _user(db)
+    _join(db, project, target, "member")
+    payload = {} if role is None else {"role": role}
+
+    response = client.patch(
+        _member_url(project, target), json=payload, headers=_auth(client, admin)
+    )
+
+    assert response.status_code == 400
+    assert response.json()["code"] == "INVALID_ROLE_ASSIGNMENT"
+
+
+def test_ac_37_member_not_found(client: TestClient, db: Session) -> None:
+    project = _project(db)
+    admin = _user(db)
+    _join(db, project, admin, "project_admin")
+    outsider = _user(db)
+
+    response = client.patch(
+        _member_url(project, outsider),
+        json={"role": "member"},
+        headers=_auth(client, admin),
+    )
+
+    assert response.status_code == 404
+    assert response.json()["code"] == "MEMBER_NOT_FOUND"
+
+
+def test_ac_37_last_project_admin_cannot_be_downgraded(
+    client: TestClient, db: Session
+) -> None:
+    project = _project(db)
+    admin = _user(db)
+    _join(db, project, admin, "project_admin")
+
+    response = client.patch(
+        _member_url(project, admin),
+        json={"role": "member"},
+        headers=_auth(client, admin),
+    )
+
+    assert response.status_code == 409
+    assert response.json()["code"] == "LAST_PROJECT_ADMIN"
+
+    db.expire_all()
+    assert db.get(ProjectMember, (project.id, admin.id)).role == "project_admin"
+
+
+def test_ac_37_downgrade_when_two_admins(client: TestClient, db: Session) -> None:
+    project = _project(db)
+    first = _user(db)
+    second = _user(db)
+    _join(db, project, first, "project_admin")
+    _join(db, project, second, "project_admin")
+
+    response = client.patch(
+        _member_url(project, second),
+        json={"role": "member"},
+        headers=_auth(client, first),
+    )
+
+    assert response.status_code == 200
+    assert response.json()["role"] == "member"
+
+
+def test_ac_37_archived_project_read_only(client: TestClient, db: Session) -> None:
+    project = _project(db, status="archived")
+    admin = _user(db)
+    target = _user(db)
+    _join(db, project, admin, "project_admin")
+    _join(db, project, target, "member")
+
+    response = client.patch(
+        _member_url(project, target),
+        json={"role": "guest"},
+        headers=_auth(client, admin),
+    )
+
+    assert response.status_code == 409
+    assert response.json()["code"] == "PROJECT_ARCHIVED"
+
+
+def test_ac_37_member_cannot_update_role(client: TestClient, db: Session) -> None:
+    project = _project(db)
+    member = _user(db)
+    _join(db, project, member, "member")
+    target = _user(db)
+    _join(db, project, target, "guest")
+
+    response = client.patch(
+        _member_url(project, target),
+        json={"role": "member"},
+        headers=_auth(client, member),
+    )
+
+    assert response.status_code == 403
+    assert response.json()["code"] == "NOT_PROJECT_ADMIN"
+
+
+def test_ac_37_concurrent_downgrade_keeps_one_admin() -> None:
+    """两名管理员互相降级：只能成功一个，最后仍剩一名 project_admin。"""
+    suffix = uuid.uuid4().hex[:8]
+    with session_scope() as session:
+        first = User(username=f"race-role-first-{suffix}", password_hash=PASSWORD_HASH)
+        second = User(username=f"race-role-second-{suffix}", password_hash=PASSWORD_HASH)
+        project = Project(name=f"race-role-{suffix}")
+        session.add_all([first, second, project])
+        session.flush()
+        session.add_all(
+            [
+                ProjectMember(
+                    project_id=project.id, user_id=first.id, role="project_admin"
+                ),
+                ProjectMember(
+                    project_id=project.id, user_id=second.id, role="project_admin"
+                ),
+            ]
+        )
+        session.flush()
+        project_id = project.id
+        pair = [(first.id, second.id), (second.id, first.id)]
+
+    def attempt(index: int) -> str:
+        actor_id, target_id = pair[index]
+        with session_scope() as session:
+            actor = session.get(User, actor_id)
+            try:
+                service.update_member_role(
+                    session,
+                    actor=actor,
+                    project_id=project_id,
+                    user_id=target_id,
+                    role="member",
+                )
+            except LastProjectAdmin:
+                return "conflict"
+            return "updated"
+
+    try:
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            assert sorted(pool.map(attempt, range(2))) == ["conflict", "updated"]
+
+        with session_scope() as session:
+            admins = session.execute(
+                select(func.count())
+                .select_from(ProjectMember)
+                .where(
+                    ProjectMember.project_id == project_id,
+                    ProjectMember.role == "project_admin",
+                )
+            ).scalar_one()
+            assert admins == 1
+    finally:
+        with session_scope() as session:
+            session.execute(
+                text("DELETE FROM audit_logs WHERE project_id = :pid"), {"pid": project_id}
+            )
+            session.execute(
+                text("DELETE FROM project_members WHERE project_id = :pid"),
+                {"pid": project_id},
+            )
+            session.execute(
+                text("DELETE FROM projects WHERE id = :pid"), {"pid": project_id}
+            )
+            session.execute(
+                text("DELETE FROM users WHERE username IN (:first, :second)"),
+                {
+                    "first": f"race-role-first-{suffix}",
+                    "second": f"race-role-second-{suffix}",
                 },
             )
