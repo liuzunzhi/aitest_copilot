@@ -102,6 +102,13 @@ class Forbidden(AppError):
     code = "FORBIDDEN"
 
 
+class NotProjectMember(AppError):
+    """AC-27：非项目成员访问项目内资源。"""
+
+    status_code = 403
+    code = "NOT_PROJECT_MEMBER"
+
+
 def install_error_handlers(app: FastAPI) -> None:
     """把 AppError 统一渲染成 {"code","message",**extra}。"""
 
@@ -123,6 +130,7 @@ __all__ = [
     "Forbidden",
     "InvalidCredentials",
     "InvalidResetCode",
+    "NotProjectMember",
     "RateLimited",
     "TokenExpired",
     "TokenRevoked",
