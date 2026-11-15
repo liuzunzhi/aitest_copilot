@@ -62,7 +62,7 @@ def register(
     顺序：密码强度 → 验证码 → 落库。
     强度先查，避免用户改完密码还得重新拿验证码。
     """
-    _ensure_password_strength(password)
+    ensure_password_strength(password)
     _ensure_captcha(captcha_id, captcha)
 
     user = User(
@@ -227,7 +227,7 @@ def reset_password(
     强度先查，避免验证码被一次弱密码提交白白消耗；
     成功后吊销该用户全部令牌。
     """
-    _ensure_password_strength(new_password)
+    ensure_password_strength(new_password)
 
     user = _find_by_contact(session, contact)
     if user is None or not verify_reset_code(contact, code):
@@ -300,7 +300,7 @@ def _bump_failed_login(
     ).scalar_one()
 
 
-def _ensure_password_strength(password: str) -> None:
+def ensure_password_strength(password: str) -> None:
     """AC-10：≥ 8 位，且同时包含字母与数字。"""
     has_letter = any(char.isascii() and char.isalpha() for char in password)
     has_digit = any(char.isascii() and char.isdigit() for char in password)

@@ -170,6 +170,16 @@ class ApplyCooldown(AppError):
     code = "APPLY_COOLDOWN"
 
 
+class UserNotFound(AppError):
+    status_code = 404
+    code = "USER_NOT_FOUND"
+
+
+class InvalidStatus(AppError):
+    status_code = 400
+    code = "INVALID_STATUS"
+
+
 class NotProjectAdmin(AppError):
     """AC-23：不是该项目管理员（系统管理员除外）。"""
 
@@ -206,6 +216,7 @@ __all__ = [
     "InvalidDesiredRole",
     "InvalidResetCode",
     "InvalidRoleAssignment",
+    "InvalidStatus",
     "NotApplicationOwner",
     "NotProjectAdmin",
     "NotProjectMember",
@@ -215,6 +226,7 @@ __all__ = [
     "TokenExpired",
     "TokenRevoked",
     "Unauthenticated",
+    "UserNotFound",
     "UsernameTaken",
     "WeakPassword",
     "install_error_handlers",
