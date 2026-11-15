@@ -67,6 +67,13 @@ class MemberRoleRequest(BaseModel):
     role: str | None = None
 
 
+class ProjectOverviewOut(BaseModel):
+    member_count: int
+    document_count: int
+    baseline_count: int
+    latest_execution: dict | None
+
+
 class SubmitApplicationRequest(BaseModel):
     """字段都允许缺省，由服务层给「理由必填 / 角色白名单」的稳定错误码。
 
@@ -156,6 +163,19 @@ def update_project(
         description=project.description,
         status=project.status,
     )
+
+
+@router.get(
+    "/{project_id}/overview",
+    response_model=ProjectOverviewOut,
+    summary="项目概览",
+)
+def get_overview(
+    project_id: int,
+    session: Session = Depends(get_db),
+    _: User = Depends(require_project_member_or_system_admin),
+) -> ProjectOverviewOut:
+    return ProjectOverviewOut(**service.get_overview(session, project_id=project_id))
 
 
 @router.get(

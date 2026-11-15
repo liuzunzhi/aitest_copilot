@@ -1,6 +1,6 @@
 """项目生命周期（T24 归档；T28 创建；T29 编辑；T31 归档只读）。"""
 
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -311,6 +311,25 @@ def remove_member(
     session.commit()
 
 
+def get_overview(session: Session, *, project_id: int) -> dict[str, object]:
+    """项目概览（AC-40）。
+
+    文档 / 基线 / 执行模块尚未上线，三个字段先给固定占位值；
+    上线后只替换取值来源，响应结构保持不变。读接口不受归档影响。
+    """
+    member_count = session.execute(
+        select(func.count())
+        .select_from(ProjectMember)
+        .where(ProjectMember.project_id == project_id)
+    ).scalar_one()
+    return {
+        "member_count": member_count,
+        "document_count": 0,
+        "baseline_count": 0,
+        "latest_execution": None,
+    }
+
+
 def archive_project(
     session: Session, *, project_id: int, actor: User | None = None
 ) -> None:
@@ -380,6 +399,7 @@ __all__ = [
     "add_member",
     "archive_project",
     "create_project",
+    "get_overview",
     "list_members",
     "remove_member",
     "update_member_role",
