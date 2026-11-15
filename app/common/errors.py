@@ -66,6 +66,23 @@ class AccountLocked(AppError):
     code = "ACCOUNT_LOCKED"
 
 
+class Unauthenticated(AppError):
+    """AC-06：不带令牌或令牌无法识别。"""
+
+    status_code = 401
+    code = "UNAUTHENTICATED"
+
+
+class TokenExpired(AppError):
+    status_code = 401
+    code = "TOKEN_EXPIRED"
+
+
+class TokenRevoked(AppError):
+    status_code = 401
+    code = "TOKEN_REVOKED"
+
+
 def install_error_handlers(app: FastAPI) -> None:
     """把 AppError 统一渲染成 {"code","message",**extra}。"""
 
@@ -85,6 +102,9 @@ __all__ = [
     "CaptchaRequired",
     "ContactTaken",
     "InvalidCredentials",
+    "TokenExpired",
+    "TokenRevoked",
+    "Unauthenticated",
     "UsernameTaken",
     "WeakPassword",
     "install_error_handlers",

@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 
 from app.auth import service
 from app.common.db import get_db
+from app.common.deps import bearer_token
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
@@ -38,6 +39,14 @@ class LoginRequest(BaseModel):
 class LoginResponse(BaseModel):
     access_token: str
     expires_at: str
+
+
+@router.post("/logout", summary="登出")
+def logout(
+    session: Session = Depends(get_db), token: str = Depends(bearer_token)
+) -> dict[str, str]:
+    service.logout(session, token)
+    return {"status": "ok"}
 
 
 @router.post(

@@ -11,7 +11,7 @@ from sqlalchemy import select, text, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.auth.tokens import issue
+from app.auth.tokens import authenticate, issue, revoke
 from app.common.audit import write_audit
 from app.common.captcha import verify_captcha
 from app.common.clock import utcnow_naive
@@ -176,6 +176,24 @@ def login(
     return LoginResult(access_token=token, expires_at=expires_at)
 
 
+def logout(session: Session, token: str) -> None:
+    """登出（AC-07）：吊销当前令牌并写审计。
+
+    先 `resolve` 再 `revoke`：既拿到 actor 写审计，也保证已吊销/过期
+    的令牌不会被当成一次成功登出。幂等性由再次调用时 `TOKEN_REVOKED` 体现。
+    """
+    user, _ = authenticate(session, token)
+    revoke(session, token)
+    write_audit(
+        session,
+        "logout",
+        actor_id=user.id,
+        target_type="user",
+        target_id=user.id,
+    )
+    session.commit()
+
+
 def _bump_failed_login(
     session: Session, user_id: int, *, max_failures: int, lock_minutes: int
 ) -> datetime | None:
@@ -248,4 +266,4 @@ def _duplicate_error(exc: IntegrityError) -> Exception:
     return exc
 
 
-__all__ = ["LoginResult", "login", "register"]
+__all__ = ["LoginResult", "login", "logout", "register"]

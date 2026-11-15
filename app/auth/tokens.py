@@ -13,6 +13,11 @@ from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
 from app.common.clock import utcnow_naive
+from app.common.errors import (
+    TokenExpired as TokenExpiredError,
+    TokenRevoked as TokenRevokedError,
+    Unauthenticated,
+)
 from app.models.token import AccessToken
 from app.models.user import User
 
@@ -92,6 +97,22 @@ def resolve(session: Session, token: str) -> tuple[User, AccessToken]:
     return user, token_row
 
 
+def authenticate(session: Session, token: str) -> tuple[User, AccessToken]:
+    """同 `resolve`，但把令牌异常映射成带 code 的业务错误。
+
+    映射只做一次，登出（T16）与后续 `current_user`（T18）共用，
+    避免每个调用点各写一遍 except。
+    """
+    try:
+        return resolve(session, token)
+    except InvalidToken as exc:
+        raise Unauthenticated("未登录或令牌无效") from exc
+    except TokenRevoked as exc:
+        raise TokenRevokedError("令牌已失效，请重新登录") from exc
+    except TokenExpired as exc:
+        raise TokenExpiredError("登录已过期，请重新登录") from exc
+
+
 def revoke(session: Session, token: str) -> bool:
     """吊销单个令牌。条件更新保证幂等，返回是否真的吊销了一条。"""
     result = session.execute(
@@ -124,6 +145,7 @@ __all__ = [
     "TokenError",
     "TokenExpired",
     "TokenRevoked",
+    "authenticate",
     "hash_token",
     "issue",
     "resolve",
