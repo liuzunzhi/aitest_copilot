@@ -83,6 +83,18 @@ class TokenRevoked(AppError):
     code = "TOKEN_REVOKED"
 
 
+class InvalidResetCode(AppError):
+    """联系人不存在、验证码错误或已过期，统一一个响应，不泄露账号是否存在。"""
+
+    status_code = 400
+    code = "INVALID_RESET_CODE"
+
+
+class RateLimited(AppError):
+    status_code = 429
+    code = "RATE_LIMITED"
+
+
 def install_error_handlers(app: FastAPI) -> None:
     """把 AppError 统一渲染成 {"code","message",**extra}。"""
 
@@ -102,6 +114,8 @@ __all__ = [
     "CaptchaRequired",
     "ContactTaken",
     "InvalidCredentials",
+    "InvalidResetCode",
+    "RateLimited",
     "TokenExpired",
     "TokenRevoked",
     "Unauthenticated",

@@ -41,6 +41,37 @@ class LoginResponse(BaseModel):
     expires_at: str
 
 
+class SendResetCodeRequest(BaseModel):
+    contact: str = Field(min_length=1, max_length=255)
+
+
+class ResetPasswordRequest(BaseModel):
+    contact: str = Field(min_length=1, max_length=255)
+    code: str = Field(min_length=1)
+    new_password: str
+
+
+@router.post("/password/send-code", summary="发送密码重置验证码")
+def send_reset_code(
+    payload: SendResetCodeRequest, session: Session = Depends(get_db)
+) -> dict[str, str]:
+    service.send_reset_code(session, contact=payload.contact)
+    return {"status": "ok"}
+
+
+@router.post("/password/reset", summary="重置密码")
+def reset_password(
+    payload: ResetPasswordRequest, session: Session = Depends(get_db)
+) -> dict[str, str]:
+    service.reset_password(
+        session,
+        contact=payload.contact,
+        code=payload.code,
+        new_password=payload.new_password,
+    )
+    return {"status": "ok"}
+
+
 @router.post("/logout", summary="登出")
 def logout(
     session: Session = Depends(get_db), token: str = Depends(bearer_token)

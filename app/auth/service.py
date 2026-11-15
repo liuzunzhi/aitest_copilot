@@ -7,13 +7,18 @@
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import select, text, update
+from sqlalchemy import or_, select, text, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.auth.tokens import authenticate, issue, revoke
+from app.auth.tokens import authenticate, issue, revoke, revoke_all
 from app.common.audit import write_audit
-from app.common.captcha import verify_captcha
+from app.common.captcha import (
+    RateLimited as CaptchaRateLimited,
+    send_reset_code as issue_reset_code,
+    verify_captcha,
+    verify_reset_code,
+)
 from app.common.clock import utcnow_naive
 from app.common.errors import (
     AccountDisabled,
@@ -22,6 +27,8 @@ from app.common.errors import (
     CaptchaRequired,
     ContactTaken,
     InvalidCredentials,
+    InvalidResetCode,
+    RateLimited,
     UsernameTaken,
     WeakPassword,
 )
@@ -194,6 +201,67 @@ def logout(session: Session, token: str) -> None:
     session.commit()
 
 
+def send_reset_code(session: Session, *, contact: str) -> None:
+    """发送密码重置验证码（AC-12）。
+
+    联系人是否存在都返回同样的结果，且都占用 60s 限流键——
+    否则「存在返回 429、不存在返回 200」就成了账号枚举通道。
+
+    一期没有邮件/短信通道，验证码只写 Redis，由前端联调时读取。
+    """
+    user = _find_by_contact(session, contact)
+    try:
+        code = issue_reset_code(contact)
+    except CaptchaRateLimited as exc:
+        raise RateLimited("验证码发送过于频繁，请稍后再试") from exc
+
+    if user is not None:
+        _deliver_reset_code(user, code)
+
+
+def reset_password(
+    session: Session, *, contact: str, code: str, new_password: str
+) -> User:
+    """校验验证码并重置密码（AC-12）。
+
+    强度先查，避免验证码被一次弱密码提交白白消耗；
+    成功后吊销该用户全部令牌。
+    """
+    _ensure_password_strength(new_password)
+
+    user = _find_by_contact(session, contact)
+    if user is None or not verify_reset_code(contact, code):
+        raise InvalidResetCode("验证码无效或已过期")
+
+    user.password_hash = hash_password(new_password)
+    user.password_changed_at = utcnow_naive()
+    revoke_all(session, user.id)
+    write_audit(
+        session,
+        "password.reset",
+        actor_id=user.id,
+        target_type="user",
+        target_id=user.id,
+    )
+    session.commit()
+    return user
+
+
+def _find_by_contact(session: Session, contact: str) -> User | None:
+    """按邮箱或手机号找人。排序规则大小写不敏感，邮箱匹配天然忽略大小写。"""
+    return session.execute(
+        select(User).where(or_(User.email == contact, User.phone == contact))
+    ).scalars().first()
+
+
+def _deliver_reset_code(user: User, code: str) -> None:
+    """发送通道占位：一期只写 Redis，接入邮件/短信后在这里发送。
+
+    刻意不写日志，验证码落在日志里等于泄露。
+    """
+    del user, code
+
+
 def _bump_failed_login(
     session: Session, user_id: int, *, max_failures: int, lock_minutes: int
 ) -> datetime | None:
@@ -266,4 +334,11 @@ def _duplicate_error(exc: IntegrityError) -> Exception:
     return exc
 
 
-__all__ = ["LoginResult", "login", "logout", "register"]
+__all__ = [
+    "LoginResult",
+    "login",
+    "logout",
+    "register",
+    "reset_password",
+    "send_reset_code",
+]
