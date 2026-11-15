@@ -40,4 +40,14 @@ def now() -> datetime:
     return clock.now()
 
 
-__all__ = ["Clock", "FixedClock", "clock", "now"]
+def utcnow_naive() -> datetime:
+    """数据库边界用的 UTC 时间（naive）。
+
+    `DATETIME(3)` 不存时区：带 tzinfo 的值写进去会被驱动静默丢掉时区，
+    读回来是 naive，再与 aware 比较会抛 TypeError。
+    因此写入与比较统一走这里，保证两边都是 UTC 的 naive 表示。
+    """
+    return clock.now().astimezone(timezone.utc).replace(tzinfo=None)
+
+
+__all__ = ["Clock", "FixedClock", "clock", "now", "utcnow_naive"]
