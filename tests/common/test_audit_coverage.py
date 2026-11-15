@@ -37,6 +37,9 @@ APPROVE = "/api/projects/{project_id}/applications/{application_id}/approve"
 REJECT = "/api/projects/{project_id}/applications/{application_id}/reject"
 ADMIN_STATUS = "/api/admin/users/{uid}/status"
 ADMIN_PASSWORD = "/api/admin/users/{uid}/password"
+ADMIN_ROLE = "/api/admin/users/{uid}/role"
+PROJECTS = "/api/projects"
+PROJECT_MEMBER = "/api/projects/{project_id}/members/{user_id}"
 
 
 def _user(
@@ -261,6 +264,84 @@ def _user_password_reset(client: TestClient, db: Session, monkeypatch) -> None:
     assert response.status_code == 200
 
 
+def _project_create(client: TestClient, db: Session, monkeypatch) -> None:
+    admin = _user(db, global_role="system_admin")
+    response = client.post(
+        PROJECTS,
+        json={"name": f"cov-api-{uuid.uuid4().hex[:6]}", "description": "审计覆盖"},
+        headers=_headers(client, admin),
+    )
+    assert response.status_code == 201, response.text
+
+
+def _project_update(client: TestClient, db: Session, monkeypatch) -> None:
+    admin = _user(db, global_role="system_admin")
+    project = _project(db)
+    response = client.patch(
+        f"{PROJECTS}/{project.id}",
+        json={"description": "改简介"},
+        headers=_headers(client, admin),
+    )
+    assert response.status_code == 200, response.text
+
+
+def _project_archive(client: TestClient, db: Session, monkeypatch) -> None:
+    admin = _user(db, global_role="system_admin")
+    project = _project(db)
+    response = client.post(
+        f"{PROJECTS}/{project.id}/archive", headers=_headers(client, admin)
+    )
+    assert response.status_code == 200, response.text
+
+
+def _member_add(client: TestClient, db: Session, monkeypatch) -> None:
+    admin = _user(db, global_role="system_admin")
+    project = _project(db)
+    target = _user(db)
+    response = client.post(
+        f"{PROJECTS}/{project.id}/members",
+        json={"user_id": target.id, "role": "member"},
+        headers=_headers(client, admin),
+    )
+    assert response.status_code == 201, response.text
+
+
+def _member_role(client: TestClient, db: Session, monkeypatch) -> None:
+    admin = _user(db, global_role="system_admin")
+    project = _project(db)
+    target = _user(db)
+    _join(db, project, target, "member")
+    response = client.patch(
+        PROJECT_MEMBER.format(project_id=project.id, user_id=target.id),
+        json={"role": "guest"},
+        headers=_headers(client, admin),
+    )
+    assert response.status_code == 200, response.text
+
+
+def _member_remove(client: TestClient, db: Session, monkeypatch) -> None:
+    admin = _user(db, global_role="system_admin")
+    project = _project(db)
+    target = _user(db)
+    _join(db, project, target, "member")
+    response = client.delete(
+        PROJECT_MEMBER.format(project_id=project.id, user_id=target.id),
+        headers=_headers(client, admin),
+    )
+    assert response.status_code == 200, response.text
+
+
+def _user_role_change(client: TestClient, db: Session, monkeypatch) -> None:
+    admin = _user(db, global_role="system_admin")
+    victim = _user(db)
+    response = client.patch(
+        ADMIN_ROLE.format(uid=victim.id),
+        json={"global_role": "system_admin"},
+        headers=_headers(client, admin),
+    )
+    assert response.status_code == 200, response.text
+
+
 SCENARIOS = {
     "register.submit": _register,
     "login.success": _login_success,
@@ -278,6 +359,13 @@ SCENARIOS = {
     "user.disable": _user_disable,
     "user.enable": _user_enable,
     "user.password.reset": _user_password_reset,
+    "user.role.change": _user_role_change,
+    "project.create": _project_create,
+    "project.update": _project_update,
+    "project.archive": _project_archive,
+    "project.member.add": _member_add,
+    "project.member.role": _member_role,
+    "project.member.remove": _member_remove,
 }
 
 
