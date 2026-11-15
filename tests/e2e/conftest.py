@@ -15,11 +15,22 @@ from pathlib import Path
 import pytest
 from playwright.sync_api import Browser, Page
 
+from tests.e2e.support import (
+    ADMIN_PASSWORD as SUPPORT_ADMIN_PASSWORD,
+    ADMIN_USERNAME as SUPPORT_ADMIN_USERNAME,
+    Api,
+    BACKEND_URL,
+    USER_PASSWORD,
+    create_user,
+    storage_state,
+    token_for,
+)
+
 SCREENSHOT_ROOT = Path(
     os.getenv("E2E_SCREENSHOT_DIR", r"D:\学习\AI辅助测试平台\.screenshots")
 )
-ADMIN_USERNAME = os.getenv("E2E_ADMIN_USERNAME", "admin")
-ADMIN_PASSWORD = os.getenv("E2E_ADMIN_PASSWORD", "Admin12345")
+ADMIN_USERNAME = os.getenv("E2E_ADMIN_USERNAME", SUPPORT_ADMIN_USERNAME)
+ADMIN_PASSWORD = os.getenv("E2E_ADMIN_PASSWORD", SUPPORT_ADMIN_PASSWORD)
 
 
 @pytest.fixture(scope="session")
@@ -63,3 +74,41 @@ def shot(request: pytest.FixtureRequest) -> Callable[..., Path]:
         return path
 
     return _shot
+
+
+@pytest.fixture
+def api(playwright) -> Iterator[Api]:
+    """造数用的后端客户端（默认系统管理员身份）。"""
+    ctx = playwright.request.new_context(base_url=BACKEND_URL)
+    yield Api(ctx)
+    ctx.dispose()
+
+
+@pytest.fixture
+def make_user() -> Callable[..., dict]:
+    """按需造普通用户；返回 {id, username, password}。"""
+
+    def _make_user(global_role: str = "user") -> dict:
+        return create_user(global_role)
+
+    return _make_user
+
+
+@pytest.fixture
+def page_as(browser: Browser, base_url: str, api: Api) -> Iterator[Callable[..., Page]]:
+    """以任意用户身份打开页面，省去登录表单。"""
+    contexts: list = []
+
+    def _open(username: str, password: str = USER_PASSWORD, path: str = "/projects") -> Page:
+        token = token_for(api.ctx, username, password)
+        context = browser.new_context(
+            base_url=base_url, storage_state=storage_state(base_url, token)
+        )
+        contexts.append(context)
+        page = context.new_page()
+        page.goto(path)
+        return page
+
+    yield _open
+    for context in contexts:
+        context.close()
