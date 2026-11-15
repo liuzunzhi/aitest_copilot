@@ -2,7 +2,7 @@
 
 from datetime import datetime
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
@@ -15,7 +15,7 @@ from app.common.deps import (
     require_system_admin,
 )
 from app.models.user import User
-from app.projects import apply_service, service
+from app.projects import apply_service, query_service, service
 
 router = APIRouter(prefix="/api/projects", tags=["projects"])
 
@@ -72,6 +72,31 @@ class ProjectOverviewOut(BaseModel):
     document_count: int
     baseline_count: int
     latest_execution: dict | None
+
+
+class UserBriefOut(BaseModel):
+    id: int
+    username: str
+
+
+class ApplicationOut(BaseModel):
+    id: int
+    applicant: UserBriefOut
+    reason: str
+    desired_role: str
+    status: str
+    created_at: datetime
+    reviewer: UserBriefOut | None
+    reviewed_at: datetime | None
+    reject_reason: str | None
+    closed_reason: str | None
+
+
+class ApplicationPageOut(BaseModel):
+    items: list[ApplicationOut]
+    total: int
+    page: int
+    page_size: int
 
 
 class SubmitApplicationRequest(BaseModel):
@@ -282,6 +307,29 @@ def archive_project(
     """平台不提供物理删除，归档即删除入口；重复归档保持幂等。"""
     service.archive_project(session, project_id=project_id, actor=admin)
     return ProjectStatusOut(status="archived")
+
+
+@router.get(
+    "/{project_id}/applications",
+    response_model=ApplicationPageOut,
+    summary="本项目的申请列表",
+)
+def list_project_applications(
+    project_id: int,
+    status: str | None = Query(default=None),
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=20, ge=1, le=100),
+    session: Session = Depends(get_db),
+    _: User = Depends(require_project_admin_or_system_admin),
+) -> ApplicationPageOut:
+    """项目管理员看本项目全部申请；status 缺省返回全部状态。"""
+    return query_service.list_project_applications(
+        session,
+        project_id=project_id,
+        status=status,
+        page=page,
+        page_size=page_size,
+    )
 
 
 @router.post(

@@ -1,0 +1,238 @@
+"""申请列表（T37 AC-41 / T38 AC-42 / T39 AC-43 / T40 AC-44）。"""
+
+import uuid
+from datetime import datetime
+
+from fastapi.testclient import TestClient
+from sqlalchemy.orm import Session
+
+from app.common.security import hash_password
+from app.models.application import ProjectApplication
+from app.models.project import Project, ProjectMember
+from app.models.user import User
+
+PASSWORD = "Passw0rd"
+PASSWORD_HASH = hash_password(PASSWORD)
+
+ITEM_KEYS = {
+    "id",
+    "applicant",
+    "reason",
+    "desired_role",
+    "status",
+    "created_at",
+    "reviewer",
+    "reviewed_at",
+    "reject_reason",
+    "closed_reason",
+}
+
+
+def _user(db: Session, *, global_role: str = "user") -> User:
+    user = User(
+        username=f"apps-{uuid.uuid4().hex[:8]}",
+        password_hash=PASSWORD_HASH,
+        global_role=global_role,
+    )
+    db.add(user)
+    db.flush()
+    return user
+
+
+def _project(db: Session, *, status: str = "active") -> Project:
+    project = Project(name=f"apps-{uuid.uuid4().hex[:6]}", status=status)
+    db.add(project)
+    db.flush()
+    return project
+
+
+def _join(db: Session, project: Project, user: User, role: str) -> None:
+    db.add(ProjectMember(project_id=project.id, user_id=user.id, role=role))
+    db.flush()
+
+
+def _application(
+    db: Session,
+    project: Project,
+    applicant: User,
+    *,
+    status: str = "pending",
+    created_at: datetime | None = None,
+    reviewer: User | None = None,
+    reject_reason: str | None = None,
+    closed_reason: str | None = None,
+) -> ProjectApplication:
+    application = ProjectApplication(
+        project_id=project.id,
+        applicant_id=applicant.id,
+        reason="需要加入",
+        desired_role="member",
+        status=status,
+        reviewer_id=None if reviewer is None else reviewer.id,
+        reviewed_at=None if reviewer is None else datetime(2026, 1, 5),
+        reject_reason=reject_reason,
+        closed_reason=closed_reason,
+    )
+    if created_at is not None:
+        application.created_at = created_at
+    db.add(application)
+    db.flush()
+    return application
+
+
+def _auth(client: TestClient, user: User) -> dict[str, str]:
+    response = client.post(
+        "/api/auth/login", json={"username": user.username, "password": PASSWORD}
+    )
+    assert response.status_code == 200
+    return {"Authorization": f"Bearer {response.json()['access_token']}"}
+
+
+def _url(project: Project) -> str:
+    return f"/api/projects/{project.id}/applications"
+
+
+def test_ac_41_list_defaults_to_all_statuses(client: TestClient, db: Session) -> None:
+    """不传 status 返回全部状态，按 created_at 降序，含申请人/审批人摘要。"""
+    project = _project(db)
+    admin = _user(db)
+    reviewer = _user(db)
+    _join(db, project, admin, "project_admin")
+    oldest = _application(
+        db, project, _user(db), created_at=datetime(2026, 1, 1, 0, 0, 0)
+    )
+    newest = _application(
+        db,
+        project,
+        _user(db),
+        status="approved",
+        created_at=datetime(2026, 1, 3, 0, 0, 0),
+        reviewer=reviewer,
+    )
+    middle = _application(
+        db,
+        project,
+        _user(db),
+        status="rejected",
+        created_at=datetime(2026, 1, 2, 0, 0, 0),
+        reviewer=reviewer,
+        reject_reason="资料不全",
+    )
+
+    response = client.get(_url(project), headers=_auth(client, admin))
+
+    assert response.status_code == 200
+    body = response.json()
+    assert (body["total"], body["page"], body["page_size"]) == (3, 1, 20)
+    assert [item["id"] for item in body["items"]] == [
+        newest.id,
+        middle.id,
+        oldest.id,
+    ]
+    assert set(body["items"][0]) == ITEM_KEYS
+    assert body["items"][0]["applicant"]["username"]
+    assert body["items"][0]["reviewer"]["id"] == reviewer.id
+    assert body["items"][2]["reviewer"] is None
+    assert body["items"][1]["reject_reason"] == "资料不全"
+    assert body["items"][2]["closed_reason"] is None
+
+
+def test_ac_41_filter_by_status(client: TestClient, db: Session) -> None:
+    project = _project(db)
+    admin = _user(db)
+    _join(db, project, admin, "project_admin")
+    pending = _application(db, project, _user(db))
+    _application(db, project, _user(db), status="withdrawn")
+
+    response = client.get(
+        _url(project), params={"status": "pending"}, headers=_auth(client, admin)
+    )
+
+    assert response.status_code == 200
+    assert [item["id"] for item in response.json()["items"]] == [pending.id]
+
+
+def test_ac_41_invalid_status(client: TestClient, db: Session) -> None:
+    project = _project(db)
+    admin = _user(db)
+    _join(db, project, admin, "project_admin")
+
+    response = client.get(
+        _url(project), params={"status": "unknown"}, headers=_auth(client, admin)
+    )
+
+    assert response.status_code == 400
+    assert response.json()["code"] == "INVALID_APPLICATION_STATUS"
+
+
+def test_ac_41_pagination(client: TestClient, db: Session) -> None:
+    project = _project(db)
+    admin = _user(db)
+    _join(db, project, admin, "project_admin")
+    for day in (1, 2, 3):
+        _application(
+            db, project, _user(db), created_at=datetime(2026, 1, day, 0, 0, 0)
+        )
+    headers = _auth(client, admin)
+
+    first = client.get(_url(project), params={"page": 1, "page_size": 2}, headers=headers)
+    second = client.get(
+        _url(project), params={"page": 2, "page_size": 2}, headers=headers
+    )
+
+    assert first.status_code == 200
+    assert (first.json()["total"], first.json()["page"], first.json()["page_size"]) == (
+        3,
+        1,
+        2,
+    )
+    assert len(first.json()["items"]) == 2
+    assert len(second.json()["items"]) == 1
+    assert second.json()["page"] == 2
+
+
+def test_ac_41_system_admin_can_list_without_membership(
+    client: TestClient, db: Session
+) -> None:
+    project = _project(db)
+    _application(db, project, _user(db))
+    admin = _user(db, global_role="system_admin")
+
+    response = client.get(_url(project), headers=_auth(client, admin))
+
+    assert response.status_code == 200
+    assert response.json()["total"] == 1
+
+
+def test_ac_41_member_cannot_list(client: TestClient, db: Session) -> None:
+    project = _project(db)
+    member = _user(db)
+    _join(db, project, member, "member")
+
+    response = client.get(_url(project), headers=_auth(client, member))
+
+    assert response.status_code == 403
+    assert response.json()["code"] == "NOT_PROJECT_ADMIN"
+
+
+def test_ac_41_archived_project_still_readable(
+    client: TestClient, db: Session
+) -> None:
+    project = _project(db, status="archived")
+    admin = _user(db)
+    _join(db, project, admin, "project_admin")
+    _application(db, project, _user(db), status="closed", closed_reason="project_archived")
+
+    response = client.get(_url(project), headers=_auth(client, admin))
+
+    assert response.status_code == 200
+    assert response.json()["items"][0]["closed_reason"] == "project_archived"
+
+
+def test_ac_41_requires_login(client: TestClient, db: Session) -> None:
+    project = _project(db)
+
+    response = client.get(_url(project))
+
+    assert response.status_code == 401
+    assert response.json()["code"] == "UNAUTHENTICATED"

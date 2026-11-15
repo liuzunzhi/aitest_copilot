@@ -243,6 +243,13 @@ class CannotRemoveSelf(AppError):
     code = "CANNOT_REMOVE_SELF"
 
 
+class InvalidApplicationStatus(AppError):
+    """AC-41 / AC-43：申请列表的 status 筛选值不合法。"""
+
+    status_code = 400
+    code = "INVALID_APPLICATION_STATUS"
+
+
 def install_error_handlers(app: FastAPI) -> None:
     """把 AppError 统一渲染成 {"code","message",**extra}。"""
 
@@ -269,6 +276,7 @@ __all__ = [
     "ContactTaken",
     "DuplicateApplication",
     "Forbidden",
+    "InvalidApplicationStatus",
     "InvalidCredentials",
     "InvalidDesiredRole",
     "InvalidProjectDescription",
