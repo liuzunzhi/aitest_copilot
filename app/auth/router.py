@@ -3,6 +3,8 @@
 只做参数校验与响应组装，业务错误以 AppError 抛出，由统一处理器渲染。
 """
 
+from datetime import timezone
+
 from fastapi import APIRouter, Depends, status
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
@@ -25,6 +27,37 @@ class RegisterRequest(BaseModel):
 class RegisterResponse(BaseModel):
     status: str
     user_id: int
+
+
+class LoginRequest(BaseModel):
+    username: str
+    password: str
+    remember: bool = False
+
+
+class LoginResponse(BaseModel):
+    access_token: str
+    expires_at: str
+
+
+@router.post(
+    "/login",
+    response_model=LoginResponse,
+    summary="登录",
+)
+def login(
+    payload: LoginRequest, session: Session = Depends(get_db)
+) -> LoginResponse:
+    result = service.login(
+        session,
+        username=payload.username,
+        password=payload.password,
+        remember=payload.remember,
+    )
+    return LoginResponse(
+        access_token=result.access_token,
+        expires_at=result.expires_at.replace(tzinfo=timezone.utc).isoformat(),
+    )
 
 
 @router.post(

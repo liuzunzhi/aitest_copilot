@@ -16,8 +16,9 @@ class AppError(Exception):
     status_code = 400
     code = "BAD_REQUEST"
 
-    def __init__(self, message: str | None = None) -> None:
+    def __init__(self, message: str | None = None, **extra: object) -> None:
         self.message = message or self.code
+        self.extra = extra
         super().__init__(self.message)
 
 
@@ -46,22 +47,44 @@ class ContactTaken(AppError):
     code = "CONTACT_TAKEN"
 
 
+class InvalidCredentials(AppError):
+    """AC-02：用户名不存在、密码错误、账号已删除共用这一个响应。"""
+
+    status_code = 401
+    code = "INVALID_CREDENTIALS"
+
+
+class AccountDisabled(AppError):
+    status_code = 403
+    code = "ACCOUNT_DISABLED"
+
+
+class AccountLocked(AppError):
+    """AC-04：423 并带 unlock_at，前端据此显示剩余时间。"""
+
+    status_code = 423
+    code = "ACCOUNT_LOCKED"
+
+
 def install_error_handlers(app: FastAPI) -> None:
-    """把 AppError 统一渲染成 {"code","message"}。"""
+    """把 AppError 统一渲染成 {"code","message",**extra}。"""
 
     @app.exception_handler(AppError)
     async def _handle_app_error(request: Request, exc: AppError) -> JSONResponse:
         return JSONResponse(
             status_code=exc.status_code,
-            content={"code": exc.code, "message": exc.message},
+            content={"code": exc.code, "message": exc.message, **exc.extra},
         )
 
 
 __all__ = [
+    "AccountDisabled",
+    "AccountLocked",
     "AppError",
     "CaptchaInvalid",
     "CaptchaRequired",
     "ContactTaken",
+    "InvalidCredentials",
     "UsernameTaken",
     "WeakPassword",
     "install_error_handlers",
