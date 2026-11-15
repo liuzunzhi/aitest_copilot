@@ -23,6 +23,7 @@ dev = [
     "pytest>=8.3",
     "httpx>=0.28",
     "pytest-cov>=6.0",
+    "pytest-playwright>=0.5",
 ]
 
 [tool.setuptools.packages.find]
@@ -31,4 +32,8 @@ include = ["app*"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
-addopts = "-q"
+addopts = "-q -m 'not e2e'"
+markers = [
+    "e2e: 需要前后端已启动的 Playwright 前台用例（pytest -m e2e 单独执行）",
+    "task: 前台用例归属的任务号，决定截图目录",
+]
