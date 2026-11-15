@@ -51,6 +51,14 @@ def _project(db: Session) -> Project:
     return project
 
 
+def _admin(db: Session, project: Project) -> User:
+    """审批人必须是该项目管理员（AC-23）。"""
+    user = _user(db)
+    db.add(ProjectMember(project_id=project.id, user_id=user.id, role="project_admin"))
+    db.flush()
+    return user
+
+
 def _headers(client: TestClient, user: User) -> dict[str, str]:
     response = client.post(
         "/api/auth/login", json={"username": user.username, "password": PASSWORD}
@@ -89,8 +97,8 @@ def _reject(client, reviewer, project, application_id, **payload):
 def test_ac_21_approve_adds_member(client: TestClient, db: Session):
     """状态 approved、写入成员、旧 token 立即可访问项目、审计 before/after。"""
     applicant = _user(db)
-    reviewer = _user(db)
     project = _project(db)
+    reviewer = _admin(db, project)
     applicant_headers = _headers(client, applicant)
     assert (
         client.post(
@@ -132,8 +140,8 @@ def test_ac_21_approve_adds_member(client: TestClient, db: Session):
 
 def test_ac_21_approve_with_project_admin_role(client: TestClient, db: Session):
     applicant = _user(db)
-    reviewer = _user(db)
     project = _project(db)
+    reviewer = _admin(db, project)
     assert (
         client.post(
             SUBMIT.format(project_id=project.id),
@@ -156,8 +164,8 @@ def test_ac_21_approve_with_project_admin_role(client: TestClient, db: Session):
 @pytest.mark.parametrize("role", ["system_admin", None, "owner"])
 def test_ac_21_invalid_role_assignment(client: TestClient, db: Session, role):
     applicant = _user(db)
-    reviewer = _user(db)
     project = _project(db)
+    reviewer = _admin(db, project)
     assert (
         client.post(
             SUBMIT.format(project_id=project.id),
@@ -178,8 +186,8 @@ def test_ac_21_invalid_role_assignment(client: TestClient, db: Session, role):
 
 def test_ac_21_approve_twice_conflicts(client: TestClient, db: Session):
     applicant = _user(db)
-    reviewer = _user(db)
     project = _project(db)
+    reviewer = _admin(db, project)
     assert (
         client.post(
             SUBMIT.format(project_id=project.id),
@@ -199,8 +207,8 @@ def test_ac_21_approve_twice_conflicts(client: TestClient, db: Session):
 
 def test_ac_22_reject(client: TestClient, db: Session):
     applicant = _user(db)
-    reviewer = _user(db)
     project = _project(db)
+    reviewer = _admin(db, project)
     assert (
         client.post(
             SUBMIT.format(project_id=project.id),
@@ -236,8 +244,8 @@ def test_ac_22_reject(client: TestClient, db: Session):
 @pytest.mark.parametrize("reason", ["", "   ", None])
 def test_ac_22_reject_reason_required(client: TestClient, db: Session, reason):
     applicant = _user(db)
-    reviewer = _user(db)
     project = _project(db)
+    reviewer = _admin(db, project)
     assert (
         client.post(
             SUBMIT.format(project_id=project.id),
@@ -262,8 +270,8 @@ def test_ac_22_cooldown_boundary(client: TestClient, db: Session, monkeypatch):
     monkeypatch.setattr(clock_module, "clock", fixed)
 
     applicant = _user(db)
-    reviewer = _user(db)
     project = _project(db)
+    reviewer = _admin(db, project)
 
     assert (
         client.post(

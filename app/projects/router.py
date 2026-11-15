@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 
 from app.common import scoped_repo
 from app.common.db import get_db
-from app.common.deps import current_user
+from app.common.deps import current_user, require_project_admin_or_system_admin
 from app.models.user import User
 from app.projects import apply_service
 
@@ -114,11 +114,11 @@ def approve_application(
     application_id: int,
     payload: ApproveRequest,
     session: Session = Depends(get_db),
-    user: User = Depends(current_user),
+    reviewer: User = Depends(require_project_admin_or_system_admin),
 ) -> ApplicationStatusOut:
     apply_service.approve(
         session,
-        reviewer=user,
+        reviewer=reviewer,
         project_id=project_id,
         application_id=application_id,
         role=payload.role,
@@ -136,11 +136,11 @@ def reject_application(
     application_id: int,
     payload: RejectRequest,
     session: Session = Depends(get_db),
-    user: User = Depends(current_user),
+    reviewer: User = Depends(require_project_admin_or_system_admin),
 ) -> ApplicationStatusOut:
     apply_service.reject(
         session,
-        reviewer=user,
+        reviewer=reviewer,
         project_id=project_id,
         application_id=application_id,
         reason=payload.reason,

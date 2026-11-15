@@ -170,6 +170,13 @@ class ApplyCooldown(AppError):
     code = "APPLY_COOLDOWN"
 
 
+class NotProjectAdmin(AppError):
+    """AC-23：不是该项目管理员（系统管理员除外）。"""
+
+    status_code = 403
+    code = "NOT_PROJECT_ADMIN"
+
+
 def install_error_handlers(app: FastAPI) -> None:
     """把 AppError 统一渲染成 {"code","message",**extra}。"""
 
@@ -200,6 +207,7 @@ __all__ = [
     "InvalidResetCode",
     "InvalidRoleAssignment",
     "NotApplicationOwner",
+    "NotProjectAdmin",
     "NotProjectMember",
     "ProjectNotFound",
     "RateLimited",
