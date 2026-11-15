@@ -137,6 +137,13 @@ class InvalidProjectDescription(AppError):
     code = "INVALID_PROJECT_DESCRIPTION"
 
 
+class ProjectArchived(AppError):
+    """AC-32 / AC-34：归档项目只读，不允许再编辑或维护成员。"""
+
+    status_code = 409
+    code = "PROJECT_ARCHIVED"
+
+
 class ReasonRequired(AppError):
     status_code = 400
     code = "REASON_REQUIRED"
@@ -251,6 +258,7 @@ __all__ = [
     "NotProjectAdmin",
     "NotProjectMember",
     "PasswordChangeRequired",
+    "ProjectArchived",
     "ProjectNameRequired",
     "ProjectNotFound",
     "RateLimited",

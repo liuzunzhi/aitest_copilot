@@ -160,3 +160,156 @@ def test_ac_31_creator_can_review_immediately(client: TestClient, db: Session):
     db.expire_all()
     assert db.get(ProjectMember, (project_id, applicant.id)).role == "member"
     assert db.get(Project, project_id).status == "active"
+
+
+def _create(
+    client: TestClient,
+    headers: dict[str, str],
+    *,
+    name: str = "项目",
+    description: str | None = None,
+) -> dict:
+    response = client.post(
+        PROJECTS,
+        json={"name": name, "description": description},
+        headers=headers,
+    )
+    assert response.status_code == 201
+    return response.json()
+
+
+def _join(db: Session, project_id: int, user_id: int, role: str) -> None:
+    db.add(ProjectMember(project_id=project_id, user_id=user_id, role=role))
+    db.flush()
+
+
+def test_ac_32_update_name_and_description(client: TestClient, db: Session):
+    """项目管理员可编辑名称与简介，并留下 before / after 审计。"""
+    admin = _user(db, global_role="system_admin")
+    headers = _auth(client, admin)
+    project = _create(client, headers, name="旧名称", description="旧简介")
+
+    response = client.patch(
+        f"{PROJECTS}/{project['id']}",
+        json={"name": "新名称", "description": "新简介"},
+        headers=headers,
+    )
+
+    assert response.status_code == 200
+    assert response.json()["name"] == "新名称"
+    assert response.json()["description"] == "新简介"
+
+    db.expire_all()
+    row = db.get(Project, project["id"])
+    assert (row.name, row.description) == ("新名称", "新简介")
+
+    audit = db.execute(
+        select(AuditLog).where(AuditLog.action == "project.update")
+    ).scalar_one()
+    assert audit.actor_id == admin.id
+    assert audit.before_data == {"name": "旧名称", "description": "旧简介"}
+    assert audit.after_data == {"name": "新名称", "description": "新简介"}
+
+
+def test_ac_32_partial_update_keeps_description(client: TestClient, db: Session):
+    """未传的字段保持不变。"""
+    admin = _user(db, global_role="system_admin")
+    headers = _auth(client, admin)
+    project = _create(client, headers, name="旧名称", description="原简介")
+
+    response = client.patch(
+        f"{PROJECTS}/{project['id']}", json={"name": "只改名"}, headers=headers
+    )
+
+    assert response.status_code == 200
+    assert response.json()["name"] == "只改名"
+    assert response.json()["description"] == "原简介"
+
+
+def test_ac_32_explicit_null_clears_description(client: TestClient, db: Session):
+    """显式传 null 才清空简介，与「未传」区分。"""
+    admin = _user(db, global_role="system_admin")
+    headers = _auth(client, admin)
+    project = _create(client, headers, name="保留名称", description="待清空")
+
+    response = client.patch(
+        f"{PROJECTS}/{project['id']}", json={"description": None}, headers=headers
+    )
+
+    assert response.status_code == 200
+    assert response.json()["description"] is None
+
+
+def test_ac_32_archived_project_is_read_only(client: TestClient, db: Session):
+    admin = _user(db, global_role="system_admin")
+    headers = _auth(client, admin)
+    project = _create(client, headers, name="将归档")
+    db.get(Project, project["id"]).status = "archived"
+    db.flush()
+
+    response = client.patch(
+        f"{PROJECTS}/{project['id']}", json={"name": "改名"}, headers=headers
+    )
+
+    assert response.status_code == 409
+    assert response.json()["code"] == "PROJECT_ARCHIVED"
+
+
+def test_ac_32_member_cannot_edit(client: TestClient, db: Session):
+    admin = _user(db, global_role="system_admin")
+    project = _create(client, _auth(client, admin), name="成员不可改")
+    member = _user(db)
+    _join(db, project["id"], member.id, "member")
+
+    response = client.patch(
+        f"{PROJECTS}/{project['id']}",
+        json={"name": "越权改名"},
+        headers=_auth(client, member),
+    )
+
+    assert response.status_code == 403
+    assert response.json()["code"] == "NOT_PROJECT_ADMIN"
+
+
+def test_ac_32_non_member_cannot_edit(client: TestClient, db: Session):
+    admin = _user(db, global_role="system_admin")
+    project = _create(client, _auth(client, admin), name="非成员不可改")
+    outsider = _user(db)
+
+    response = client.patch(
+        f"{PROJECTS}/{project['id']}",
+        json={"name": "越权改名"},
+        headers=_auth(client, outsider),
+    )
+
+    assert response.status_code == 403
+    assert response.json()["code"] == "NOT_PROJECT_ADMIN"
+
+
+def test_ac_32_empty_name_rejected(client: TestClient, db: Session):
+    admin = _user(db, global_role="system_admin")
+    headers = _auth(client, admin)
+    project = _create(client, headers, name="原名")
+
+    response = client.patch(
+        f"{PROJECTS}/{project['id']}", json={"name": "   "}, headers=headers
+    )
+
+    assert response.status_code == 400
+    assert response.json()["code"] == "PROJECT_NAME_REQUIRED"
+
+
+def test_ac_32_system_admin_can_edit_without_membership(client: TestClient, db: Session):
+    """系统管理员走全局旁路，不需要是该项目的成员。"""
+    creator = _user(db, global_role="system_admin")
+    project = _create(client, _auth(client, creator), name="系统可改")
+    other_admin = _user(db, global_role="system_admin")
+
+    response = client.patch(
+        f"{PROJECTS}/{project['id']}",
+        json={"description": "系统管理员修改"},
+        headers=_auth(client, other_admin),
+    )
+
+    assert response.status_code == 200
+    assert response.json()["description"] == "系统管理员修改"

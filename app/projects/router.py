@@ -35,6 +35,13 @@ class ProjectCreateRequest(BaseModel):
     description: str | None = None
 
 
+class ProjectUpdateRequest(BaseModel):
+    """同样交给服务层校验；用 `model_fields_set` 区分「未传」与「显式 null」。"""
+
+    name: str | None = None
+    description: str | None = None
+
+
 class SubmitApplicationRequest(BaseModel):
     """字段都允许缺省，由服务层给「理由必填 / 角色白名单」的稳定错误码。
 
@@ -96,6 +103,27 @@ def create_project(
 ) -> ProjectOut:
     project = service.create_project(
         session, actor=admin, name=payload.name, description=payload.description
+    )
+    return ProjectOut(
+        id=project.id,
+        name=project.name,
+        description=project.description,
+        status=project.status,
+    )
+
+
+@router.patch("/{project_id}", response_model=ProjectOut, summary="编辑项目")
+def update_project(
+    project_id: int,
+    payload: ProjectUpdateRequest,
+    session: Session = Depends(get_db),
+    actor: User = Depends(require_project_admin_or_system_admin),
+) -> ProjectOut:
+    project = service.update_project(
+        session,
+        actor=actor,
+        project_id=project_id,
+        changes=payload.model_dump(exclude_unset=True),
     )
     return ProjectOut(
         id=project.id,

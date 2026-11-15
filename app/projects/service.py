@@ -7,6 +7,7 @@ from app.common.audit import write_audit
 from app.common.errors import (
     InvalidProjectDescription,
     InvalidProjectName,
+    ProjectArchived,
     ProjectNameRequired,
     ProjectNotFound,
 )
@@ -58,6 +59,60 @@ def create_project(
         after_data={"name": name, "description": description, "status": "active"},
     )
     session.commit()
+    return project
+
+
+def update_project(
+    session: Session,
+    *,
+    actor: User,
+    project_id: int,
+    changes: dict[str, object],
+) -> Project:
+    """局部更新项目（AC-32）。
+
+    只处理请求里显式出现的字段：未传保持不变，显式传 null 清空简介。
+    归档项目只读，编辑一律 409。
+    """
+    project = session.get(Project, project_id)
+    if project is None:
+        raise ProjectNotFound("项目不存在")
+    if project.status == "archived":
+        raise ProjectArchived("项目已归档，不可编辑")
+
+    before = {"name": project.name, "description": project.description}
+
+    if "name" in changes:
+        name = str(changes["name"] or "").strip()
+        if not name:
+            raise ProjectNameRequired("项目名称必填")
+        if len(name) > NAME_MAX_LENGTH:
+            raise InvalidProjectName(f"项目名称不能超过 {NAME_MAX_LENGTH} 个字符")
+        project.name = name
+
+    if "description" in changes:
+        description = str(changes["description"] or "").strip() or None
+        if description is not None and len(description) > DESCRIPTION_MAX_LENGTH:
+            raise InvalidProjectDescription(
+                f"项目简介不能超过 {DESCRIPTION_MAX_LENGTH} 个字符"
+            )
+        project.description = description
+
+    after = {"name": project.name, "description": project.description}
+    if before != after:
+        write_audit(
+            session,
+            "project.update",
+            actor_id=actor.id,
+            actor_role=actor.global_role,
+            project_id=project_id,
+            target_type="project",
+            target_id=project_id,
+            before_data=before,
+            after_data=after,
+        )
+        session.commit()
+
     return project
 
 
@@ -114,4 +169,5 @@ __all__ = [
     "CLOSED_REASON_ARCHIVED",
     "archive_project",
     "create_project",
+    "update_project",
 ]
