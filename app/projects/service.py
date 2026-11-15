@@ -1,15 +1,64 @@
-"""项目生命周期（T24，AC-24；T26 补 close 审计）。"""
+"""项目生命周期（T24 归档；T28 创建；T26 补 close 审计）。"""
 
 from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
 from app.common.audit import write_audit
-from app.common.errors import ProjectNotFound
+from app.common.errors import (
+    InvalidProjectDescription,
+    InvalidProjectName,
+    ProjectNameRequired,
+    ProjectNotFound,
+)
 from app.models.application import ProjectApplication
-from app.models.project import Project
+from app.models.project import Project, ProjectMember
 from app.models.user import User
 
 CLOSED_REASON_ARCHIVED = "project_archived"
+NAME_MAX_LENGTH = 128
+DESCRIPTION_MAX_LENGTH = 500
+
+
+def create_project(
+    session: Session, *, actor: User, name: str | None, description: str | None
+) -> Project:
+    """创建项目，并把创建人写成项目管理员（AC-31）。
+
+    创建与成员写入必须同一事务：否则会出现「项目建好了但没人能审批」的孤儿项目。
+    名称与简介在服务层校验，保证空名称返回 400 而不是 Pydantic 的 422。
+    """
+    name = (name or "").strip()
+    if not name:
+        raise ProjectNameRequired("项目名称必填")
+    if len(name) > NAME_MAX_LENGTH:
+        raise InvalidProjectName(f"项目名称不能超过 {NAME_MAX_LENGTH} 个字符")
+
+    description = (description or "").strip() or None
+    if description is not None and len(description) > DESCRIPTION_MAX_LENGTH:
+        raise InvalidProjectDescription(
+            f"项目简介不能超过 {DESCRIPTION_MAX_LENGTH} 个字符"
+        )
+
+    project = Project(name=name, description=description)
+    session.add(project)
+    session.flush()
+
+    session.add(
+        ProjectMember(project_id=project.id, user_id=actor.id, role="project_admin")
+    )
+
+    write_audit(
+        session,
+        "project.create",
+        actor_id=actor.id,
+        actor_role=actor.global_role,
+        project_id=project.id,
+        target_type="project",
+        target_id=project.id,
+        after_data={"name": name, "description": description, "status": "active"},
+    )
+    session.commit()
+    return project
 
 
 def archive_project(
@@ -61,4 +110,8 @@ def archive_project(
     session.commit()
 
 
-__all__ = ["CLOSED_REASON_ARCHIVED", "archive_project"]
+__all__ = [
+    "CLOSED_REASON_ARCHIVED",
+    "archive_project",
+    "create_project",
+]

@@ -116,6 +116,27 @@ class ProjectNotFound(AppError):
     code = "PROJECT_NOT_FOUND"
 
 
+class ProjectNameRequired(AppError):
+    """AC-31：项目名称必填。"""
+
+    status_code = 400
+    code = "PROJECT_NAME_REQUIRED"
+
+
+class InvalidProjectName(AppError):
+    """AC-31：项目名称超出 128 字符。"""
+
+    status_code = 400
+    code = "INVALID_PROJECT_NAME"
+
+
+class InvalidProjectDescription(AppError):
+    """AC-31：项目简介超出 500 字符。"""
+
+    status_code = 400
+    code = "INVALID_PROJECT_DESCRIPTION"
+
+
 class ReasonRequired(AppError):
     status_code = 400
     code = "REASON_REQUIRED"
@@ -221,6 +242,8 @@ __all__ = [
     "Forbidden",
     "InvalidCredentials",
     "InvalidDesiredRole",
+    "InvalidProjectDescription",
+    "InvalidProjectName",
     "InvalidResetCode",
     "InvalidRoleAssignment",
     "InvalidStatus",
@@ -228,6 +251,7 @@ __all__ = [
     "NotProjectAdmin",
     "NotProjectMember",
     "PasswordChangeRequired",
+    "ProjectNameRequired",
     "ProjectNotFound",
     "RateLimited",
     "ReasonRequired",

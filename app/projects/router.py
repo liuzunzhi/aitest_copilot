@@ -1,4 +1,4 @@
-"""项目列表与可申请列表（T19，AC-26 / 28 / 29 / 30）。"""
+"""项目列表、可申请列表与项目管理（T19 / T28）。"""
 
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
@@ -6,9 +6,13 @@ from sqlalchemy.orm import Session
 
 from app.common import scoped_repo
 from app.common.db import get_db
-from app.common.deps import current_user, require_project_admin_or_system_admin
+from app.common.deps import (
+    current_user,
+    require_project_admin_or_system_admin,
+    require_system_admin,
+)
 from app.models.user import User
-from app.projects import apply_service
+from app.projects import apply_service, service
 
 router = APIRouter(prefix="/api/projects", tags=["projects"])
 
@@ -16,11 +20,19 @@ router = APIRouter(prefix="/api/projects", tags=["projects"])
 class ProjectOut(BaseModel):
     id: int
     name: str
+    description: str | None
     status: str
 
 
 class MyProjectOut(ProjectOut):
     role: str
+
+
+class ProjectCreateRequest(BaseModel):
+    """名称与简介交给服务层校验，保证空名称返回 400 而不是 422。"""
+
+    name: str | None = None
+    description: str | None = None
 
 
 class SubmitApplicationRequest(BaseModel):
@@ -50,7 +62,13 @@ def list_projects(
     session: Session = Depends(get_db), user: User = Depends(current_user)
 ) -> list[MyProjectOut]:
     return [
-        MyProjectOut(id=project.id, name=project.name, status=project.status, role=role)
+        MyProjectOut(
+            id=project.id,
+            name=project.name,
+            description=project.description,
+            status=project.status,
+            role=role,
+        )
         for project, role in scoped_repo.list_member_projects(session, user.id)
     ]
 
@@ -60,9 +78,31 @@ def list_available_projects(
     session: Session = Depends(get_db), user: User = Depends(current_user)
 ) -> list[ProjectOut]:
     return [
-        ProjectOut(id=project.id, name=project.name, status=project.status)
+        ProjectOut(
+            id=project.id,
+            name=project.name,
+            description=project.description,
+            status=project.status,
+        )
         for project in scoped_repo.list_available_projects(session, user.id)
     ]
+
+
+@router.post("", status_code=201, response_model=ProjectOut, summary="创建项目")
+def create_project(
+    payload: ProjectCreateRequest,
+    session: Session = Depends(get_db),
+    admin: User = Depends(require_system_admin),
+) -> ProjectOut:
+    project = service.create_project(
+        session, actor=admin, name=payload.name, description=payload.description
+    )
+    return ProjectOut(
+        id=project.id,
+        name=project.name,
+        description=project.description,
+        status=project.status,
+    )
 
 
 @router.post(

@@ -26,6 +26,9 @@ class Project(Base):
 
     id: Mapped[int] = mapped_column(BIGINT(unsigned=True), primary_key=True, autoincrement=True)
     name: Mapped[str] = mapped_column(String(128), nullable=False)
+    description: Mapped[str | None] = mapped_column(
+        String(500), nullable=True, comment="项目简介"
+    )
     status: Mapped[str] = mapped_column(
         String(16), nullable=False, server_default=text("'active'")
     )
