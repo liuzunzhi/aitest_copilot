@@ -19,6 +19,9 @@ reports/
 # Playwright 前台用例产物（截图另存 .screenshots/）
 test-results/
 
+# 上传的文档原文（03-documents）
+var/uploads/
+
 # 编辑器
 .idea/
 .vscode/

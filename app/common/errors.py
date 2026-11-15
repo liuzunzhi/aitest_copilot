@@ -292,6 +292,34 @@ class DocumentParseFailed(AppError):
     code = "DOCUMENT_PARSE_FAILED"
 
 
+class DocumentNameTaken(AppError):
+    """AC-50：同项目文档同名。"""
+
+    status_code = 409
+    code = "DOCUMENT_NAME_TAKEN"
+
+
+class DocumentNotFound(AppError):
+    """AC-51：文档不存在或不属于该项目。"""
+
+    status_code = 404
+    code = "DOCUMENT_NOT_FOUND"
+
+
+class DocumentVersionNotFound(AppError):
+    """AC-54：版本不存在或不属于该文档。"""
+
+    status_code = 404
+    code = "DOCUMENT_VERSION_NOT_FOUND"
+
+
+class InvalidVersionStatus(AppError):
+    """AC-54 / 55：重复确认、作废非 pending 版本。"""
+
+    status_code = 409
+    code = "INVALID_VERSION_STATUS"
+
+
 def install_error_handlers(app: FastAPI) -> None:
     """把 AppError 统一渲染成 {"code","message",**extra}。"""
 

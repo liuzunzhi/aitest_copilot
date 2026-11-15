@@ -29,6 +29,12 @@ class Settings(BaseSettings):
     # bcrypt 计算成本，4 ~ 16
     bcrypt_cost: int = Field(default=12, ge=4, le=16)
 
+    # 文档原文存放目录（相对项目根或绝对路径），库里只存相对该目录的路径
+    upload_dir: str = Field(default="var/uploads", min_length=1)
+
+    # 单个上传文件上限，默认 10MB
+    doc_max_bytes: int = Field(default=10 * 1024 * 1024, gt=0)
+
 
 @lru_cache
 def get_settings() -> Settings:
