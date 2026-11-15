@@ -58,7 +58,9 @@ def test_ac_31_create_project(client: TestClient, db: Session):
     assert member.role == "project_admin"
 
     audit = db.execute(
-        select(AuditLog).where(AuditLog.action == "project.create")
+        select(AuditLog).where(
+            AuditLog.action == "project.create", AuditLog.project_id == project_id
+        )
     ).scalar_one()
     assert audit.actor_id == admin.id
     assert audit.project_id == project_id

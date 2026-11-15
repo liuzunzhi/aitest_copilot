@@ -146,7 +146,9 @@ def test_ac_33_archive_via_api(client: TestClient, db: Session):
     assert db.get(ProjectApplication, pending.id).status == "closed"
 
     audit = db.execute(
-        select(AuditLog).where(AuditLog.action == "project.archive")
+        select(AuditLog).where(
+            AuditLog.action == "project.archive", AuditLog.project_id == project.id
+        )
     ).scalar_one()
     assert audit.actor_id == admin.id
     assert audit.project_id == project.id
@@ -169,7 +171,12 @@ def test_ac_33_repeat_archive_does_not_duplicate_audit(client: TestClient, db: S
 
     db.expire_all()
     audits = (
-        db.execute(select(AuditLog).where(AuditLog.action == "project.archive"))
+        db.execute(
+            select(AuditLog).where(
+                AuditLog.action == "project.archive",
+                AuditLog.project_id == project.id,
+            )
+        )
         .scalars()
         .all()
     )

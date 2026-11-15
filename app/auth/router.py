@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 
 from app.auth import service
 from app.common.db import get_db
-from app.common.deps import auth_context, bearer_token
+from app.common.deps import auth_context, authenticated_user, bearer_token
 from app.models.token import AccessToken
 from app.models.user import User
 
@@ -47,6 +47,28 @@ class LoginResponse(BaseModel):
 class ChangePasswordRequest(BaseModel):
     old_password: str
     new_password: str
+
+
+class MeResponse(BaseModel):
+    id: int
+    username: str
+    global_role: str
+    must_change_password: bool
+
+
+@router.get("/me", response_model=MeResponse, summary="当前登录用户")
+def me(user: User = Depends(authenticated_user)) -> MeResponse:
+    """前端靠它拿到用户名与全局角色，决定是否展示管理入口。
+
+    故意不用 `current_user`：待改密用户也要能读到 `must_change_password`，
+    否则前端无法把他引到改密页。
+    """
+    return MeResponse(
+        id=user.id,
+        username=user.username,
+        global_role=user.global_role,
+        must_change_password=user.must_change_password,
+    )
 
 
 class SendResetCodeRequest(BaseModel):

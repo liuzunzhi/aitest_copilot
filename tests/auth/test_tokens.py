@@ -38,7 +38,7 @@ def test_issue_stores_only_hash(db: Session):
     token = issue(db, user.id, 3600)
 
     assert isinstance(token, str) and token
-    row = db.query(AccessToken).one()
+    row = db.query(AccessToken).filter(AccessToken.user_id == user.id).one()
     assert row.user_id == user.id
     assert row.token_hash == hashlib.sha256(token.encode()).hexdigest()
     assert row.token_hash != token
