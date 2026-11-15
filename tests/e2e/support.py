@@ -135,3 +135,12 @@ class Api:
             headers=self._headers(token),
         )
         assert response.status in (200, 201), response.text()
+
+    def set_role(self, user_id: int, global_role: str) -> None:
+        """改全局角色，用管理员令牌（AC-45 的后台动作，前台只负责展示结果）。"""
+        response = self.ctx.patch(
+            f"/api/admin/users/{user_id}/role",
+            data={"global_role": global_role},
+            headers=self._headers(),
+        )
+        assert response.ok, response.text()
