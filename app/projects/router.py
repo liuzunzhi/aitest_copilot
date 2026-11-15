@@ -8,6 +8,7 @@ from app.common import scoped_repo
 from app.common.db import get_db
 from app.common.deps import current_user
 from app.models.user import User
+from app.projects import apply_service
 
 router = APIRouter(prefix="/api/projects", tags=["projects"])
 
@@ -20,6 +21,20 @@ class ProjectOut(BaseModel):
 
 class MyProjectOut(ProjectOut):
     role: str
+
+
+class SubmitApplicationRequest(BaseModel):
+    """字段都允许缺省，由服务层给「理由必填 / 角色白名单」的稳定错误码。
+
+    交给 Pydantic 校验会得到 422，而 AC-14 / AC-15 要求的是 400。
+    """
+
+    reason: str | None = None
+    desired_role: str | None = None
+
+
+class ApplicationStatusOut(BaseModel):
+    status: str
 
 
 @router.get("", response_model=list[MyProjectOut], summary="我参与的项目")
@@ -40,3 +55,25 @@ def list_available_projects(
         ProjectOut(id=project.id, name=project.name, status=project.status)
         for project in scoped_repo.list_available_projects(session, user.id)
     ]
+
+
+@router.post(
+    "/{project_id}/applications",
+    status_code=201,
+    response_model=ApplicationStatusOut,
+    summary="提交项目申请",
+)
+def submit_application(
+    project_id: int,
+    payload: SubmitApplicationRequest,
+    session: Session = Depends(get_db),
+    user: User = Depends(current_user),
+) -> ApplicationStatusOut:
+    application = apply_service.submit(
+        session,
+        user=user,
+        project_id=project_id,
+        reason=payload.reason,
+        desired_role=payload.desired_role,
+    )
+    return ApplicationStatusOut(status=application.status)

@@ -109,6 +109,38 @@ class NotProjectMember(AppError):
     code = "NOT_PROJECT_MEMBER"
 
 
+class ProjectNotFound(AppError):
+    """项目不存在或已归档——归档项目不再接受申请。"""
+
+    status_code = 404
+    code = "PROJECT_NOT_FOUND"
+
+
+class ReasonRequired(AppError):
+    status_code = 400
+    code = "REASON_REQUIRED"
+
+
+class InvalidDesiredRole(AppError):
+    status_code = 400
+    code = "INVALID_DESIRED_ROLE"
+
+
+class AlreadyProjectMember(AppError):
+    status_code = 409
+    code = "ALREADY_PROJECT_MEMBER"
+
+
+class DuplicateApplication(AppError):
+    status_code = 409
+    code = "DUPLICATE_APPLICATION"
+
+
+class ApplyDisabled(AppError):
+    status_code = 403
+    code = "APPLY_DISABLED"
+
+
 def install_error_handlers(app: FastAPI) -> None:
     """把 AppError 统一渲染成 {"code","message",**extra}。"""
 
@@ -123,15 +155,21 @@ def install_error_handlers(app: FastAPI) -> None:
 __all__ = [
     "AccountDisabled",
     "AccountLocked",
+    "AlreadyProjectMember",
     "AppError",
+    "ApplyDisabled",
     "CaptchaInvalid",
     "CaptchaRequired",
     "ContactTaken",
+    "DuplicateApplication",
     "Forbidden",
     "InvalidCredentials",
+    "InvalidDesiredRole",
     "InvalidResetCode",
     "NotProjectMember",
+    "ProjectNotFound",
     "RateLimited",
+    "ReasonRequired",
     "TokenExpired",
     "TokenRevoked",
     "Unauthenticated",
