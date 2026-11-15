@@ -113,6 +113,24 @@ def test_weak_new_password(client: TestClient, db: Session):
     assert db.get(User, user.id).must_change_password is True
 
 
+def test_change_revokes_other_devices(client: TestClient, db: Session):
+    user = _user(db)
+    current = _login(client, user)["access_token"]
+    other_device = _login(client, user)["access_token"]
+
+    response = client.post(
+        CHANGE,
+        json={"old_password": PASSWORD, "new_password": "Newpass123"},
+        headers=_headers(current),
+    )
+
+    assert response.status_code == 200
+    assert client.get(PROJECTS, headers=_headers(current)).status_code == 200
+    revoked = client.get(PROJECTS, headers=_headers(other_device))
+    assert revoked.status_code == 401
+    assert revoked.json()["code"] == "TOKEN_REVOKED"
+
+
 def test_normal_user_can_change_password(client: TestClient, db: Session):
     user = _user(db)
     token = _login(client, user)["access_token"]

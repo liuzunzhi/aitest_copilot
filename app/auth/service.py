@@ -254,11 +254,17 @@ def reset_password(
 
 
 def change_password(
-    session: Session, *, user: User, old_password: str, new_password: str
+    session: Session,
+    *,
+    user: User,
+    old_password: str,
+    new_password: str,
+    keep_token_id: int | None = None,
 ) -> None:
     """修改密码：管理员重置后的首次改密，也用于普通用户主动改密。
 
-    不清除其他令牌：当前令牌在改密后继续有效，避免用户刚改完就被踢出。
+    改密后吊销该用户其他所有令牌（其他设备），保留当前会话
+    （`keep_token_id`），避免用户在改密页被自己踢下线。
     """
     if not verify_password(old_password, user.password_hash):
         raise InvalidCredentials("用户名或密码错误")
@@ -268,6 +274,8 @@ def change_password(
     user.password_hash = hash_password(new_password)
     user.password_changed_at = utcnow_naive()
     user.must_change_password = False
+
+    revoke_all(session, user.id, except_id=keep_token_id)
 
     write_audit(
         session,

@@ -18,6 +18,7 @@ from app.common.errors import (
     PasswordChangeRequired,
     Unauthenticated,
 )
+from app.models.token import AccessToken
 from app.models.project import ProjectMember
 from app.models.user import User
 
@@ -40,18 +41,24 @@ def bearer_token(authorization: str | None = Header(default=None)) -> str:
     return credentials.strip()
 
 
-def authenticated_user(
+def auth_context(
     session: Session = Depends(get_db),
     token: str = Depends(bearer_token),
-) -> User:
-    """只校验令牌与账号状态，不检查是否待改密。
+) -> tuple[User, AccessToken]:
+    """解析令牌，返回 (用户, 令牌行)。
 
-    仅供改密接口使用——待改密用户必须能调用它，否则永远出不来。
+    不检查是否待改密——改密接口需要它，否则待改密用户永远出不来。
     """
-    user, _ = tokens.authenticate(session, token)
+    user, access_token = tokens.authenticate(session, token)
     if user.status != "active":
         raise AccountDisabled("账号已被禁用")
-    return user
+    return user, access_token
+
+
+def authenticated_user(
+    context: tuple[User, AccessToken] = Depends(auth_context),
+) -> User:
+    return context[0]
 
 
 def current_user(user: User = Depends(authenticated_user)) -> User:
@@ -115,6 +122,7 @@ def require_project_role(*roles: str) -> Callable[..., ProjectMember]:
 __all__ = [
     "PROJECT_ADMIN",
     "SYSTEM_ADMIN",
+    "auth_context",
     "authenticated_user",
     "bearer_token",
     "current_user",

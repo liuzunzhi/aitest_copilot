@@ -11,7 +11,8 @@ from sqlalchemy.orm import Session
 
 from app.auth import service
 from app.common.db import get_db
-from app.common.deps import authenticated_user, bearer_token
+from app.common.deps import auth_context, bearer_token
+from app.models.token import AccessToken
 from app.models.user import User
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
@@ -83,13 +84,15 @@ def reset_password(
 def change_password(
     payload: ChangePasswordRequest,
     session: Session = Depends(get_db),
-    user: User = Depends(authenticated_user),
+    context: tuple[User, AccessToken] = Depends(auth_context),
 ) -> dict[str, str]:
+    user, access_token = context
     service.change_password(
         session,
         user=user,
         old_password=payload.old_password,
         new_password=payload.new_password,
+        keep_token_id=access_token.id,
     )
     return {"status": "ok"}
 

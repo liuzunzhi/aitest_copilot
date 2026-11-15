@@ -17,7 +17,7 @@ from app.common import clock as clock_module
 from app.common.clock import FixedClock
 from app.common.deps import (
     bearer_token,
-    authenticated_user,
+    auth_context,
     require_project_role,
     require_system_admin,
 )
@@ -74,14 +74,14 @@ def test_disabled_user_token_rejected(client: TestClient, db: Session):
     db.flush()
 
     with pytest.raises(AccountDisabled):
-        authenticated_user(session=db, token=token)
+        auth_context(session=db, token=token)[0]
 
 
 def test_active_user_token_accepted(client: TestClient, db: Session):
     user = _user(db)
     token = _token(client, user.username)
 
-    assert authenticated_user(session=db, token=token).id == user.id
+    assert auth_context(session=db, token=token)[0].id == user.id
 
 
 def test_missing_and_malformed_token():
@@ -98,7 +98,7 @@ def test_missing_and_malformed_token():
 
 def test_unknown_token(db: Session):
     with pytest.raises(Unauthenticated):
-        authenticated_user(session=db, token="not-a-real-token")
+        auth_context(session=db, token="not-a-real-token")
 
 
 def test_expired_token(client: TestClient, db: Session, monkeypatch):
@@ -111,7 +111,7 @@ def test_expired_token(client: TestClient, db: Session, monkeypatch):
     fixed.advance(timedelta(hours=9))
 
     with pytest.raises(TokenExpired):
-        authenticated_user(session=db, token=token)
+        auth_context(session=db, token=token)[0]
 
 
 def test_revoked_token(client: TestClient, db: Session):
@@ -121,7 +121,7 @@ def test_revoked_token(client: TestClient, db: Session):
     client.post(LOGOUT, headers={"Authorization": f"Bearer {token}"})
 
     with pytest.raises(TokenRevoked):
-        authenticated_user(session=db, token=token)
+        auth_context(session=db, token=token)[0]
 
 
 def test_require_system_admin(db: Session):

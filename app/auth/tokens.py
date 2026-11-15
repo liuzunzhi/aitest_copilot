@@ -126,15 +126,20 @@ def revoke(session: Session, token: str) -> bool:
     return result.rowcount == 1
 
 
-def revoke_all(session: Session, user_id: int) -> int:
-    """吊销该用户全部仍有效的令牌，返回影响条数。"""
+def revoke_all(session: Session, user_id: int, *, except_id: int | None = None) -> int:
+    """吊销该用户全部仍有效的令牌，返回影响条数。
+
+    `except_id` 用于「改密后保留当前会话、踢掉其他设备」。
+    """
+    conditions = [
+        AccessToken.user_id == user_id,
+        AccessToken.revoked_at.is_(None),
+    ]
+    if except_id is not None:
+        conditions.append(AccessToken.id != except_id)
+
     result = session.execute(
-        update(AccessToken)
-        .where(
-            AccessToken.user_id == user_id,
-            AccessToken.revoked_at.is_(None),
-        )
-        .values(revoked_at=utcnow_naive())
+        update(AccessToken).where(*conditions).values(revoked_at=utcnow_naive())
     )
     return result.rowcount
 
