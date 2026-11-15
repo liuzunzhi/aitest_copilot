@@ -18,13 +18,19 @@ from app.common.audit import write_audit
 from app.common.clock import utcnow_naive
 from app.common.db import get_db
 from app.common.deps import require_system_admin
-from app.common.errors import InvalidStatus, UserNotFound
+from app.common.errors import (
+    CannotChangeOwnRole,
+    InvalidGlobalRole,
+    InvalidStatus,
+    UserNotFound,
+)
 from app.common.security import hash_password
 from app.models.user import User
 
 router = APIRouter(prefix="/api/admin/users", tags=["admin"])
 
 ALLOWED_STATUSES = ("active", "disabled")
+ALLOWED_GLOBAL_ROLES = ("user", "system_admin")
 
 
 class UserOut(BaseModel):
@@ -51,6 +57,16 @@ class PasswordResetOut(BaseModel):
     status: str
     temporary_password: str
     must_change_password: bool
+
+
+class RoleRequest(BaseModel):
+    global_role: str | None = None
+
+
+class RoleOut(BaseModel):
+    id: int
+    username: str
+    global_role: str
 
 
 def _generate_temporary_password() -> str:
@@ -101,6 +117,46 @@ def update_status(
     )
     session.commit()
     return StatusOut(status=user.status)
+
+
+@router.patch("/{uid}/role", response_model=RoleOut, summary="修改全局角色")
+def update_role(
+    uid: int,
+    payload: RoleRequest,
+    session: Session = Depends(get_db),
+    admin: User = Depends(require_system_admin),
+) -> RoleOut:
+    """提升 / 降级系统管理员（AC-45）。
+
+    每次请求都读库判定权限，角色一改原令牌立即生效（AC-46），
+    不需要吊销令牌；禁止改自己，从机制上保证至少剩一名系统管理员。
+    """
+    if payload.global_role not in ALLOWED_GLOBAL_ROLES:
+        raise InvalidGlobalRole("全局角色仅支持 user / system_admin")
+
+    user = session.get(User, uid)
+    if user is None:
+        raise UserNotFound("用户不存在")
+
+    if uid == admin.id:
+        raise CannotChangeOwnRole("不能修改自己的全局角色")
+
+    previous = user.global_role
+    if previous != payload.global_role:
+        user.global_role = payload.global_role
+        write_audit(
+            session,
+            "user.role.change",
+            actor_id=admin.id,
+            actor_role=admin.global_role,
+            target_type="user",
+            target_id=uid,
+            before_data={"global_role": previous},
+            after_data={"global_role": payload.global_role},
+        )
+        session.commit()
+
+    return RoleOut(id=user.id, username=user.username, global_role=user.global_role)
 
 
 @router.patch("/{uid}/password", response_model=PasswordResetOut, summary="管理员重置密码")

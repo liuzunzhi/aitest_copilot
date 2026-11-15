@@ -250,6 +250,20 @@ class InvalidApplicationStatus(AppError):
     code = "INVALID_APPLICATION_STATUS"
 
 
+class InvalidGlobalRole(AppError):
+    """AC-45：global_role 只允许 user / system_admin。"""
+
+    status_code = 400
+    code = "INVALID_GLOBAL_ROLE"
+
+
+class CannotChangeOwnRole(AppError):
+    """AC-45：系统管理员不能修改自己的全局角色。"""
+
+    status_code = 400
+    code = "CANNOT_CHANGE_OWN_ROLE"
+
+
 def install_error_handlers(app: FastAPI) -> None:
     """把 AppError 统一渲染成 {"code","message",**extra}。"""
 
@@ -272,6 +286,7 @@ __all__ = [
     "ApplyDisabled",
     "CaptchaInvalid",
     "CaptchaRequired",
+    "CannotChangeOwnRole",
     "CannotRemoveSelf",
     "ContactTaken",
     "DuplicateApplication",
@@ -279,6 +294,7 @@ __all__ = [
     "InvalidApplicationStatus",
     "InvalidCredentials",
     "InvalidDesiredRole",
+    "InvalidGlobalRole",
     "InvalidProjectDescription",
     "InvalidProjectName",
     "InvalidResetCode",
