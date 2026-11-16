@@ -37,7 +37,7 @@ def _overview(client: TestClient, project, headers) -> dict:
 
 
 def test_ac_40_counts_documents_and_baselines(client: TestClient, db: Session, upload_root):
-    """文档数按文档算（不是版本），基线数按快照算。"""
+    """文档数按文档算（不是版本）；基线数只算已审核通过的功能基线快照。"""
     project, headers = _setup(client, db)
     first = _upload(client, project, headers)
     _upload(client, project, headers, name="退款需求.md")
@@ -54,7 +54,8 @@ def test_ac_40_counts_documents_and_baselines(client: TestClient, db: Session, u
 
     after = _overview(client, project, headers)
     assert after["document_count"] == 2
-    assert after["baseline_count"] == 1
+    # 文档基线快照不再计入概览（03 的「版本快照」Tab 自己展示）
+    assert after["baseline_count"] == 0
 
 
 def test_ac_40_counts_scoped_to_project(client: TestClient, db: Session, upload_root):
