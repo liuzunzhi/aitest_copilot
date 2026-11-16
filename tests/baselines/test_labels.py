@@ -275,6 +275,50 @@ def test_ac_67_clear_keeps_row(client: TestClient, project, headers, reviewer_he
     assert active["total"] == 1
 
 
+def test_ac_67_labels_status_filter(client: TestClient, project, headers, reviewer_headers):
+    """`GET /labels` 默认只列生效标签；前台要看留痕时取 all。"""
+    built = build_structure(client, headers, project.id)
+    snapshot = make_snapshot(client, headers, project.id, reviewer_headers)
+    created = _label(
+        client,
+        headers,
+        project.id,
+        snapshot["id"],
+        "function",
+        built["function"]["id"],
+        "changed",
+    ).json()
+
+    def statuses(status: str) -> list[str]:
+        body = client.get(
+            LABELS.format(project_id=project.id),
+            params={"status": status},
+            headers=headers,
+        ).json()
+        return [item["status"] for item in body["items"]]
+
+    assert statuses("active") == ["active"]
+
+    client.post(
+        LABELS.format(project_id=project.id) + f"/{created['id']}/clear",
+        json={"clear_reason": "misjudged"},
+        headers=headers,
+    )
+
+    # 默认口径：清除后不再出现
+    assert statuses("active") == []
+    # 留痕口径：已清除的行还在
+    assert statuses("cleared") == ["cleared"]
+    assert statuses("all") == ["cleared"]
+
+    invalid = client.get(
+        LABELS.format(project_id=project.id),
+        params={"status": "deleted"},
+        headers=headers,
+    )
+    assert invalid.status_code == 422
+
+
 def test_ac_68_label_filtered_by_revision(
     client: TestClient, project, headers, reviewer_headers
 ):

@@ -146,6 +146,38 @@ def test_ac_70_version_increments(client: TestClient, project, headers, reviewer
     assert [item["version_no"] for item in revisions["items"]] == [1, 0]
 
 
+def test_ac_69_revisions_status_filter(
+    client: TestClient, project, headers, reviewer_headers
+):
+    """`GET /revisions` 默认只列已通过；前台审核页要按状态取。"""
+    build_structure(client, headers, project.id)
+    make_snapshot(client, headers, project.id, reviewer_headers)
+    submitted = submit_review(client, headers, project.id)
+
+    def versions(status: str) -> list[int | None]:
+        body = client.get(
+            REVISIONS.format(project_id=project.id),
+            params={"status": status},
+            headers=headers,
+        ).json()
+        return [item["version_no"] for item in body["items"]]
+
+    # 默认 approved：只看到已经生成的那份快照
+    assert versions("approved") == [0]
+    # 审核中：只有那条还没分配版本号的提交记录
+    assert versions("submitted") == [None]
+    # all：两份都在，新的在前
+    assert versions("all") == [None, 0]
+    assert submitted["status"] == "submitted"
+
+    invalid = client.get(
+        REVISIONS.format(project_id=project.id),
+        params={"status": "draft"},
+        headers=headers,
+    )
+    assert invalid.status_code == 422
+
+
 def test_ac_70_snapshot_immutable(client: TestClient, project, headers, reviewer_headers):
     """审核通过后继续编辑结构，快照不变。"""
     built = build_structure(client, headers, project.id)

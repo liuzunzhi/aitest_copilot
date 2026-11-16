@@ -1380,13 +1380,25 @@ def reject_review(
 
 
 def list_revisions(
-    session: Session, project_id: int, *, page: int = 1, page_size: int = 50
+    session: Session,
+    project_id: int,
+    *,
+    status: str = "approved",
+    page: int = 1,
+    page_size: int = 50,
 ) -> dict:
-    """快照列表（只列审核通过的），新版本在前。"""
+    """快照列表，新版本在前。
+
+    默认只列审核通过的（`status='approved'`）；`status='submitted'` 用来
+    看待审核的记录，`status='all'` 列全部。
+    """
+    query = select(BaselineRevision).where(
+        BaselineRevision.project_id == project_id
+    )
+    if status != "all":
+        query = query.where(BaselineRevision.status == status)
     rows = session.scalars(
-        select(BaselineRevision)
-        .where(BaselineRevision.project_id == project_id, BaselineRevision.status == "approved")
-        .order_by(BaselineRevision.version_no.desc(), BaselineRevision.id.desc())
+        query.order_by(BaselineRevision.id.desc())
     ).all()
     items = [
         {
@@ -1650,15 +1662,40 @@ def _snapshot_references(session: Session, revision_id: int) -> list[dict]:
 
     增量分析记录、测试点、用例、测试报告尚未上线，
     对应模块落地时在这里补来源类型。
+
+    返回带 `target_name`：用户认对象靠业务名称，不靠内部 ID。
     """
     rows = session.execute(
         select(BaselineLabel, BaselineLabel.target_type, BaselineLabel.target_id)
         .where(BaselineLabel.revision_id == revision_id, BaselineLabel.status == "active")
     ).all()
+    if not rows:
+        return []
+
+    function_ids = [target_id for _, target_type, target_id in rows if target_type == "function"]
+    point_ids = [target_id for _, target_type, target_id in rows if target_type == "feature_point"]
+
+    names: dict[tuple[str, int], str] = {}
+    if function_ids:
+        for function_id, function_name in session.execute(
+            select(BaselineFunction.id, BaselineFunction.name).where(
+                BaselineFunction.id.in_(function_ids)
+            )
+        ).all():
+            names[("function", function_id)] = function_name
+    if point_ids:
+        for point_id, point_name in session.execute(
+            select(BaselineFeaturePoint.id, BaselineFeaturePoint.name).where(
+                BaselineFeaturePoint.id.in_(point_ids)
+            )
+        ).all():
+            names[("feature_point", point_id)] = point_name
+
     return [
         {
             "source_type": f"baseline_{target_type}",
             "target_id": target_id,
+            "target_name": names.get((target_type, target_id), "已删除的对象"),
             "label_type": label.label_type,
         }
         for label, target_type, target_id in rows

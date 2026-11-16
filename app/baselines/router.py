@@ -402,7 +402,7 @@ def list_labels(
     target_type: str | None = Query(default=None),
     target_id: int | None = Query(default=None),
     revision_id: int | None = Query(default=None),
-    status: str | None = Query(default=None, pattern="^(active|cleared)$"),
+    status: str | None = Query(default=None, pattern="^(active|cleared|all)$"),
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=50, ge=1, le=200),
     session: Session = Depends(get_db),
@@ -497,14 +497,17 @@ def clear_label(
 @router.get("/{project_id}/baselines/revisions", response_model=Page[RevisionOut])
 def list_revisions(
     project_id: int,
+    status: str = Query(default="approved", pattern="^(approved|submitted|rejected|all)$"),
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=50, ge=1, le=200),
     session: Session = Depends(get_db),
     user: User = Depends(current_user),
 ) -> Page[RevisionOut]:
-    """快照列表（只列审核通过的）。"""
+    """快照列表。默认只列审核通过的；`status=submitted` 看待审核的。"""
     service.ensure_readable(session, project_id=project_id, actor=user)
-    result = service.list_revisions(session, project_id, page=page, page_size=page_size)
+    result = service.list_revisions(
+        session, project_id, status=status, page=page, page_size=page_size
+    )
     return Page[RevisionOut](
         items=[RevisionOut(**item) for item in result["items"]],
         total=result["total"],
