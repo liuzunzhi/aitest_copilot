@@ -320,6 +320,166 @@ class InvalidVersionStatus(AppError):
     code = "INVALID_VERSION_STATUS"
 
 
+class ModuleNotFound(AppError):
+    """AC-62：模块不存在或不属于该项目。"""
+
+    status_code = 404
+    code = "MODULE_NOT_FOUND"
+
+
+class ModuleNotEmpty(AppError):
+    """AC-64：模块下还有功能，不能直接删。
+
+    响应带 `available_actions`，前端据此弹出「迁移功能」「删除功能」两个入口。
+    """
+
+    status_code = 409
+    code = "MODULE_NOT_EMPTY"
+
+
+class DuplicateModuleName(AppError):
+    """AC-62：同项目模块名重复。"""
+
+    status_code = 409
+    code = "DUPLICATE_MODULE_NAME"
+
+
+class FunctionNotFound(AppError):
+    """AC-62：功能不存在或不属于该项目。"""
+
+    status_code = 404
+    code = "FUNCTION_NOT_FOUND"
+
+
+class DuplicateFunctionName(AppError):
+    """AC-62：同模块功能名重复。"""
+
+    status_code = 409
+    code = "DUPLICATE_FUNCTION_NAME"
+
+
+class FeaturePointNotFound(AppError):
+    """AC-62：功能点不存在或不属于该项目。"""
+
+    status_code = 404
+    code = "FEATURE_POINT_NOT_FOUND"
+
+
+class DuplicateFeaturePointName(AppError):
+    """AC-62：同功能功能点名重复。"""
+
+    status_code = 409
+    code = "DUPLICATE_FEATURE_POINT_NAME"
+
+
+class InvalidMigrateTarget(AppError):
+    """AC-65：迁移目标不存在、跨项目或等于当前模块。"""
+
+    status_code = 400
+    code = "INVALID_MIGRATE_TARGET"
+
+
+class TraceFieldsReadOnly(AppError):
+    """AC-63：来源追溯字段只读，写接口不接受。"""
+
+    status_code = 400
+    code = "TRACE_FIELDS_READONLY"
+
+
+class InvalidLabelType(AppError):
+    """AC-66：标签类型不在 new/changed/affected/unchanged 之内。"""
+
+    status_code = 400
+    code = "INVALID_LABEL_TYPE"
+
+
+class DuplicateLabel(AppError):
+    """AC-66：同实体同快照同类型已有生效标签。"""
+
+    status_code = 409
+    code = "DUPLICATE_LABEL"
+
+
+class LabelNotFound(AppError):
+    """AC-67：标签不存在或不属于该项目。"""
+
+    status_code = 404
+    code = "LABEL_NOT_FOUND"
+
+
+class LabelAlreadyCleared(AppError):
+    """AC-67：标签已经被清除过，不能重复清除。"""
+
+    status_code = 409
+    code = "LABEL_ALREADY_CLEARED"
+
+
+class ClearReasonRequired(AppError):
+    """AC-67：清除标签必须给原因。"""
+
+    status_code = 400
+    code = "CLEAR_REASON_REQUIRED"
+
+
+class InvalidClearReason(AppError):
+    """AC-67：清除原因不在 6 类枚举之内。"""
+
+    status_code = 400
+    code = "INVALID_CLEAR_REASON"
+
+
+class ClearNoteRequired(AppError):
+    """AC-67：原因选「其他」时必须写备注。"""
+
+    status_code = 400
+    code = "CLEAR_NOTE_REQUIRED"
+
+
+class ReviewNotFound(AppError):
+    """AC-69：审核记录不存在。"""
+
+    status_code = 404
+    code = "REVIEW_NOT_FOUND"
+
+
+class InvalidReviewStatus(AppError):
+    """AC-69：重复审核 / 当前状态不允许该操作。"""
+
+    status_code = 409
+    code = "INVALID_REVIEW_STATUS"
+
+
+class ReviewCommentRequired(AppError):
+    """AC-69：驳回必须写意见。"""
+
+    status_code = 400
+    code = "REVIEW_COMMENT_REQUIRED"
+
+
+class SelfApprovalForbidden(AppError):
+    """AC-69：提交者不能审核自己的提交。"""
+
+    status_code = 403
+    code = "SELF_APPROVAL_FORBIDDEN"
+
+
+class SnapshotNotFound(AppError):
+    """AC-70：快照不存在或不属于该项目。"""
+
+    status_code = 404
+    code = "SNAPSHOT_NOT_FOUND"
+
+
+class SnapshotReferenced(AppError):
+    """AC-72：快照被标签引用，禁止删除。
+
+    响应带 `refs`，前端据此提示「这份快照被 N 处标签引用，清理前请先解除引用」。
+    """
+
+    status_code = 409
+    code = "SNAPSHOT_REFERENCED"
+
+
 def install_error_handlers(app: FastAPI) -> None:
     """把 AppError 统一渲染成 {"code","message",**extra}。"""
 
@@ -344,20 +504,40 @@ __all__ = [
     "CaptchaRequired",
     "CannotChangeOwnRole",
     "CannotRemoveSelf",
+    "ClearNoteRequired",
+    "ClearReasonRequired",
     "ContactTaken",
+    "DocumentParseFailed",
+    "DocumentTooLarge",
     "DuplicateApplication",
+    "DuplicateFeaturePointName",
+    "DuplicateFunctionName",
+    "DuplicateLabel",
+    "DuplicateModuleName",
+    "EmptyDocument",
+    "FeaturePointNotFound",
     "Forbidden",
+    "FunctionNotFound",
     "InvalidApplicationStatus",
+    "InvalidClearReason",
     "InvalidCredentials",
     "InvalidDesiredRole",
     "InvalidGlobalRole",
+    "InvalidLabelType",
+    "InvalidMigrateTarget",
     "InvalidProjectDescription",
     "InvalidProjectName",
     "InvalidResetCode",
+    "InvalidReviewStatus",
     "InvalidRoleAssignment",
     "InvalidStatus",
+    "InvalidVersionStatus",
+    "LabelAlreadyCleared",
+    "LabelNotFound",
     "LastProjectAdmin",
     "MemberNotFound",
+    "ModuleNotEmpty",
+    "ModuleNotFound",
     "NotApplicationOwner",
     "NotProjectAdmin",
     "NotProjectMember",
@@ -367,9 +547,16 @@ __all__ = [
     "ProjectNotFound",
     "RateLimited",
     "ReasonRequired",
+    "ReviewCommentRequired",
+    "ReviewNotFound",
+    "SelfApprovalForbidden",
+    "SnapshotNotFound",
+    "SnapshotReferenced",
     "TokenExpired",
     "TokenRevoked",
+    "TraceFieldsReadOnly",
     "Unauthenticated",
+    "UnsupportedDocType",
     "UserNotFound",
     "UsernameTaken",
     "WeakPassword",
