@@ -41,14 +41,17 @@ router = APIRouter(prefix="/api/projects", tags=["baselines"])
 @router.get("/{project_id}/baselines/modules", response_model=Page[ModuleOut])
 def list_modules(
     project_id: int,
+    status: str = Query(default="active", pattern="^(active|archived|all)$"),
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=50, ge=1, le=200),
     session: Session = Depends(get_db),
     user: User = Depends(current_user),
 ) -> Page[ModuleOut]:
-    """模块列表。成员（含访客）可读；非成员 403。"""
+    """模块列表。默认只列在用模块；`status=archived` 看归档的。"""
     service.ensure_readable(session, project_id=project_id, actor=user)
-    result = service.list_modules(session, project_id, page=page, page_size=page_size)
+    result = service.list_modules(
+        session, project_id, status=status, page=page, page_size=page_size
+    )
     return Page[ModuleOut](
         items=[ModuleOut(**item) for item in result["items"]],
         total=result["total"],
@@ -180,12 +183,13 @@ def list_functions(
     label_type: str | None = Query(default=None),
     keyword: str | None = Query(default=None),
     revision_id: int | None = Query(default=None),
+    status: str = Query(default="active", pattern="^(active|archived|all)$"),
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=50, ge=1, le=200),
     session: Session = Depends(get_db),
     user: User = Depends(current_user),
 ) -> Page[FunctionOut]:
-    """功能列表，支持模块/来源类型/标签类型/关键词筛选。"""
+    """功能列表，支持模块/来源类型/标签类型/关键词/状态筛选。"""
     service.ensure_readable(session, project_id=project_id, actor=user)
     result = service.list_functions(
         session,
@@ -195,6 +199,7 @@ def list_functions(
         label_type=label_type,
         keyword=keyword,
         revision_id=revision_id,
+        status=status,
         page=page,
         page_size=page_size,
     )

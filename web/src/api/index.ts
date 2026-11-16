@@ -331,6 +331,9 @@ export async function updateUserRole(
 
 export type LabelType = 'new' | 'changed' | 'affected' | 'unchanged'
 
+/** 模块/功能的状态筛选：在用 / 归档 / 全部（默认在用）。 */
+export type BaselineStatusFilter = 'active' | 'archived' | 'all'
+
 export type ClearReason =
   | 'requirement_done'
   | 'requirement_cancelled'
@@ -453,7 +456,7 @@ const BASELINES = (projectId: number) => `/projects/${projectId}/baselines`
 
 export async function listBaselineModules(
   projectId: number,
-  params?: { page?: number; page_size?: number },
+  params?: { status?: BaselineStatusFilter; page?: number; page_size?: number },
 ): Promise<Page<BaselineModule>> {
   const { data } = await client.get<Page<BaselineModule>>(
     `${BASELINES(projectId)}/modules`,
@@ -476,7 +479,12 @@ export async function createBaselineModule(
 export async function updateBaselineModule(
   projectId: number,
   moduleId: number,
-  body: { name?: string; description?: string | null; sort_order?: number; status?: string },
+  body: {
+    name?: string
+    description?: string | null
+    sort_order?: number
+    status?: 'active' | 'archived'
+  },
 ): Promise<BaselineModule> {
   const { data } = await client.patch<BaselineModule>(
     `${BASELINES(projectId)}/modules/${moduleId}`,
@@ -516,6 +524,7 @@ export async function listBaselineFunctions(
     label_type?: string
     keyword?: string
     revision_id?: number
+    status?: BaselineStatusFilter
     page?: number
     page_size?: number
   },

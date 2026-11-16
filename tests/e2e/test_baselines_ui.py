@@ -550,3 +550,47 @@ def test_ac_74_permission_matrix_ui(api, make_user, page_as, shot) -> None:
     )
     assert archived.status == 409
     assert archived.json()["code"] == "PROJECT_ARCHIVED"
+
+
+@pytest.mark.task("T66")
+def test_spec_23_archived_module_hidden_ui(admin_page: Page, api, shot) -> None:
+    """spec §2.3 第 5 条：归档模块默认不展示，切换状态后可取消归档。"""
+    project = api.create_project(_name("bl-archive"))
+    module = _create_module(api, project["id"], _name("归档模块"))
+    admin_page.reload()
+    _open_management(admin_page, project["name"])
+
+    node = _tree_node(admin_page, module["name"])
+    expect(node).to_be_visible()
+    node.get_by_test_id("baseline-module-archive").click()
+    expect(admin_page.locator(".ant-message")).to_contain_text("模块已归档")
+    # 默认「在用」视图里归档模块消失
+    expect(admin_page.locator(".ant-tree-treenode", has_text=module["name"])).to_have_count(0)
+    shot(admin_page, "archived-hidden")
+
+    status_filter = admin_page.get_by_test_id("baseline-status-filter")
+    # 切「全部」→ 归档模块重新出现，操作变成「取消归档」
+    status_filter.click()
+    admin_page.locator(
+        ".ant-select-dropdown:visible .ant-select-item-option", has_text="全部"
+    ).first.click()
+    expect(admin_page.locator(".ant-select-dropdown:visible")).to_have_count(0)
+    node = _tree_node(admin_page, module["name"])
+    expect(node).to_be_visible()
+    expect(node.get_by_role("button", name="取消归档")).to_be_visible()
+    shot(admin_page, "archived-in-all")
+
+    node.get_by_test_id("baseline-module-archive").click()
+    expect(admin_page.locator(".ant-message")).to_contain_text("模块已取消归档")
+    expect(_tree_node(admin_page, module["name"])).to_be_visible()
+
+    # 回到「在用」视图：模块可见且操作恢复为「归档」
+    status_filter.click()
+    admin_page.locator(
+        ".ant-select-dropdown:visible .ant-select-item-option", has_text="在用"
+    ).first.click()
+    expect(admin_page.locator(".ant-select-dropdown:visible")).to_have_count(0)
+    active_node = _tree_node(admin_page, module["name"])
+    expect(active_node).to_be_visible()
+    expect(active_node.get_by_role("button", name="归档")).to_be_visible()
+    shot(admin_page, "unarchived-active")

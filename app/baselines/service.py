@@ -238,17 +238,24 @@ CASCADE_CLEAR_REASON = "target_deleted"
 
 
 def list_modules(
-    session: Session, project_id: int, *, page: int = 1, page_size: int = 50
+    session: Session,
+    project_id: int,
+    *,
+    status: str = "active",
+    page: int = 1,
+    page_size: int = 50,
 ) -> dict:
     """模块列表，带功能数。
 
+    默认只返回在用模块；归档模块保留历史但不参与默认展示（spec §2.3 第 5 条）。
     一次取全部模块 + 全部功能的计数后在内存聚合，
     避免按模块逐个查功能的 N+1。
     """
+    query = select(BaselineModule).where(BaselineModule.project_id == project_id)
+    if status != "all":
+        query = query.where(BaselineModule.status == status)
     modules = session.scalars(
-        select(BaselineModule)
-        .where(BaselineModule.project_id == project_id)
-        .order_by(BaselineModule.sort_order, BaselineModule.id)
+        query.order_by(BaselineModule.sort_order, BaselineModule.id)
     ).all()
 
     counts = dict(
@@ -435,17 +442,25 @@ def list_functions(
     label_type: str | None = None,
     keyword: str | None = None,
     revision_id: int | None = None,
+    status: str = "active",
     page: int = 1,
     page_size: int = 50,
 ) -> dict:
     """功能列表，支持多条件组合筛选。
 
+    默认只返回在用功能，且排除挂在归档模块下的功能（spec §2.3 第 5 条）；
+    `status=archived` 只看归档功能，`status=all` 不按状态过滤。
     标签按「实体自身」与「其功能点」分开统计：功能标签不由功能点标签汇总
     （AC-66），但功能无标签而功能点有标签时给出弱化提示用的计数。
     """
     query = select(BaselineFunction, BaselineModule).join(
         BaselineModule, BaselineModule.id == BaselineFunction.module_id
     )
+    if status != "all":
+        query = query.where(BaselineFunction.status == status)
+    if status == "active":
+        # 归档模块不参与默认展示：其下功能一并隐藏
+        query = query.where(BaselineModule.status == "active")
     if module_id is not None:
         query = query.where(BaselineFunction.module_id == module_id)
     if source_type is not None:
@@ -1459,22 +1474,43 @@ def get_revision(session: Session, project_id: int, revision_id: int) -> dict:
 
 
 def _freeze_structure(session: Session, project_id: int) -> tuple[str, dict[str, int]]:
-    """把当前的三级结构冻结成 JSON 文本，并给出各级计数。"""
+    """把当前的三级结构冻结成 JSON 文本，并给出各级计数。
+
+    归档模块及其功能不参与新快照（spec §2.3 第 5 条），计数也不含它们。
+    """
     modules = session.scalars(
         select(BaselineModule)
         .where(BaselineModule.project_id == project_id, BaselineModule.status == "active")
         .order_by(BaselineModule.sort_order, BaselineModule.id)
     ).all()
-    functions = session.scalars(
-        select(BaselineFunction)
-        .where(BaselineFunction.project_id == project_id, BaselineFunction.status == "active")
-        .order_by(BaselineFunction.id)
-    ).all()
-    points = session.scalars(
-        select(BaselineFeaturePoint)
-        .where(BaselineFeaturePoint.project_id == project_id, BaselineFeaturePoint.status == "active")
-        .order_by(BaselineFeaturePoint.id)
-    ).all()
+    module_ids = [module.id for module in modules]
+    functions = (
+        session.scalars(
+            select(BaselineFunction)
+            .where(
+                BaselineFunction.project_id == project_id,
+                BaselineFunction.status == "active",
+                BaselineFunction.module_id.in_(module_ids),
+            )
+            .order_by(BaselineFunction.id)
+        ).all()
+        if module_ids
+        else []
+    )
+    function_ids = [function.id for function in functions]
+    points = (
+        session.scalars(
+            select(BaselineFeaturePoint)
+            .where(
+                BaselineFeaturePoint.project_id == project_id,
+                BaselineFeaturePoint.status == "active",
+                BaselineFeaturePoint.function_id.in_(function_ids),
+            )
+            .order_by(BaselineFeaturePoint.id)
+        ).all()
+        if function_ids
+        else []
+    )
 
     points_by_function: dict[int, list[BaselineFeaturePoint]] = {}
     for point in points:

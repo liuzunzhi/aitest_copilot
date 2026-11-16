@@ -37,6 +37,7 @@ import type {
   BaselineLabel,
   BaselineModule,
   BaselineRevision,
+  BaselineStatusFilter,
   ClearReason,
   LabelType,
 } from '../api'
@@ -81,6 +82,8 @@ export default function ProjectBaselineTree({ projectId, canWrite }: Props) {
   const [keyword, setKeyword] = useState('')
   const [labelType, setLabelType] = useState<string | undefined>()
   const [sourceType, setSourceType] = useState<string | undefined>()
+  /** 归档模块保留历史但不参与默认展示（spec §2.3 第 5 条）。 */
+  const [statusFilter, setStatusFilter] = useState<BaselineStatusFilter>('active')
 
   const [moduleModal, setModuleModal] = useState<{
     open: boolean
@@ -133,8 +136,14 @@ export default function ProjectBaselineTree({ projectId, canWrite }: Props) {
 
   const reload = useCallback(async () => {
     const [modulePage, functionPage] = await Promise.all([
-      listBaselineModules(projectId, { page_size: 200 }),
-      listBaselineFunctions(projectId, { page_size: 200 }),
+      listBaselineModules(projectId, {
+        status: statusFilter,
+        page_size: 200,
+      }),
+      listBaselineFunctions(projectId, {
+        status: statusFilter,
+        page_size: 200,
+      }),
     ])
     setModules(modulePage.items)
     setFunctions(functionPage.items)
@@ -150,7 +159,7 @@ export default function ProjectBaselineTree({ projectId, canWrite }: Props) {
       }
       return [...next]
     })
-  }, [projectId])
+  }, [projectId, statusFilter])
 
   const reloadRevisions = useCallback(async () => {
     const page = await listBaselineRevisions(projectId, {
@@ -269,6 +278,18 @@ export default function ProjectBaselineTree({ projectId, canWrite }: Props) {
         setNotEmptyModal({ open: true, module })
         return
       }
+      message.error(errorMessage(error))
+    }
+  }
+
+  /** 归档 / 取消归档：状态经 PATCH 写入，审计沿用 module.update。 */
+  async function toggleModuleArchive(module: BaselineModule) {
+    const next = module.status === 'archived' ? 'active' : 'archived'
+    try {
+      await updateBaselineModule(projectId, module.id, { status: next })
+      message.success(next === 'archived' ? '模块已归档' : '模块已取消归档')
+      await reload()
+    } catch (error) {
       message.error(errorMessage(error))
     }
   }
@@ -478,6 +499,17 @@ export default function ProjectBaselineTree({ projectId, canWrite }: Props) {
                 }}
               >
                 迁移功能
+              </Button>
+              <Button
+                type="link"
+                size="small"
+                data-testid="baseline-module-archive"
+                onClick={(event) => {
+                  event.stopPropagation()
+                  void toggleModuleArchive(module)
+                }}
+              >
+                {module.status === 'archived' ? '取消归档' : '归档'}
               </Button>
               <Popconfirm
                 title="删除该模块？"
@@ -707,6 +739,17 @@ export default function ProjectBaselineTree({ projectId, canWrite }: Props) {
         <Button onClick={() => reload().catch((error) => message.error(errorMessage(error)))}>
           刷新
         </Button>
+        <Select
+          data-testid="baseline-status-filter"
+          style={{ width: 120 }}
+          value={statusFilter}
+          onChange={(value: BaselineStatusFilter) => setStatusFilter(value)}
+          options={[
+            { value: 'active', label: '在用' },
+            { value: 'archived', label: '归档' },
+            { value: 'all', label: '全部' },
+          ]}
+        />
       </Space>
 
       {modules.length === 0 ? (
