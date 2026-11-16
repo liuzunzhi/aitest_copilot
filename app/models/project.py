@@ -3,7 +3,7 @@
 from datetime import datetime
 
 from sqlalchemy import CheckConstraint, ForeignKeyConstraint, Index, String, text
-from sqlalchemy.dialects.mysql import BIGINT, DATETIME
+from sqlalchemy.dialects.mysql import BIGINT, DATETIME, INTEGER
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.common.db import Base
@@ -31,6 +31,11 @@ class Project(Base):
     )
     status: Mapped[str] = mapped_column(
         String(16), nullable=False, server_default=text("'active'")
+    )
+    baseline_snapshot_max_count: Mapped[int | None] = mapped_column(
+        INTEGER(unsigned=True),
+        nullable=True,
+        comment="基线快照保留上限，空 = 不启用（永久保留）",
     )
     created_at: Mapped[datetime] = mapped_column(
         DATETIME(fsp=3), nullable=False, server_default=text("CURRENT_TIMESTAMP(3)")
