@@ -20,7 +20,8 @@ from app.common.errors import (
     UserNotFound,
 )
 from app.models.application import ProjectApplication
-from app.models.document import BaselineSnapshot, Document
+from app.models.baseline import BaselineRevision
+from app.models.document import Document
 from app.models.project import Project, ProjectMember
 from app.models.user import User
 
@@ -330,8 +331,11 @@ def get_overview(session: Session, *, project_id: int) -> dict[str, object]:
     ).scalar_one()
     baseline_count = session.execute(
         select(func.count())
-        .select_from(BaselineSnapshot)
-        .where(BaselineSnapshot.project_id == project_id)
+        .select_from(BaselineRevision)
+        .where(
+            BaselineRevision.project_id == project_id,
+            BaselineRevision.status == "approved",
+        )
     ).scalar_one()
     return {
         "member_count": member_count,
