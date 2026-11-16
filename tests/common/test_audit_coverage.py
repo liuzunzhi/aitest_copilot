@@ -44,6 +44,7 @@ PROJECT_MEMBER = "/api/projects/{project_id}/members/{user_id}"
 DOCUMENTS = "/api/projects/{project_id}/documents"
 ACTIVATE = DOCUMENTS + "/{document_id}/versions/{version_id}/activate"
 VOID = DOCUMENTS + "/{document_id}/versions/{version_id}/void"
+BASELINES = "/api/projects/{project_id}/baselines"
 
 
 @pytest.fixture(autouse=True)
@@ -403,6 +404,250 @@ def _baseline_snapshot(client: TestClient, db: Session, monkeypatch) -> None:
     _version_activate(client, db, monkeypatch)
 
 
+# ------------------------------------------------- 功能基线（04 模块）场景
+
+
+def _baseline_setup(client: TestClient, db: Session):
+    """建项目 + 两个项目管理员（一个提交、一个审核），返回 (project, 头, 审核头)。"""
+    user = _user(db)
+    reviewer = _user(db)
+    project = _project(db)
+    _join(db, project, user, "project_admin")
+    _join(db, project, reviewer, "project_admin")
+    return project, _headers(client, user), _headers(client, reviewer)
+
+
+def _baseline_module(client: TestClient, db: Session, monkeypatch=None):
+    project, headers, reviewer_headers = _baseline_setup(client, db)
+    response = client.post(
+        BASELINES.format(project_id=project.id) + "/modules",
+        json={"name": "支付模块"},
+        headers=headers,
+    )
+    assert response.status_code == 201, response.text
+    return project, headers, reviewer_headers, response.json()
+
+
+def _baseline_module_update(client: TestClient, db: Session, monkeypatch) -> None:
+    project, headers, _, module = _baseline_module(client, db)
+    response = client.patch(
+        BASELINES.format(project_id=project.id) + f"/modules/{module['id']}",
+        json={"description": "改描述"},
+        headers=headers,
+    )
+    assert response.status_code == 200, response.text
+
+
+def _baseline_module_delete(client: TestClient, db: Session, monkeypatch) -> None:
+    project, headers, _, module = _baseline_module(client, db)
+    response = client.delete(
+        BASELINES.format(project_id=project.id) + f"/modules/{module['id']}",
+        headers=headers,
+    )
+    assert response.status_code == 200, response.text
+
+
+def _baseline_function(client: TestClient, db: Session, monkeypatch=None):
+    project, headers, reviewer_headers, module = _baseline_module(client, db)
+    response = client.post(
+        BASELINES.format(project_id=project.id) + "/functions",
+        json={"module_id": module["id"], "name": "下单"},
+        headers=headers,
+    )
+    assert response.status_code == 201, response.text
+    return project, headers, reviewer_headers, module, response.json()
+
+
+def _baseline_function_update(client: TestClient, db: Session, monkeypatch) -> None:
+    project, headers, _, _, function = _baseline_function(client, db)
+    response = client.patch(
+        BASELINES.format(project_id=project.id) + f"/functions/{function['id']}",
+        json={"name": "提交订单"},
+        headers=headers,
+    )
+    assert response.status_code == 200, response.text
+
+
+def _baseline_function_delete(client: TestClient, db: Session, monkeypatch) -> None:
+    project, headers, _, _, function = _baseline_function(client, db)
+    response = client.delete(
+        BASELINES.format(project_id=project.id) + f"/functions/{function['id']}",
+        headers=headers,
+    )
+    assert response.status_code == 200, response.text
+
+
+def _baseline_point(client: TestClient, db: Session, monkeypatch=None):
+    project, headers, reviewer_headers, _, function = _baseline_function(client, db)
+    response = client.post(
+        BASELINES.format(project_id=project.id)
+        + f"/functions/{function['id']}/feature-points",
+        json={"name": "填写收货地址"},
+        headers=headers,
+    )
+    assert response.status_code == 201, response.text
+    return project, headers, reviewer_headers, function, response.json()
+
+
+def _baseline_point_update(client: TestClient, db: Session, monkeypatch) -> None:
+    project, headers, _, _, point = _baseline_point(client, db)
+    response = client.patch(
+        BASELINES.format(project_id=project.id) + f"/feature-points/{point['id']}",
+        json={"name": "填写地址"},
+        headers=headers,
+    )
+    assert response.status_code == 200, response.text
+
+
+def _baseline_point_delete(client: TestClient, db: Session, monkeypatch) -> None:
+    project, headers, _, _, point = _baseline_point(client, db)
+    response = client.delete(
+        BASELINES.format(project_id=project.id) + f"/feature-points/{point['id']}",
+        headers=headers,
+    )
+    assert response.status_code == 200, response.text
+
+
+def _baseline_migrate(client: TestClient, db: Session, monkeypatch) -> None:
+    project, headers, _, module, function = _baseline_function(client, db)
+    response = client.post(
+        BASELINES.format(project_id=project.id) + "/modules",
+        json={"name": "交易模块"},
+        headers=headers,
+    )
+    assert response.status_code == 201, response.text
+    target = response.json()
+    response = client.post(
+        BASELINES.format(project_id=project.id)
+        + f"/modules/{module['id']}/migrate",
+        json={"target_module_id": target["id"], "function_ids": [function["id"]]},
+        headers=headers,
+    )
+    assert response.status_code == 200, response.text
+
+
+def _baseline_snapshot_revision(client: TestClient, db: Session):
+    """走一遍提交 → 审核通过，返回 (project, 头, 审核头, revision)。"""
+    project, headers, reviewer_headers, _, function = _baseline_function(client, db)
+    response = client.post(
+        BASELINES.format(project_id=project.id) + "/reviews/submit",
+        json={},
+        headers=headers,
+    )
+    assert response.status_code == 201, response.text
+    revision = response.json()
+    response = client.post(
+        BASELINES.format(project_id=project.id)
+        + f"/reviews/{revision['id']}/approve",
+        json={},
+        headers=reviewer_headers,
+    )
+    assert response.status_code == 200, response.text
+    return project, headers, reviewer_headers, function, response.json()
+
+
+def _baseline_label_create(client: TestClient, db: Session, monkeypatch) -> None:
+    project, headers, _, function, revision = _baseline_snapshot_revision(client, db)
+    response = client.post(
+        BASELINES.format(project_id=project.id) + "/labels",
+        json={
+            "revision_id": revision["id"],
+            "target_type": "function",
+            "target_id": function["id"],
+            "label_type": "changed",
+        },
+        headers=headers,
+    )
+    assert response.status_code == 201, response.text
+
+
+def _baseline_label_clear(client: TestClient, db: Session, monkeypatch) -> None:
+    project, headers, _, function, revision = _baseline_snapshot_revision(client, db)
+    response = client.post(
+        BASELINES.format(project_id=project.id) + "/labels",
+        json={
+            "revision_id": revision["id"],
+            "target_type": "function",
+            "target_id": function["id"],
+            "label_type": "changed",
+        },
+        headers=headers,
+    )
+    assert response.status_code == 201, response.text
+    label = response.json()
+    response = client.post(
+        BASELINES.format(project_id=project.id) + f"/labels/{label['id']}/clear",
+        json={"clear_reason": "requirement_done"},
+        headers=headers,
+    )
+    assert response.status_code == 200, response.text
+
+
+def _baseline_revision_submit(client: TestClient, db: Session, monkeypatch) -> None:
+    project, headers, _, _, _ = _baseline_function(client, db)
+    response = client.post(
+        BASELINES.format(project_id=project.id) + "/reviews/submit",
+        json={},
+        headers=headers,
+    )
+    assert response.status_code == 201, response.text
+
+
+def _baseline_revision_approve(client: TestClient, db: Session, monkeypatch) -> None:
+    project, headers, reviewer_headers, _, _ = _baseline_function(client, db)
+    response = client.post(
+        BASELINES.format(project_id=project.id) + "/reviews/submit",
+        json={},
+        headers=headers,
+    )
+    assert response.status_code == 201, response.text
+    revision = response.json()
+    response = client.post(
+        BASELINES.format(project_id=project.id)
+        + f"/reviews/{revision['id']}/approve",
+        json={},
+        headers=reviewer_headers,
+    )
+    assert response.status_code == 200, response.text
+
+
+def _baseline_revision_reject(client: TestClient, db: Session, monkeypatch) -> None:
+    project, headers, reviewer_headers, _, _ = _baseline_function(client, db)
+    response = client.post(
+        BASELINES.format(project_id=project.id) + "/reviews/submit",
+        json={},
+        headers=headers,
+    )
+    assert response.status_code == 201, response.text
+    revision = response.json()
+    response = client.post(
+        BASELINES.format(project_id=project.id)
+        + f"/reviews/{revision['id']}/reject",
+        json={"comment": "结构不对"},
+        headers=reviewer_headers,
+    )
+    assert response.status_code == 200, response.text
+
+
+def _baseline_snapshot_delete(client: TestClient, db: Session, monkeypatch) -> None:
+    project, headers, _, _, revision = _baseline_snapshot_revision(client, db)
+    response = client.delete(
+        BASELINES.format(project_id=project.id) + f"/revisions/{revision['id']}",
+        headers=headers,
+    )
+    assert response.status_code == 200, response.text
+
+
+def _baseline_retention_update(client: TestClient, db: Session, monkeypatch) -> None:
+    project, headers, _, _, _ = _baseline_function(client, db)
+    response = client.patch(
+        BASELINES.format(project_id=project.id) + "/retention",
+        json={"max_count": 5},
+        headers=headers,
+    )
+    assert response.status_code == 200, response.text
+
+
 SCENARIOS = {
     "register.submit": _register,
     "login.success": _login_success,
@@ -431,6 +676,23 @@ SCENARIOS = {
     "document.version.activate": _version_activate,
     "document.version.void": _version_void,
     "baseline.snapshot.create": _baseline_snapshot,
+    "baseline.module.create": _baseline_module,
+    "baseline.module.update": _baseline_module_update,
+    "baseline.module.delete": _baseline_module_delete,
+    "baseline.function.create": _baseline_function,
+    "baseline.function.update": _baseline_function_update,
+    "baseline.function.delete": _baseline_function_delete,
+    "baseline.feature_point.create": _baseline_point,
+    "baseline.feature_point.update": _baseline_point_update,
+    "baseline.feature_point.delete": _baseline_point_delete,
+    "baseline.module.migrate": _baseline_migrate,
+    "baseline.label.create": _baseline_label_create,
+    "baseline.label.clear": _baseline_label_clear,
+    "baseline.revision.submit": _baseline_revision_submit,
+    "baseline.revision.approve": _baseline_revision_approve,
+    "baseline.revision.reject": _baseline_revision_reject,
+    "baseline.snapshot.delete": _baseline_snapshot_delete,
+    "baseline.retention.update": _baseline_retention_update,
 }
 
 
@@ -486,3 +748,55 @@ def test_ac_61_document_actions_carry_scope(client: TestClient, db: Session):
     assert snapshot.target_type == "baseline_snapshot"
     assert snapshot.target_id is not None
     assert snapshot.after_data["baseline_version_no"] == 1
+
+
+def test_ac_75_baseline_actions_carry_scope(client: TestClient, db: Session):
+    """功能基线的审计要带项目、操作者、目标类型与目标 id（AC-75）。"""
+    project, headers, reviewer_headers, module, function = _baseline_function(
+        client, db
+    )
+
+    rows = db.scalars(
+        select(AuditLog).where(
+            AuditLog.project_id == project.id,
+            AuditLog.action.in_(
+                [
+                    "baseline.module.create",
+                    "baseline.function.create",
+                ]
+            ),
+        )
+    ).all()
+    by_action = {row.action: row for row in rows}
+
+    module_log = by_action["baseline.module.create"]
+    assert module_log.actor_id is not None
+    assert module_log.target_type == "baseline_module"
+    assert module_log.target_id == str(module["id"])
+
+    function_log = by_action["baseline.function.create"]
+    assert function_log.actor_id is not None
+    assert function_log.target_type == "baseline_function"
+    assert function_log.target_id == str(function["id"])
+
+
+def test_ac_75_failed_operation_writes_no_audit(client: TestClient, db: Session):
+    """失败操作不写审计：重名模块被拒时不产生 module.create。"""
+    project, headers, _, module = _baseline_module(client, db)
+
+    conflict = client.post(
+        BASELINES.format(project_id=project.id) + "/modules",
+        json={"name": "支付模块"},
+        headers=headers,
+    )
+    assert conflict.status_code == 409
+
+    count = db.execute(
+        select(func.count())
+        .select_from(AuditLog)
+        .where(
+            AuditLog.project_id == project.id,
+            AuditLog.action == "baseline.module.create",
+        )
+    ).scalar_one()
+    assert count == 1
