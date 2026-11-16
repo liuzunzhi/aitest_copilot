@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session
 from app.common import clock as clock_module
 from app.common.captcha import create_captcha, get_redis
 from app.common.clock import FixedClock
+from app.common.config import get_settings
 from app.common.security import hash_password
 from app.models.application import ProjectApplication
 from app.models.project import Project, ProjectMember
@@ -40,6 +41,16 @@ ADMIN_PASSWORD = "/api/admin/users/{uid}/password"
 ADMIN_ROLE = "/api/admin/users/{uid}/role"
 PROJECTS = "/api/projects"
 PROJECT_MEMBER = "/api/projects/{project_id}/members/{user_id}"
+DOCUMENTS = "/api/projects/{project_id}/documents"
+ACTIVATE = DOCUMENTS + "/{document_id}/versions/{version_id}/activate"
+VOID = DOCUMENTS + "/{document_id}/versions/{version_id}/void"
+
+
+@pytest.fixture(autouse=True)
+def _upload_root(tmp_path, monkeypatch):
+    """本文件会真实上传文件，原文目录指向临时目录，别写进仓库。"""
+    monkeypatch.setattr(get_settings(), "upload_dir", str(tmp_path))
+    return tmp_path
 
 
 def _user(
@@ -342,6 +353,56 @@ def _user_role_change(client: TestClient, db: Session, monkeypatch) -> None:
     assert response.status_code == 200, response.text
 
 
+def _uploaded(client: TestClient, db: Session):
+    """建项目 + 项目管理员上传一份 md，返回 (project, user, headers, 响应体)。"""
+    user = _user(db)
+    project = _project(db)
+    _join(db, project, user, "project_admin")
+    headers = _headers(client, user)
+    response = client.post(
+        DOCUMENTS.format(project_id=project.id),
+        files={"file": ("审计.md", "# 审计\n正文".encode("utf-8"), "text/markdown")},
+        headers=headers,
+    )
+    assert response.status_code == 201, response.text
+    return project, user, headers, response.json()
+
+
+def _document_upload(client: TestClient, db: Session, monkeypatch) -> None:
+    _uploaded(client, db)
+
+
+def _version_activate(client: TestClient, db: Session, monkeypatch) -> None:
+    project, _, headers, body = _uploaded(client, db)
+    response = client.post(
+        ACTIVATE.format(
+            project_id=project.id,
+            document_id=body["document"]["id"],
+            version_id=body["version"]["id"],
+        ),
+        headers=headers,
+    )
+    assert response.status_code == 200, response.text
+
+
+def _version_void(client: TestClient, db: Session, monkeypatch) -> None:
+    project, _, headers, body = _uploaded(client, db)
+    response = client.post(
+        VOID.format(
+            project_id=project.id,
+            document_id=body["document"]["id"],
+            version_id=body["version"]["id"],
+        ),
+        headers=headers,
+    )
+    assert response.status_code == 200, response.text
+
+
+def _baseline_snapshot(client: TestClient, db: Session, monkeypatch) -> None:
+    """快照与确认生效同事务，走同一条链路即可。"""
+    _version_activate(client, db, monkeypatch)
+
+
 SCENARIOS = {
     "register.submit": _register,
     "login.success": _login_success,
@@ -366,6 +427,10 @@ SCENARIOS = {
     "project.member.add": _member_add,
     "project.member.role": _member_role,
     "project.member.remove": _member_remove,
+    "document.upload": _document_upload,
+    "document.version.activate": _version_activate,
+    "document.version.void": _version_void,
+    "baseline.snapshot.create": _baseline_snapshot,
 }
 
 
@@ -380,3 +445,44 @@ def test_write_action_writes_audit(
     ).scalar_one()
 
     assert count >= 1, f"写操作 {action} 没有产生审计记录"
+
+
+def test_ac_61_document_actions_carry_scope(client: TestClient, db: Session):
+    """文档相关审计要能定位到项目、操作者与目标对象。"""
+    project, user, headers, body = _uploaded(client, db)
+    assert client.post(
+        ACTIVATE.format(
+            project_id=project.id,
+            document_id=body["document"]["id"],
+            version_id=body["version"]["id"],
+        ),
+        headers=headers,
+    ).status_code == 200
+
+    rows = {
+        row.action: row
+        for row in db.scalars(
+            select(AuditLog).where(AuditLog.project_id == project.id)
+        ).all()
+    }
+
+    upload = rows["document.upload"]
+    assert (upload.actor_id, upload.target_type, upload.target_id) == (
+        user.id,
+        "document_version",
+        str(body["version"]["id"]),
+    )
+    assert upload.after_data["document_id"] == body["document"]["id"]
+
+    activate = rows["document.version.activate"]
+    assert (activate.actor_id, activate.target_type, activate.target_id) == (
+        user.id,
+        "document_version",
+        str(body["version"]["id"]),
+    )
+
+    snapshot = rows["baseline.snapshot.create"]
+    assert snapshot.actor_id == user.id
+    assert snapshot.target_type == "baseline_snapshot"
+    assert snapshot.target_id is not None
+    assert snapshot.after_data["baseline_version_no"] == 1
