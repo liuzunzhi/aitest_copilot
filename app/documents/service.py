@@ -341,6 +341,47 @@ def activate_version(
     return document, version, snapshot
 
 
+def void_version(
+    session: Session,
+    *,
+    project_id: int,
+    document_id: int,
+    version_id: int,
+    actor: User,
+) -> DocumentVersion:
+    """作废待确认版本。已生效版本不能作废——否则基线会指向被撤销的内容。"""
+    project = session.get(Project, project_id)
+    if project is None:
+        raise ProjectNotFound("项目不存在")
+    if project.status != "active":
+        raise ProjectArchived("项目已归档，不可作废版本")
+
+    _load_document(session, project_id=project_id, document_id=document_id)
+    version = _load_version(session, document_id=document_id, version_id=version_id)
+    _ensure_can_operate(session, project_id=project_id, actor=actor, version=version)
+
+    if version.status != "pending":
+        raise InvalidVersionStatus("只有待确认的版本可以作废")
+
+    version.status = "void"
+    write_audit(
+        session,
+        "document.version.void",
+        actor_id=actor.id,
+        actor_role=actor.global_role,
+        project_id=project_id,
+        target_type="document_version",
+        target_id=version.id,
+        after_data={
+            "document_id": document_id,
+            "version_no": version.version_no,
+            "status": "void",
+        },
+    )
+    session.commit()
+    return version
+
+
 def list_baselines(session: Session, project_id: int) -> list[dict]:
     """基线快照列表，新序号在前；带上文档名便于前端直接展示。"""
     rows = session.execute(
@@ -442,4 +483,5 @@ __all__ = [
     "list_documents",
     "list_versions",
     "upload_document",
+    "void_version",
 ]

@@ -176,6 +176,28 @@ def activate_version(
     )
 
 
+@router.post(
+    "/{project_id}/documents/{document_id}/versions/{version_id}/void",
+    response_model=VersionOut,
+)
+def void_version(
+    project_id: int,
+    document_id: int,
+    version_id: int,
+    session: Session = Depends(get_db),
+    user: User = Depends(current_user),
+) -> VersionOut:
+    """作废待确认版本；权限与确认生效一致，在服务层判定。"""
+    version = service.void_version(
+        session,
+        project_id=project_id,
+        document_id=document_id,
+        version_id=version_id,
+        actor=user,
+    )
+    return _version_out(version)
+
+
 @router.get("/{project_id}/baselines", response_model=list[BaselineOut])
 def list_baselines(
     project_id: int,
