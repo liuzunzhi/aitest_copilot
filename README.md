@@ -1,6 +1,6 @@
 # AI 辅助测试平台 · 后端
 
-按 Spec Coding 流程实现。规范文档在 `D:\学习\AI辅助测试平台\specs\`。
+按 Spec Coding 流程实现。规范文档在 `\specs\`。
 
 ## 能力模块
 
