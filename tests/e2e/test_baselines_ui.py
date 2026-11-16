@@ -5,7 +5,7 @@
 """
 
 import pytest
-from playwright.sync_api import Page, expect
+from playwright.sync_api import Locator, Page, expect
 
 from tests.e2e.helpers import (
     click_save as _save,
@@ -81,6 +81,42 @@ def _open_management(page: Page, project_name: str) -> None:
     ).click()
     page.get_by_role("tab", name="基线管理").click()
     expect(page.get_by_test_id("add-module")).to_be_visible()
+
+
+def _filter_select(page: Page, index: int) -> Locator:
+    """筛选区的第 index 个 Select：0 = 标签类型，1 = 来源类型。
+
+    这些 Select 不在 Form.Item 里，`pick_select_option` 用不了，
+    所以按「搜索框所在的 Space」定位，避免撞上页面下方的其他下拉。
+    """
+    bar = page.get_by_placeholder("搜索功能名").locator(
+        "xpath=ancestor::div[contains(concat(' ', normalize-space(@class), ' '),"
+        " ' ant-space ')][1]"
+    )
+    return bar.locator(".ant-select").nth(index)
+
+
+def _pick_filter(page: Page, select: Locator, option: str) -> None:
+    select.click()
+    page.locator(
+        ".ant-select-dropdown:visible .ant-select-item-option", has_text=option
+    ).first.click()
+    expect(page.locator(".ant-select-dropdown:visible")).to_have_count(0)
+
+
+def _clear_filter(select: Locator) -> None:
+    """清空 allowClear 的筛选 Select：悬停出清除图标再点掉。"""
+    select.hover()
+    select.locator(".ant-select-clear").click()
+    expect(select.locator(".ant-select-selection-item")).to_have_count(0)
+
+
+def _open_tree_readonly(page: Page, project_name: str) -> None:
+    """成员 / 访客进入基线管理：这里没有「新增模块」，不能复用 `_open_management`。"""
+    page.get_by_role("row").filter(has_text=project_name).get_by_role(
+        "button", name="详情"
+    ).click()
+    page.get_by_role("tab", name="基线管理").click()
 
 
 @pytest.mark.task("T65")
@@ -364,3 +400,153 @@ def test_ac_71_72_retention_ui(admin_page: Page, api, make_user, shot) -> None:
     admin_page.locator(".ant-popover:visible").get_by_role("button", name="删除").click()
     expect(admin_page.locator(".ant-message")).to_contain_text("仍被标签引用")
     shot(admin_page, "snapshot-referenced")
+
+
+@pytest.mark.task("T66")
+def test_ac_73_filter_ui(admin_page: Page, api, make_user, shot) -> None:
+    """AC-73：树上标签 / 来源 / 关键词组合筛选，命中条数与库内一致。"""
+    project = api.create_project(_name("bl-filter"))
+    module = _create_module(api, project["id"], _name("检索模块"))
+    changed = _create_function(api, project["id"], module["id"], _name("变更功能"))
+    plain = _create_function(api, project["id"], module["id"], _name("未变更功能"))
+
+    # 标签挂在审核通过的快照上，提交人与审核人不能是同一个
+    reviewer = make_user()
+    api.add_member(project["id"], reviewer["id"], "project_admin")
+    from tests.e2e.support import USER_PASSWORD, token_for
+
+    reviewer_token = token_for(api.ctx, reviewer["username"], USER_PASSWORD)
+    _submit_review(api, project["id"])
+    pending = _pending_revision(api, project["id"])
+    approve = api.ctx.post(
+        f"/api/projects/{project['id']}/baselines/reviews/{pending['id']}/approve",
+        data={"comment": "e2e 通过"},
+        headers=_headers(api, reviewer_token),
+    )
+    assert approve.status == 200, approve.text()
+    labelled = api.ctx.post(
+        f"/api/projects/{project['id']}/baselines/labels",
+        data={
+            "revision_id": pending["id"],
+            "target_type": "function",
+            "target_id": changed["id"],
+            "label_type": "changed",
+        },
+        headers=_headers(api),
+    )
+    assert labelled.status == 201, labelled.text()
+
+    admin_page.reload()
+    _open_management(admin_page, project["name"])
+    label_select = _filter_select(admin_page, 0)
+    source_select = _filter_select(admin_page, 1)
+    search = admin_page.get_by_placeholder("搜索功能名")
+    version_tags = admin_page.locator(".ant-tag", has_text="第 1 版")
+
+    # 不加筛选：两条功能都在，命中 2 条
+    expect(_tree_node(admin_page, changed["name"])).to_be_visible()
+    expect(_tree_node(admin_page, plain["name"])).to_be_visible()
+    expect(version_tags).to_have_count(2)
+    shot(admin_page, "filter-initial")
+
+    # 标签类型 = 变更 → 只剩打过标的那条
+    _pick_filter(admin_page, label_select, "变更")
+    expect(_tree_node(admin_page, changed["name"])).to_be_visible()
+    expect(_tree_node(admin_page, plain["name"])).to_have_count(0)
+    expect(version_tags).to_have_count(1)
+    shot(admin_page, "filter-label")
+
+    # 标签 + 关键词叠加：搜另一条功能名 → 一条都不剩
+    search.fill(plain["name"])
+    search.press("Enter")
+    expect(version_tags).to_have_count(0)
+    expect(_tree_node(admin_page, changed["name"])).to_have_count(0)
+    shot(admin_page, "filter-label-keyword")
+
+    # 清掉标签，只留关键词 → 命中未变更的那条
+    _clear_filter(label_select)
+    expect(_tree_node(admin_page, plain["name"])).to_be_visible()
+    expect(_tree_node(admin_page, changed["name"])).to_have_count(0)
+    expect(version_tags).to_have_count(1)
+
+    # 清掉关键词 → 两条都回来；再按来源类型筛选
+    search.fill("")
+    expect(version_tags).to_have_count(2)
+    _pick_filter(admin_page, source_select, "文档解析")
+    # 两条都是手工添加 → 功能行全部被过滤，模块骨架保留
+    expect(version_tags).to_have_count(0)
+    expect(_tree_node(admin_page, module["name"])).to_be_visible()
+    shot(admin_page, "filter-source")
+
+    # 清空筛选 → 两条功能都回来
+    _clear_filter(source_select)
+    expect(_tree_node(admin_page, changed["name"])).to_be_visible()
+    expect(_tree_node(admin_page, plain["name"])).to_be_visible()
+    expect(version_tags).to_have_count(2)
+    shot(admin_page, "filter-cleared")
+
+
+@pytest.mark.task("T66")
+def test_ac_74_permission_matrix_ui(api, make_user, page_as, shot) -> None:
+    """AC-74：成员 / 访客只读，非成员读 403，member 写 403，归档项目写 409。"""
+    from tests.e2e.support import USER_PASSWORD, token_for
+
+    project = api.create_project(_name("bl-perm"))
+    module = _create_module(api, project["id"], _name("权限模块"))
+    function = _create_function(api, project["id"], module["id"], _name("权限功能"))
+    member = make_user()
+    guest = make_user()
+    outsider = make_user()
+    api.add_member(project["id"], member["id"], "member")
+    api.add_member(project["id"], guest["id"], "guest")
+
+    member_token = token_for(api.ctx, member["username"], USER_PASSWORD)
+    guest_token = token_for(api.ctx, guest["username"], USER_PASSWORD)
+    outsider_token = token_for(api.ctx, outsider["username"], USER_PASSWORD)
+
+    # 读接口：成员（含访客）可读，系统管理员兜底
+    for token in (member_token, guest_token, api.admin_token):
+        readable = api.ctx.get(
+            f"/api/projects/{project['id']}/baselines/modules",
+            headers=_headers(api, token),
+        )
+        assert readable.status == 200, readable.text()
+
+    # 非成员读 → 403 NOT_PROJECT_MEMBER
+    denied = api.ctx.get(
+        f"/api/projects/{project['id']}/baselines/functions",
+        headers=_headers(api, outsider_token),
+    )
+    assert denied.status == 403
+    assert denied.json()["code"] == "NOT_PROJECT_MEMBER"
+
+    # 前台：两种身份都能看到树，但没有任何写入口
+    for user, label in ((member, "member"), (guest, "guest")):
+        page = page_as(user["username"])
+        _open_tree_readonly(page, project["name"])
+        expect(_tree_node(page, module["name"])).to_be_visible()
+        expect(_tree_node(page, function["name"])).to_be_visible()
+        expect(page.get_by_test_id("add-module")).to_have_count(0)
+        expect(page.get_by_role("button", name="标签")).to_have_count(0)
+        expect(page.get_by_role("button", name="清除")).to_have_count(0)
+        shot(page, f"readonly-{label}")
+
+    # 写接口：member / guest → 403 NOT_PROJECT_ADMIN
+    for token in (member_token, guest_token):
+        forbidden = api.ctx.post(
+            f"/api/projects/{project['id']}/baselines/modules",
+            data={"name": _name("越权模块")},
+            headers=_headers(api, token),
+        )
+        assert forbidden.status == 403
+        assert forbidden.json()["code"] == "NOT_PROJECT_ADMIN"
+
+    # 归档项目内写接口 → 409（先判归档再判角色）
+    api.archive_project(project["id"])
+    archived = api.ctx.post(
+        f"/api/projects/{project['id']}/baselines/modules",
+        data={"name": _name("归档模块")},
+        headers=_headers(api, member_token),
+    )
+    assert archived.status == 409
+    assert archived.json()["code"] == "PROJECT_ARCHIVED"
