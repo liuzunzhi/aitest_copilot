@@ -29,6 +29,8 @@ import {
 import type { Application, Member, Overview } from '../api'
 import { errorMessage } from '../api/client'
 import { useAuth } from '../auth/AuthProvider'
+import ProjectBaselinesTab from './ProjectBaselinesTab'
+import ProjectDocumentsTab from './ProjectDocumentsTab'
 
 const PROJECT_ROLE_LABELS: Record<string, string> = {
   project_admin: '项目管理员',
@@ -71,6 +73,9 @@ export default function ProjectDetailPage() {
 
   const canManage =
     user?.global_role === 'system_admin' || routeState?.role === 'project_admin'
+  // 访客只能看；上传/确认/作废由后端再校验「成员只能动自己上传的版本」。
+  const canWrite =
+    canManage || routeState?.role === 'member'
 
   const reloadOverview = useCallback(async () => {
     setLoading(true)
@@ -263,6 +268,22 @@ export default function ProjectDetailPage() {
                 />
               </div>
             ),
+          },
+          {
+            key: 'documents',
+            label: '文档',
+            children: (
+              <ProjectDocumentsTab
+                projectId={projectId}
+                canWrite={canWrite}
+                onChanged={reloadOverview}
+              />
+            ),
+          },
+          {
+            key: 'baselines',
+            label: '基线',
+            children: <ProjectBaselinesTab projectId={projectId} />,
           },
           {
             key: 'applications',

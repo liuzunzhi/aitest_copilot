@@ -190,6 +190,124 @@ export async function submitApplication(
   })
 }
 
+export interface DocVersion {
+  id: number
+  version_no: number
+  status: string
+  chapter_count: number
+  file_name: string
+  file_size: number
+  created_at: string
+}
+
+export interface DocumentItem {
+  id: number
+  name: string
+  created_at: string
+  version_count: number
+  pending_count: number
+  active_version: DocVersion | null
+}
+
+export interface Chapter {
+  id: number
+  seq: number
+  level: number
+  title: string
+  content: string
+  char_count: number
+  children: Chapter[]
+}
+
+export interface Baseline {
+  id: number
+  version_no: number
+  chapter_count: number
+  created_at: string
+  document_id: number
+  document_name: string
+  document_version_no: number
+}
+
+export async function listDocuments(projectId: number): Promise<DocumentItem[]> {
+  const { data } = await client.get<DocumentItem[]>(`/projects/${projectId}/documents`)
+  return data
+}
+
+export async function uploadDocument(
+  projectId: number,
+  file: File,
+): Promise<{ document: { id: number; name: string; version_count: number }; version: DocVersion }> {
+  const body = new FormData()
+  body.append('file', file)
+  const { data } = await client.post(`/projects/${projectId}/documents`, body)
+  return data
+}
+
+export async function listVersions(projectId: number, documentId: number): Promise<DocVersion[]> {
+  const { data } = await client.get<DocVersion[]>(
+    `/projects/${projectId}/documents/${documentId}/versions`,
+  )
+  return data
+}
+
+export async function listChapters(
+  projectId: number,
+  documentId: number,
+  versionId: number,
+): Promise<Chapter[]> {
+  const { data } = await client.get<Chapter[]>(
+    `/projects/${projectId}/documents/${documentId}/versions/${versionId}/chapters`,
+  )
+  return data
+}
+
+export async function activateVersion(
+  projectId: number,
+  documentId: number,
+  versionId: number,
+): Promise<{ version: DocVersion; baseline: Baseline }> {
+  const { data } = await client.post(
+    `/projects/${projectId}/documents/${documentId}/versions/${versionId}/activate`,
+  )
+  return data
+}
+
+export async function voidVersion(
+  projectId: number,
+  documentId: number,
+  versionId: number,
+): Promise<DocVersion> {
+  const { data } = await client.post<DocVersion>(
+    `/projects/${projectId}/documents/${documentId}/versions/${versionId}/void`,
+  )
+  return data
+}
+
+export async function listBaselines(projectId: number): Promise<Baseline[]> {
+  const { data } = await client.get<Baseline[]>(`/projects/${projectId}/baselines`)
+  return data
+}
+
+/** 下载要带 Bearer 头，只能走 XHR 取 blob，再用临时链接落盘。 */
+export async function downloadVersion(
+  projectId: number,
+  documentId: number,
+  versionId: number,
+): Promise<{ blob: Blob; fileName: string }> {
+  const response = await client.get(
+    `/projects/${projectId}/documents/${documentId}/versions/${versionId}/download`,
+    { responseType: 'blob' },
+  )
+  const disposition = String(response.headers['content-disposition'] ?? '')
+  const encoded = disposition.match(/filename\*=utf-8''([^;]+)/i)?.[1]
+  const plain = disposition.match(/filename="?([^";]+)"?/i)?.[1]
+  return {
+    blob: response.data as Blob,
+    fileName: encoded ? decodeURIComponent(encoded) : (plain ?? '原文档'),
+  }
+}
+
 export async function listUsers(): Promise<AdminUser[]> {
   const { data } = await client.get<AdminUser[]>('/admin/users')
   return data
