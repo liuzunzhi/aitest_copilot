@@ -20,6 +20,7 @@ from app.common.errors import (
     UserNotFound,
 )
 from app.models.application import ProjectApplication
+from app.models.document import BaselineSnapshot, Document
 from app.models.project import Project, ProjectMember
 from app.models.user import User
 
@@ -314,18 +315,28 @@ def remove_member(
 def get_overview(session: Session, *, project_id: int) -> dict[str, object]:
     """项目概览（AC-40）。
 
-    文档 / 基线 / 执行模块尚未上线，三个字段先给固定占位值；
-    上线后只替换取值来源，响应结构保持不变。读接口不受归档影响。
+    文档与基线已是真实计数；执行模块尚未上线，`latest_execution` 仍返回 None。
+    读接口不受归档影响。
     """
     member_count = session.execute(
         select(func.count())
         .select_from(ProjectMember)
         .where(ProjectMember.project_id == project_id)
     ).scalar_one()
+    document_count = session.execute(
+        select(func.count())
+        .select_from(Document)
+        .where(Document.project_id == project_id)
+    ).scalar_one()
+    baseline_count = session.execute(
+        select(func.count())
+        .select_from(BaselineSnapshot)
+        .where(BaselineSnapshot.project_id == project_id)
+    ).scalar_one()
     return {
         "member_count": member_count,
-        "document_count": 0,
-        "baseline_count": 0,
+        "document_count": document_count,
+        "baseline_count": baseline_count,
         "latest_execution": None,
     }
 

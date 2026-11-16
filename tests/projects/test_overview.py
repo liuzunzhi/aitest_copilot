@@ -53,7 +53,7 @@ def _url(project: Project) -> str:
 def test_ac_40_member_can_read_overview(
     client: TestClient, db: Session, role: str
 ) -> None:
-    """成员数取真实行数，其余字段为占位值。"""
+    """成员数取真实行数；文档/基线计数在 T52 后也不再是占位值。"""
     project = _project(db)
     viewer = _user(db)
     _join(db, project, viewer, role)
