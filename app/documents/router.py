@@ -13,6 +13,8 @@ from app.common.deps import (
 from app.common.errors import Forbidden, NotProjectMember
 from app.documents import service
 from app.documents.schemas import (
+    ActivateResponse,
+    BaselineOut,
     ChapterOut,
     DocumentBrief,
     DocumentListItem,
@@ -135,6 +137,52 @@ def list_chapters(
         document_id=document_id,
         version_id=version_id,
     )
+
+
+@router.post(
+    "/{project_id}/documents/{document_id}/versions/{version_id}/activate",
+    response_model=ActivateResponse,
+)
+def activate_version(
+    project_id: int,
+    document_id: int,
+    version_id: int,
+    session: Session = Depends(get_db),
+    user: User = Depends(current_user),
+) -> ActivateResponse:
+    """确认生效并生成基线快照。
+
+    权限在服务层判定（要读 `uploaded_by` 才知道普通成员能否操作），
+    所以这里只取当前用户，不复用项目角色依赖。
+    """
+    document, version, snapshot = service.activate_version(
+        session,
+        project_id=project_id,
+        document_id=document_id,
+        version_id=version_id,
+        actor=user,
+    )
+    return ActivateResponse(
+        version=_version_out(version),
+        baseline=BaselineOut(
+            id=snapshot.id,
+            version_no=snapshot.version_no,
+            chapter_count=snapshot.chapter_count,
+            created_at=snapshot.created_at,
+            document_id=document.id,
+            document_name=document.name,
+            document_version_no=version.version_no,
+        ),
+    )
+
+
+@router.get("/{project_id}/baselines", response_model=list[BaselineOut])
+def list_baselines(
+    project_id: int,
+    session: Session = Depends(get_db),
+    user: User = Depends(require_project_member_or_system_admin),
+) -> list[BaselineOut]:
+    return service.list_baselines(session, project_id)
 
 
 def _version_out(version: DocumentVersion) -> VersionOut:

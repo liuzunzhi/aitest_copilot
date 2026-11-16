@@ -14,18 +14,27 @@ from sqlalchemy.orm import Session
 
 from app.common.audit import write_audit
 from app.common.config import get_settings
+from app.common.deps import SYSTEM_ADMIN
 from app.common.errors import (
     DocumentNameTaken,
     DocumentNotFound,
     DocumentTooLarge,
     DocumentVersionNotFound,
     EmptyDocument,
+    InvalidVersionStatus,
+    NotProjectAdmin,
+    NotProjectMember,
     ProjectArchived,
     ProjectNotFound,
 )
 from app.documents.parser import ChapterNode, parse
-from app.models.document import Document, DocumentChapter, DocumentVersion
-from app.models.project import Project
+from app.models.document import (
+    BaselineSnapshot,
+    Document,
+    DocumentChapter,
+    DocumentVersion,
+)
+from app.models.project import Project, ProjectMember
 from app.models.user import User
 
 
@@ -246,6 +255,141 @@ def _load_version(
     return version
 
 
+def activate_version(
+    session: Session,
+    *,
+    project_id: int,
+    document_id: int,
+    version_id: int,
+    actor: User,
+) -> tuple[Document, DocumentVersion, BaselineSnapshot]:
+    """确认版本生效，并在同一事务里生成项目基线快照。
+
+    锁项目行取号：`baseline_snapshots.version_no` 是项目内递增序号，
+    并发确认两个版本时若不加锁会撞 `UNIQUE(project_id, version_no)`。
+    """
+    project = session.scalar(
+        select(Project).where(Project.id == project_id).with_for_update()
+    )
+    if project is None:
+        raise ProjectNotFound("项目不存在")
+    if project.status != "active":
+        raise ProjectArchived("项目已归档，不可确认版本")
+
+    document = _load_document(session, project_id=project_id, document_id=document_id)
+    version = _load_version(session, document_id=document_id, version_id=version_id)
+    _ensure_can_operate(session, project_id=project_id, actor=actor, version=version)
+
+    if version.status != "pending":
+        raise InvalidVersionStatus("只有待确认的版本可以生效")
+
+    # 先归档旧版本再激活新版本：两步各 flush 一次，
+    # 避免瞬间出现两个 active 撞上 uk_versions_active。
+    previous = session.scalars(
+        select(DocumentVersion).where(
+            DocumentVersion.document_id == document.id,
+            DocumentVersion.status == "active",
+        )
+    ).all()
+    for old in previous:
+        old.status = "archived"
+    session.flush()
+
+    version.status = "active"
+    session.flush()
+
+    snapshot = BaselineSnapshot(
+        project_id=project_id,
+        version_id=version.id,
+        version_no=_next_baseline_no(session, project_id),
+        chapter_count=version.chapter_count,
+        created_by=actor.id,
+    )
+    session.add(snapshot)
+    session.flush()
+
+    write_audit(
+        session,
+        "document.version.activate",
+        actor_id=actor.id,
+        actor_role=actor.global_role,
+        project_id=project_id,
+        target_type="document_version",
+        target_id=version.id,
+        after_data={
+            "document_id": document.id,
+            "document_name": document.name,
+            "version_no": version.version_no,
+            "archived_version_ids": [old.id for old in previous],
+        },
+    )
+    write_audit(
+        session,
+        "baseline.snapshot.create",
+        actor_id=actor.id,
+        actor_role=actor.global_role,
+        project_id=project_id,
+        target_type="baseline_snapshot",
+        target_id=snapshot.id,
+        after_data={
+            "baseline_version_no": snapshot.version_no,
+            "document_version_id": version.id,
+            "chapter_count": snapshot.chapter_count,
+        },
+    )
+    session.commit()
+    return document, version, snapshot
+
+
+def list_baselines(session: Session, project_id: int) -> list[dict]:
+    """基线快照列表，新序号在前；带上文档名便于前端直接展示。"""
+    rows = session.execute(
+        select(BaselineSnapshot, DocumentVersion, Document)
+        .join(DocumentVersion, DocumentVersion.id == BaselineSnapshot.version_id)
+        .join(Document, Document.id == DocumentVersion.document_id)
+        .where(BaselineSnapshot.project_id == project_id)
+        .order_by(BaselineSnapshot.version_no.desc())
+    ).all()
+    return [
+        {
+            "id": snapshot.id,
+            "version_no": snapshot.version_no,
+            "chapter_count": snapshot.chapter_count,
+            "created_at": snapshot.created_at,
+            "document_id": document.id,
+            "document_name": document.name,
+            "document_version_no": version.version_no,
+        }
+        for snapshot, version, document in rows
+    ]
+
+
+def _ensure_can_operate(
+    session: Session, *, project_id: int, actor: User, version: DocumentVersion
+) -> None:
+    """确认/作废的权限：管理员任意，成员仅自己上传的版本，访客不可写。"""
+    if actor.global_role == SYSTEM_ADMIN:
+        return
+    member = session.get(ProjectMember, (project_id, actor.id))
+    if member is None:
+        raise NotProjectMember("不是该项目成员")
+    if member.role == "guest":
+        raise NotProjectAdmin("只有项目管理员可以确认或作废版本")
+    if member.role == "project_admin":
+        return
+    if version.uploaded_by != actor.id:
+        raise NotProjectAdmin("只能操作自己上传的版本")
+
+
+def _next_baseline_no(session: Session, project_id: int) -> int:
+    current = session.scalar(
+        select(func.max(BaselineSnapshot.version_no)).where(
+            BaselineSnapshot.project_id == project_id
+        )
+    )
+    return int(current or 0) + 1
+
+
 def _count(nodes: list[ChapterNode]) -> int:
     return sum(1 + _count(node.children) for node in nodes)
 
@@ -291,4 +435,11 @@ def _insert_chapters(
         )
 
 
-__all__ = ["list_chapters", "list_documents", "list_versions", "upload_document"]
+__all__ = [
+    "activate_version",
+    "list_baselines",
+    "list_chapters",
+    "list_documents",
+    "list_versions",
+    "upload_document",
+]

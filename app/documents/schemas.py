@@ -45,6 +45,21 @@ class ChapterOut(BaseModel):
 ChapterOut.model_rebuild()
 
 
+class BaselineOut(BaseModel):
+    id: int
+    version_no: int
+    chapter_count: int
+    created_at: datetime
+    document_id: int
+    document_name: str
+    document_version_no: int
+
+
+class ActivateResponse(BaseModel):
+    version: VersionOut
+    baseline: BaselineOut
+
+
 class UploadResponse(BaseModel):
     document: DocumentBrief
     version: VersionOut
