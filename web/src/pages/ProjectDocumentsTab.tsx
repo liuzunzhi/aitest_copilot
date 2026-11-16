@@ -27,12 +27,14 @@ import { errorMessage } from '../api/client'
 const VERSION_STATUS_LABELS: Record<string, string> = {
   pending: '待确认',
   active: '已生效',
+  archived: '已归档',
   void: '已作废',
 }
 
 const VERSION_STATUS_COLORS: Record<string, string> = {
   pending: 'orange',
   active: 'green',
+  archived: 'blue',
   void: 'default',
 }
 
@@ -63,10 +65,12 @@ export default function ProjectDocumentsTab({
 }) {
   const { message } = AntdApp.useApp()
   const fileRef = useRef<HTMLInputElement>(null)
+  const versionFileRef = useRef<HTMLInputElement>(null)
 
   const [documents, setDocuments] = useState<DocumentItem[]>([])
   const [loading, setLoading] = useState(false)
   const [uploading, setUploading] = useState(false)
+  const [uploadingVersion, setUploadingVersion] = useState(false)
 
   const [versionDoc, setVersionDoc] = useState<DocumentItem | null>(null)
   const [versions, setVersions] = useState<DocVersion[]>([])
@@ -103,6 +107,23 @@ export default function ProjectDocumentsTab({
       message.error(errorMessage(error))
     } finally {
       setUploading(false)
+    }
+  }
+
+  async function pickVersionFile(event: React.ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0]
+    event.target.value = ''
+    if (!file || !versionDoc) return
+    setUploadingVersion(true)
+    try {
+      const result = await uploadDocument(projectId, file, versionDoc.id)
+      message.success(`已上传 V${result.version.version_no}，待确认后才会生成基线`)
+      await refreshVersions(versionDoc)
+      onChanged()
+    } catch (error) {
+      message.error(errorMessage(error))
+    } finally {
+      setUploadingVersion(false)
     }
   }
 
@@ -312,6 +333,26 @@ export default function ProjectDocumentsTab({
         onCancel={() => setVersionDoc(null)}
         destroyOnHidden
       >
+        <Space style={{ marginBottom: 12 }}>
+          <Button
+            size="small"
+            data-testid="upload-version"
+            loading={uploadingVersion}
+            disabled={!canWrite}
+            onClick={() => versionFileRef.current?.click()}
+          >
+            上传新版本
+          </Button>
+          <Typography.Text type="secondary">同一文档多次上传即多版本，确认后各自生成基线</Typography.Text>
+          <input
+            ref={versionFileRef}
+            type="file"
+            accept=".md,.docx,.txt"
+            data-testid="version-file-input"
+            style={{ display: 'none' }}
+            onChange={pickVersionFile}
+          />
+        </Space>
         <Table<DocVersion>
           rowKey="id"
           columns={versionColumns}

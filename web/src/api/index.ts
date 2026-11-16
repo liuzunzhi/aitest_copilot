@@ -237,9 +237,12 @@ export async function listDocuments(projectId: number): Promise<DocumentItem[]> 
 export async function uploadDocument(
   projectId: number,
   file: File,
+  documentId?: number,
 ): Promise<{ document: { id: number; name: string; version_count: number }; version: DocVersion }> {
   const body = new FormData()
   body.append('file', file)
+  // 带 documentId 表示给已有文档追加版本，否则新建文档
+  if (documentId !== undefined) body.append('document_id', String(documentId))
   const { data } = await client.post(`/projects/${projectId}/documents`, body)
   return data
 }

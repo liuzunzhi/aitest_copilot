@@ -6,7 +6,14 @@ import { listBaselines } from '../api'
 import type { Baseline } from '../api'
 import { errorMessage } from '../api/client'
 
-export default function ProjectBaselinesTab({ projectId }: { projectId: number }) {
+export default function ProjectBaselinesTab({
+  projectId,
+  refreshKey,
+}: {
+  projectId: number
+  /** 父级每次确认生效 / 上传后自增，用来触发重载——Tabs 切走不会卸载组件 */
+  refreshKey: number
+}) {
   const { message } = AntdApp.useApp()
   const [baselines, setBaselines] = useState<Baseline[]>([])
   const [loading, setLoading] = useState(false)
@@ -24,7 +31,7 @@ export default function ProjectBaselinesTab({ projectId }: { projectId: number }
 
   useEffect(() => {
     void reload()
-  }, [reload])
+  }, [reload, refreshKey])
 
   const columns: ColumnsType<Baseline> = [
     {

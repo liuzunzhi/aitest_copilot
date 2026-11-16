@@ -65,6 +65,8 @@ export default function ProjectDetailPage() {
   const projectName = routeState?.name
 
   const [overview, setOverview] = useState<Overview | null>(null)
+  // 文档变更后自增，驱动基线 Tab 重载（Tabs 切走不卸载）
+  const [baselineKey, setBaselineKey] = useState(0)
   const [members, setMembers] = useState<Member[]>([])
   const [applications, setApplications] = useState<Application[]>([])
   const [loading, setLoading] = useState(false)
@@ -81,6 +83,7 @@ export default function ProjectDetailPage() {
     setLoading(true)
     try {
       setOverview(await fetchOverview(projectId))
+      setBaselineKey((key) => key + 1)
     } catch (error) {
       message.error(errorMessage(error))
     } finally {
@@ -283,7 +286,7 @@ export default function ProjectDetailPage() {
           {
             key: 'baselines',
             label: '基线',
-            children: <ProjectBaselinesTab projectId={projectId} />,
+            children: <ProjectBaselinesTab projectId={projectId} refreshKey={baselineKey} />,
           },
           {
             key: 'applications',
