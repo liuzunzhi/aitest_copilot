@@ -1038,14 +1038,23 @@ def _clear_targets(
 # ------------------------------------------------------------ 标签（T59/T60）
 
 
-def _load_revision(session: Session, project_id: int, revision_id: int) -> BaselineRevision:
+def _load_revision(
+    session: Session, project_id: int, revision_id: int, *, as_review: bool = False
+) -> BaselineRevision:
+    """按 id 取记录。
+
+    同一张表既是审核记录也是快照，错误码按调用方语义区分：
+    审核动作抛 `REVIEW_NOT_FOUND`，快照读取/删除/打标抛 `SNAPSHOT_NOT_FOUND`。
+    """
     revision = session.scalar(
         select(BaselineRevision).where(
             BaselineRevision.id == revision_id, BaselineRevision.project_id == project_id
         )
     )
     if revision is None:
-        raise ReviewNotFound("基线版本不存在")
+        if as_review:
+            raise ReviewNotFound("基线版本不存在")
+        raise SnapshotNotFound("基线快照不存在")
     return revision
 
 
@@ -1291,7 +1300,7 @@ def approve_review(
     _ensure_writable_project(session, project_id)
     _ensure_admin(session, project_id=project_id, actor=actor)
 
-    revision = _load_revision(session, project_id, revision_id)
+    revision = _load_revision(session, project_id, revision_id, as_review=True)
     if revision.status != "submitted":
         raise InvalidReviewStatus("只有审核中的记录可以通过")
     if revision.submitted_by == actor.id:
@@ -1349,7 +1358,7 @@ def reject_review(
     _ensure_writable_project(session, project_id)
     _ensure_admin(session, project_id=project_id, actor=actor)
 
-    revision = _load_revision(session, project_id, revision_id)
+    revision = _load_revision(session, project_id, revision_id, as_review=True)
     if revision.status != "submitted":
         raise InvalidReviewStatus("只有审核中的记录可以驳回")
     if revision.submitted_by == actor.id:

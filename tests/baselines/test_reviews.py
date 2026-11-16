@@ -178,6 +178,29 @@ def test_ac_69_revisions_status_filter(
     assert invalid.status_code == 422
 
 
+def test_ac_70_snapshot_not_found(client: TestClient, project, headers):
+    """同一张表两种语义：快照读取/删除 → SNAPSHOT_NOT_FOUND，审核动作 → REVIEW_NOT_FOUND。"""
+    missing = 999999
+
+    detail = client.get(REVISIONS.format(project_id=project.id) + f"/{missing}", headers=headers)
+    assert detail.status_code == 404
+    assert detail.json()["code"] == "SNAPSHOT_NOT_FOUND"
+
+    deleted = client.delete(
+        REVISIONS.format(project_id=project.id) + f"/{missing}", headers=headers
+    )
+    assert deleted.status_code == 404
+    assert deleted.json()["code"] == "SNAPSHOT_NOT_FOUND"
+
+    approved = client.post(
+        REVIEWS.format(project_id=project.id) + f"/{missing}/approve",
+        json={"comment": "通过"},
+        headers=headers,
+    )
+    assert approved.status_code == 404
+    assert approved.json()["code"] == "REVIEW_NOT_FOUND"
+
+
 def test_ac_70_snapshot_immutable(client: TestClient, project, headers, reviewer_headers):
     """审核通过后继续编辑结构，快照不变。"""
     built = build_structure(client, headers, project.id)
