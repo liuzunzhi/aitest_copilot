@@ -326,3 +326,403 @@ export async function updateUserRole(
   )
   return data
 }
+
+/* ---------------------------------------------------------- 功能基线（04） */
+
+export type LabelType = 'new' | 'changed' | 'affected' | 'unchanged'
+
+export type ClearReason =
+  | 'requirement_done'
+  | 'requirement_cancelled'
+  | 'misjudged'
+  | 'priority_changed'
+  | 'duplicate_label'
+  | 'other'
+
+export interface BaselineModule {
+  id: number
+  name: string
+  description: string | null
+  sort_order: number
+  source_type: string
+  status: string
+  function_count: number
+  created_at: string
+}
+
+export interface BaselineFunction {
+  id: number
+  module_id: number
+  module_name: string
+  name: string
+  description: string | null
+  version_no: number
+  source_type: string
+  status: string
+  moved_from_module_id: number | null
+  source_document_id: number | null
+  source_version_id: number | null
+  source_chapter_id: number | null
+  source_chapter_title: string | null
+  source_method: string | null
+  source_analysis_id: number | null
+  label_types: LabelType[]
+  feature_point_count: number
+  feature_point_label_count: number
+  created_at: string
+}
+
+export interface BaselineFeaturePoint {
+  id: number
+  function_id: number
+  name: string
+  description: string | null
+  source_type: string
+  status: string
+  label_types: LabelType[]
+  created_at: string
+}
+
+export interface BaselineLabel {
+  id: number
+  revision_id: number
+  target_type: 'function' | 'feature_point'
+  target_id: number
+  label_type: LabelType
+  status: 'active' | 'cleared'
+  confirmed_by: number
+  confirmed_at: string
+  cleared_by: number | null
+  cleared_at: string | null
+  clear_reason: ClearReason | null
+  clear_note: string | null
+}
+
+export interface BaselineRevision {
+  id: number
+  version_no: number | null
+  status: 'draft' | 'submitted' | 'approved' | 'rejected'
+  module_count: number
+  function_count: number
+  feature_point_count: number
+  label_count: number
+  submitted_by: number | null
+  submitted_at: string | null
+  reviewed_by: number | null
+  reviewed_at: string | null
+  review_comment: string | null
+  created_at: string
+}
+
+export interface BaselineRevisionDetail extends BaselineRevision {
+  structure: Array<{
+    id: number
+    name: string
+    functions: Array<{
+      id: number
+      name: string
+      feature_points: Array<{ id: number; name: string }>
+    }>
+  }> | null
+}
+
+export interface RetentionCandidate {
+  id: number
+  version_no: number
+  referenced_count: number
+  refs: Array<{ target_id: number; target_name?: string; source_type: string }>
+  created_at: string
+}
+
+export interface Retention {
+  max_count: number | null
+  enabled: boolean
+  snapshot_count: number
+  keep_count: number | null
+  candidates: RetentionCandidate[]
+  warnings: string[]
+}
+
+export interface DeleteResult {
+  deleted: boolean
+  warning: string | null
+  cleared_label_count: number
+}
+
+const BASELINES = (projectId: number) => `/projects/${projectId}/baselines`
+
+export async function listBaselineModules(
+  projectId: number,
+  params?: { page?: number; page_size?: number },
+): Promise<Page<BaselineModule>> {
+  const { data } = await client.get<Page<BaselineModule>>(
+    `${BASELINES(projectId)}/modules`,
+    { params },
+  )
+  return data
+}
+
+export async function createBaselineModule(
+  projectId: number,
+  body: { name: string; description?: string | null; sort_order?: number },
+): Promise<BaselineModule> {
+  const { data } = await client.post<BaselineModule>(
+    `${BASELINES(projectId)}/modules`,
+    body,
+  )
+  return data
+}
+
+export async function updateBaselineModule(
+  projectId: number,
+  moduleId: number,
+  body: { name?: string; description?: string | null; sort_order?: number; status?: string },
+): Promise<BaselineModule> {
+  const { data } = await client.patch<BaselineModule>(
+    `${BASELINES(projectId)}/modules/${moduleId}`,
+    body,
+  )
+  return data
+}
+
+export async function deleteBaselineModule(
+  projectId: number,
+  moduleId: number,
+): Promise<DeleteResult> {
+  const { data } = await client.delete<DeleteResult>(
+    `${BASELINES(projectId)}/modules/${moduleId}`,
+  )
+  return data
+}
+
+export async function migrateBaselineFunctions(
+  projectId: number,
+  moduleId: number,
+  targetModuleId: number,
+  functionIds: number[],
+): Promise<BaselineFunction[]> {
+  const { data } = await client.post<BaselineFunction[]>(
+    `${BASELINES(projectId)}/modules/${moduleId}/migrate`,
+    { target_module_id: targetModuleId, function_ids: functionIds },
+  )
+  return data
+}
+
+export async function listBaselineFunctions(
+  projectId: number,
+  params?: {
+    module_id?: number
+    source_type?: string
+    label_type?: string
+    keyword?: string
+    revision_id?: number
+    page?: number
+    page_size?: number
+  },
+): Promise<Page<BaselineFunction>> {
+  const { data } = await client.get<Page<BaselineFunction>>(
+    `${BASELINES(projectId)}/functions`,
+    { params },
+  )
+  return data
+}
+
+export async function createBaselineFunction(
+  projectId: number,
+  body: { module_id: number; name: string; description?: string | null },
+): Promise<BaselineFunction> {
+  const { data } = await client.post<BaselineFunction>(
+    `${BASELINES(projectId)}/functions`,
+    body,
+  )
+  return data
+}
+
+export async function updateBaselineFunction(
+  projectId: number,
+  functionId: number,
+  body: { name?: string; description?: string | null; status?: string },
+): Promise<BaselineFunction> {
+  const { data } = await client.patch<BaselineFunction>(
+    `${BASELINES(projectId)}/functions/${functionId}`,
+    body,
+  )
+  return data
+}
+
+export async function deleteBaselineFunction(
+  projectId: number,
+  functionId: number,
+): Promise<DeleteResult> {
+  const { data } = await client.delete<DeleteResult>(
+    `${BASELINES(projectId)}/functions/${functionId}`,
+  )
+  return data
+}
+
+export async function listBaselineFeaturePoints(
+  projectId: number,
+  functionId: number,
+): Promise<BaselineFeaturePoint[]> {
+  const { data } = await client.get<BaselineFeaturePoint[]>(
+    `${BASELINES(projectId)}/functions/${functionId}/feature-points`,
+  )
+  return data
+}
+
+export async function createBaselineFeaturePoint(
+  projectId: number,
+  functionId: number,
+  body: { name: string; description?: string | null },
+): Promise<BaselineFeaturePoint> {
+  const { data } = await client.post<BaselineFeaturePoint>(
+    `${BASELINES(projectId)}/functions/${functionId}/feature-points`,
+    body,
+  )
+  return data
+}
+
+export async function updateBaselineFeaturePoint(
+  projectId: number,
+  pointId: number,
+  body: { name?: string; description?: string | null; status?: string },
+): Promise<BaselineFeaturePoint> {
+  const { data } = await client.patch<BaselineFeaturePoint>(
+    `${BASELINES(projectId)}/feature-points/${pointId}`,
+    body,
+  )
+  return data
+}
+
+export async function deleteBaselineFeaturePoint(
+  projectId: number,
+  pointId: number,
+): Promise<DeleteResult> {
+  const { data } = await client.delete<DeleteResult>(
+    `${BASELINES(projectId)}/feature-points/${pointId}`,
+  )
+  return data
+}
+
+export async function listBaselineLabels(
+  projectId: number,
+  params?: {
+    target_type?: string
+    target_id?: number
+    revision_id?: number
+    status?: 'active' | 'cleared' | 'all'
+    page?: number
+    page_size?: number
+  },
+): Promise<Page<BaselineLabel>> {
+  const { data } = await client.get<Page<BaselineLabel>>(`${BASELINES(projectId)}/labels`, {
+    params,
+  })
+  return data
+}
+
+export async function createBaselineLabel(
+  projectId: number,
+  body: {
+    revision_id?: number | null
+    target_type: 'function' | 'feature_point'
+    target_id: number
+    label_type: LabelType
+  },
+): Promise<BaselineLabel> {
+  const { data } = await client.post<BaselineLabel>(`${BASELINES(projectId)}/labels`, body)
+  return data
+}
+
+export async function clearBaselineLabel(
+  projectId: number,
+  labelId: number,
+  body: { clear_reason: ClearReason; clear_note?: string | null },
+): Promise<BaselineLabel> {
+  const { data } = await client.post<BaselineLabel>(
+    `${BASELINES(projectId)}/labels/${labelId}/clear`,
+    body,
+  )
+  return data
+}
+
+export async function listBaselineRevisions(
+  projectId: number,
+  params?: { status?: string; page?: number; page_size?: number },
+): Promise<Page<BaselineRevision>> {
+  const { data } = await client.get<Page<BaselineRevision>>(
+    `${BASELINES(projectId)}/revisions`,
+    { params },
+  )
+  return data
+}
+
+export async function fetchBaselineRevision(
+  projectId: number,
+  revisionId: number,
+): Promise<BaselineRevisionDetail> {
+  const { data } = await client.get<BaselineRevisionDetail>(
+    `${BASELINES(projectId)}/revisions/${revisionId}`,
+  )
+  return data
+}
+
+export async function deleteBaselineRevision(
+  projectId: number,
+  revisionId: number,
+): Promise<DeleteResult> {
+  const { data } = await client.delete<DeleteResult>(
+    `${BASELINES(projectId)}/revisions/${revisionId}`,
+  )
+  return data
+}
+
+export async function submitBaselineReview(
+  projectId: number,
+  comment?: string | null,
+): Promise<BaselineRevision> {
+  const { data } = await client.post<BaselineRevision>(
+    `${BASELINES(projectId)}/reviews/submit`,
+    { comment },
+  )
+  return data
+}
+
+export async function approveBaselineReview(
+  projectId: number,
+  revisionId: number,
+  comment?: string | null,
+): Promise<BaselineRevision> {
+  const { data } = await client.post<BaselineRevision>(
+    `${BASELINES(projectId)}/reviews/${revisionId}/approve`,
+    { comment },
+  )
+  return data
+}
+
+export async function rejectBaselineReview(
+  projectId: number,
+  revisionId: number,
+  comment: string,
+): Promise<BaselineRevision> {
+  const { data } = await client.post<BaselineRevision>(
+    `${BASELINES(projectId)}/reviews/${revisionId}/reject`,
+    { comment },
+  )
+  return data
+}
+
+export async function fetchRetention(projectId: number): Promise<Retention> {
+  const { data } = await client.get<Retention>(`${BASELINES(projectId)}/retention`)
+  return data
+}
+
+export async function updateRetention(
+  projectId: number,
+  maxCount: number | null,
+): Promise<Retention> {
+  const { data } = await client.patch<Retention>(`${BASELINES(projectId)}/retention`, {
+    max_count: maxCount,
+  })
+  return data
+}

@@ -44,6 +44,18 @@ def _e2e_dsn() -> str:
     raise RuntimeError('.env 里没有 DB_DSN，无法定位 e2e 库')
 
 
+def _dev_dsn() -> str:
+    """开发库 DSN（`.env` 里的原始值）。
+
+    只给「隔离守卫」用：确认 e2e 后端没有把数据写进开发库。
+    """
+    env_file = Path(__file__).resolve().parents[2] / '.env'
+    for line in env_file.read_text(encoding='utf-8').splitlines():
+        if line.startswith('DB_DSN='):
+            return line.split('=', 1)[1]
+    raise RuntimeError('.env 里没有 DB_DSN，无法定位开发库')
+
+
 def _session() -> Session:
     global _engine
     if _engine is None:

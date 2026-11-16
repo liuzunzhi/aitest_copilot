@@ -29,6 +29,8 @@ import {
 import type { Application, Member, Overview } from '../api'
 import { errorMessage } from '../api/client'
 import { useAuth } from '../auth/AuthProvider'
+import ProjectBaselineSnapshots from './ProjectBaselineSnapshots'
+import ProjectBaselineTree from './ProjectBaselineTree'
 import ProjectBaselinesTab from './ProjectBaselinesTab'
 import ProjectDocumentsTab from './ProjectDocumentsTab'
 
@@ -73,11 +75,17 @@ export default function ProjectDetailPage() {
   const [adding, setAdding] = useState(false)
   const [form] = Form.useForm<{ user_id: number; role: string }>()
 
-  const canManage =
-    user?.global_role === 'system_admin' || routeState?.role === 'project_admin'
+  // 直接按 URL 进入项目时 routeState 为空，用成员列表里的真实角色兜底，
+  // 否则功能基线页会误判成「不可写」。
+  const myRole = members.find((member) => member.user_id === user?.id)?.role
+  const isProjectAdmin =
+    user?.global_role === 'system_admin' ||
+    routeState?.role === 'project_admin' ||
+    myRole === 'project_admin'
+  const canManage = isProjectAdmin
   // 访客只能看；上传/确认/作废由后端再校验「成员只能动自己上传的版本」。
   const canWrite =
-    canManage || routeState?.role === 'member'
+    canManage || routeState?.role === 'member' || myRole === 'member'
 
   const reloadOverview = useCallback(async () => {
     setLoading(true)
@@ -242,7 +250,9 @@ export default function ProjectDetailPage() {
                 <Descriptions column={2} data-testid="project-overview">
                   <Descriptions.Item label="成员数">{overview?.member_count ?? 0}</Descriptions.Item>
                   <Descriptions.Item label="文档数">{overview?.document_count ?? 0}</Descriptions.Item>
-                  <Descriptions.Item label="基线数">{overview?.baseline_count ?? 0}</Descriptions.Item>
+                  <Descriptions.Item label="功能基线数">
+                    {overview?.baseline_count ?? 0}
+                  </Descriptions.Item>
                   <Descriptions.Item label="最近执行">
                     {overview?.latest_execution ? '已有执行记录' : '暂无'}
                   </Descriptions.Item>
@@ -285,8 +295,20 @@ export default function ProjectDetailPage() {
           },
           {
             key: 'baselines',
-            label: '基线',
+            label: '版本快照',
             children: <ProjectBaselinesTab projectId={projectId} refreshKey={baselineKey} />,
+          },
+          {
+            key: 'baseline-management',
+            label: '基线管理',
+            children: (
+              <Space direction="vertical" size={16} style={{ width: '100%' }}>
+                <Card title="功能基线结构" size="small">
+                  <ProjectBaselineTree projectId={projectId} canWrite={canManage} />
+                </Card>
+                <ProjectBaselineSnapshots projectId={projectId} canWrite={canManage} />
+              </Space>
+            ),
           },
           {
             key: 'applications',

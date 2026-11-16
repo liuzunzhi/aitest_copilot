@@ -14,6 +14,8 @@ from pathlib import Path
 
 import pytest
 from playwright.sync_api import Browser, Page
+from sqlalchemy import create_engine
+from sqlalchemy.orm import Session
 
 from tests.e2e.support import (
     ADMIN_PASSWORD as SUPPORT_ADMIN_PASSWORD,
@@ -31,6 +33,75 @@ SCREENSHOT_ROOT = Path(
 )
 ADMIN_USERNAME = os.getenv("E2E_ADMIN_USERNAME", SUPPORT_ADMIN_USERNAME)
 ADMIN_PASSWORD = os.getenv("E2E_ADMIN_PASSWORD", SUPPORT_ADMIN_PASSWORD)
+
+
+def _assert_backend_is_isolated(playwright) -> None:
+    """确认 e2e 后端连的是 `_e2e` 库，而不是开发库。
+
+    前台用例会真实创建项目、成员、申请与审计记录。跑在开发库上会污染数据，
+    还会把后端全量 pytest 的全局断言打红。端口被旧进程占住时最容易踩这个坑
+    （端口上跑着连开发库的后端，前台看起来是通的，数据却写错库），
+    所以开跑前先验一次。
+
+    做法是拿后端 API 造一个探针项目，再去两个库里找它落在哪——
+    只看后端「能不能连上」不够，得看它到底写的哪个库。
+    """
+    import uuid
+
+    from sqlalchemy import text
+
+    from tests.e2e.support import BACKEND_URL, _dev_dsn, _e2e_dsn
+
+    probe_name = f"e2e-probe-{uuid.uuid4().hex[:8]}"
+    ctx = playwright.request.new_context(base_url=BACKEND_URL)
+    try:
+        response = ctx.post(
+            "/api/projects",
+            data={"name": probe_name},
+            headers={
+                "Authorization": (
+                    f"Bearer {token_for(ctx, ADMIN_USERNAME, ADMIN_PASSWORD)}"
+                )
+            },
+        )
+    finally:
+        ctx.dispose()
+    if response.status not in (200, 201):
+        raise RuntimeError(
+            f"e2e 后端 {BACKEND_URL} 不可用：{response.status} {response.text()}"
+        )
+
+    found = {}
+    for label, dsn in (("e2e", _e2e_dsn()), ("dev", _dev_dsn())):
+        engine = create_engine(dsn, pool_pre_ping=True, future=True)
+        probe_session = Session(engine, expire_on_commit=False)
+        try:
+            rows = probe_session.execute(
+                text("SELECT id FROM projects WHERE name = :name"),
+                {"name": probe_name},
+            ).all()
+            if rows:
+                found[label] = rows[0][0]
+        finally:
+            probe_session.close()
+            engine.dispose()
+
+    if "dev" in found:
+        raise RuntimeError(
+            f"e2e 后端把探针项目 {probe_name} 写进了开发库（项目 {found['dev']}），"
+            "前台用例会污染开发库并打红后端全量断言。先停掉占用 8001 的后端。"
+        )
+    if "e2e" not in found:
+        raise RuntimeError(
+            f"探针项目 {probe_name} 没落在隔离库 {_e2e_dsn()}，"
+            f"却出现在 {sorted(found)}。先确认 e2e 后端用的是 `_e2e` 库。"
+        )
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _e2e_backend_isolation(playwright) -> None:
+    """session 级守卫：后端没连隔离库就不许开跑。"""
+    _assert_backend_is_isolated(playwright)
 
 
 @pytest.fixture(scope="session")
