@@ -22,6 +22,9 @@ test-results/
 # 上传的文档原文（03-documents）
 var/uploads/
 
+# 脚本起的服务日志（scripts/run_e2e.py）
+var/*.log
+
 # 编辑器
 .idea/
 .vscode/
