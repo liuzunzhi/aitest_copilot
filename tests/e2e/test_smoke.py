@@ -64,7 +64,8 @@ def test_ac_31_project_lifecycle_ui(admin_page: Page, shot) -> None:
     admin_page.get_by_role("link", name="我的项目").click()
     target_row = admin_page.get_by_role("row").filter(has_text=name)
     target_row.get_by_role("button", name="归档").click()
-    admin_page.locator("button:visible", has_text="归档").last.click()
+    # 必须限定在浮层内：列表有上百行时 .last 会在 Popconfirm 挂载前误点最后一行的按钮
+    admin_page.locator(".ant-popover:visible").get_by_role("button", name="归档").click()
 
     expect(target_row).to_contain_text("已归档")
     shot(admin_page, "archived")

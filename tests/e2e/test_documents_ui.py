@@ -27,6 +27,18 @@ print(1)
 """
 
 
+DOC_MD_V2 = """# 支付需求
+
+## 1. 概述
+
+第二版：新增退款。
+
+## 2. 流程
+
+下单 → 支付 → 回调 → 退款。
+"""
+
+
 def _name(prefix: str) -> str:
     return f"e2e-{prefix}-{uuid.uuid4().hex[:6]}"
 
@@ -145,6 +157,48 @@ def test_ac_58_download_original(admin_page: Page, api, shot) -> None:
     download = info.value
     assert download.suggested_filename == "支付需求.md"
     shot(admin_page, "downloaded")
+
+
+@pytest.mark.task("T54")
+def test_ac_54_new_version_archives_old_and_baseline_refreshes(
+    admin_page: Page, api, shot
+) -> None:
+    """追加 V2 并确认：V1 变「已归档」，基线 Tab 无需刷新页面即出现 V2。"""
+    _open_documents(admin_page, api, "version")
+    _upload(admin_page)
+    _open_versions(admin_page, "支付需求")
+    _activate(admin_page)
+    admin_page.locator(".ant-modal-close").click()
+
+    # 先看一次基线，让组件挂载并缓存 V1
+    admin_page.get_by_role("tab", name="基线").click()
+    expect(admin_page.get_by_test_id("baseline-table")).to_contain_text("V1")
+
+    # 回文档页追加新版本
+    admin_page.get_by_role("tab", name="文档").click()
+    _open_versions(admin_page, "支付需求")
+    admin_page.get_by_test_id("version-file-input").set_input_files(
+        {"name": "支付需求.md", "mimeType": "text/markdown", "buffer": DOC_MD_V2.encode("utf-8")}
+    )
+
+    version_table = admin_page.get_by_test_id("version-table")
+    expect(version_table.get_by_role("row").filter(has_text="V2")).to_contain_text("待确认")
+
+    version_table.get_by_role("row").filter(has_text="V2").get_by_role(
+        "button", name="确认生效"
+    ).click()
+
+    expect(version_table.get_by_role("row").filter(has_text="V2")).to_contain_text("已生效")
+    expect(version_table.get_by_role("row").filter(has_text="V1")).to_contain_text("已归档")
+    shot(admin_page, "v2-activated")
+    admin_page.locator(".ant-modal-close").click()
+
+    # 不刷新页面，基线 Tab 应已重载
+    admin_page.get_by_role("tab", name="基线").click()
+    baseline_table = admin_page.get_by_test_id("baseline-table")
+    expect(baseline_table).to_contain_text("V2")
+    expect(baseline_table).to_contain_text("V1")
+    shot(admin_page, "baseline-refreshed")
 
 
 @pytest.mark.task("T54")

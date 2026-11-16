@@ -107,6 +107,7 @@ def test_ac_35_to_38_member_management_ui(admin_page: Page, api, make_user, shot
 
     # AC-38：移除
     row.get_by_role("button", name="移除").click()
-    admin_page.locator("button:visible", has_text="移除").last.click()
+    # 限定在浮层内，避免 Popconfirm 挂载竞态误点行内按钮
+    admin_page.locator(".ant-popover:visible").get_by_role("button", name="移除").click()
     expect(row).to_have_count(0)
     shot(admin_page, "member-removed")
