@@ -4,16 +4,22 @@
 结构：模块 → 功能 → 功能点；标签挂在快照上，打标前要有审核通过的快照。
 """
 
-import uuid
-
 import pytest
-from playwright.sync_api import Locator, Page, expect
+from playwright.sync_api import Page, expect
+
+from tests.e2e.helpers import (
+    click_save as _save,
+    expect_form_error as _form_error,
+    expand_tree_node as _expand,
+    modal_titled as _modal_titled,
+    pick_select_option as _pick,
+    tree_node as _tree_node,
+    unique_name as _name,
+    visible_modal as _modal,
+    wait_modal_closed as _wait_modal_closed,
+)
 
 pytestmark = pytest.mark.e2e
-
-
-def _name(prefix: str) -> str:
-    return f"e2e-{prefix}-{uuid.uuid4().hex[:6]}"
 
 
 def _headers(api, token: str | None = None) -> dict:
@@ -75,73 +81,6 @@ def _open_management(page: Page, project_name: str) -> None:
     ).click()
     page.get_by_role("tab", name="基线管理").click()
     expect(page.get_by_test_id("add-module")).to_be_visible()
-
-
-def _tree_node(page: Page, node_text: str) -> Locator:
-    """按可见文本定位树节点（只取标题节点，避免命中祖先容器）。"""
-    return page.locator(".ant-tree-treenode", has_text=node_text).first
-
-
-def _expand(page: Page, node_text: str) -> None:
-    """展开某个树节点。
-
-    antd v6 的 DOM 是 `.ant-tree-treenode > .ant-tree-switcher`，
-    收起/展开状态类是 `ant-tree-switcher_close` / `ant-tree-switcher_open`。
-    """
-    switcher = _tree_node(page, node_text).locator("> .ant-tree-switcher").first
-    if switcher.count() == 0:
-        return
-    classes = switcher.get_attribute("class") or ""
-    if "ant-tree-switcher_close" in classes:
-        switcher.click()
-        page.wait_for_timeout(400)
-
-
-def _pick(page: Page, label: str, option: str) -> None:
-    """在 antd Select 里选一项。
-
-    多选 Select 选完不会自己收起，dropdown 浮在 Modal 之上会挡住按钮；
-    但单选的 dropdown 选完就关了，这时再按 Esc 会把整个 Modal 也关掉，
-    所以只在 dropdown 还开着的时候才收。
-    """
-    page.locator(".ant-form-item", has_text=label).locator(".ant-select").first.click()
-    page.locator(
-        ".ant-select-dropdown:visible .ant-select-item-option", has_text=option
-    ).first.click()
-    page.wait_for_timeout(200)
-    if page.locator(".ant-select-dropdown:visible").count():
-        page.keyboard.press("Escape")
-        page.wait_for_timeout(200)
-    page.keyboard.press("Escape")
-    page.wait_for_timeout(200)
-
-
-def _modal(page: Page) -> Locator:
-    return page.locator(".ant-modal:visible").last
-
-
-def _modal_titled(page: Page, title: str) -> Locator:
-    """按标题定位弹窗。
-
-    标签弹窗与「清除标签」弹窗会叠在一起，`.last` 未必是最上层，
-    按标题取才不会点错。
-    """
-    return page.locator(".ant-modal:visible").filter(has_text=title).last
-
-
-def _save(page: Page) -> None:
-    """弹窗里的「保存」——限定在可见弹窗内，避免撞上保留策略的保存按钮。"""
-    _modal(page).get_by_role("button", name="保存").click()
-
-
-def _form_error(page: Page, text: str) -> None:
-    """表单校验提示就地渲染在字段下方，不是 toast。"""
-    expect(page.locator(".ant-form-item-explain-error").filter(has_text=text)).to_be_visible()
-
-
-def _wait_modal_closed(page: Page) -> None:
-    """等弹窗关掉——弹窗的遮罩会挡住底下的树节点。"""
-    expect(page.locator(".ant-modal:visible")).to_have_count(0)
 
 
 @pytest.mark.task("T65")

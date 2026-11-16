@@ -1,9 +1,7 @@
 """Playwright 前台验收夹具（见 `specs/验证约定.md`）。
 
 这些用例不在全量 pytest 里跑（`addopts` 默认 `-m "not e2e"`），
-需要先起后端 :8000 与前端 :5173，再显式执行：
-
-    .\\.venv\\Scripts\\python.exe -m pytest tests/e2e -m e2e
+常规直接用 `scripts/run_e2e.py`（自检 → 起 8001/5174 → 跑用例 → 收尾）。
 
 账号可用环境变量覆盖：`E2E_ADMIN_USERNAME` / `E2E_ADMIN_PASSWORD`。
 """
@@ -35,67 +33,84 @@ ADMIN_USERNAME = os.getenv("E2E_ADMIN_USERNAME", SUPPORT_ADMIN_USERNAME)
 ADMIN_PASSWORD = os.getenv("E2E_ADMIN_PASSWORD", SUPPORT_ADMIN_PASSWORD)
 
 
+def _db_fingerprint(session, username: str) -> tuple[int | None, frozenset[int]]:
+    """某库里 `username` 的 id + 参与项目集合。"""
+    from sqlalchemy import text
+
+    row = session.execute(
+        text("SELECT id FROM users WHERE username = :name"), {"name": username}
+    ).first()
+    if row is None:
+        return None, frozenset()
+    project_ids = session.execute(
+        text("SELECT project_id FROM project_members WHERE user_id = :uid"),
+        {"uid": row[0]},
+    ).scalars()
+    return row[0], frozenset(project_ids.all())
+
+
 def _assert_backend_is_isolated(playwright) -> None:
-    """确认 e2e 后端连的是 `_e2e` 库，而不是开发库。
+    """确认 e2e 后端连的是 `aitest_copilot_e2e`，而不是开发库。
 
     前台用例会真实创建项目、成员、申请与审计记录。跑在开发库上会污染数据，
     还会把后端全量 pytest 的全局断言打红。端口被旧进程占住时最容易踩这个坑
     （端口上跑着连开发库的后端，前台看起来是通的，数据却写错库），
     所以开跑前先验一次。
 
-    做法是拿后端 API 造一个探针项目，再去两个库里找它落在哪——
-    只看后端「能不能连上」不够，得看它到底写的哪个库。
+    只读校验：拿 `/api/auth/me` 的 admin id 与 `/api/projects` 的项目集合，
+    去两个库里比对 admin 的「id + 参与项目」指纹。不造探针数据，
+    校验失败也不会留下垃圾；两库数据都为空时靠 admin id 区分。
     """
-    import uuid
+    from tests.e2e.support import _dev_dsn, _e2e_dsn
 
-    from sqlalchemy import text
-
-    from tests.e2e.support import BACKEND_URL, _dev_dsn, _e2e_dsn
-
-    probe_name = f"e2e-probe-{uuid.uuid4().hex[:8]}"
     ctx = playwright.request.new_context(base_url=BACKEND_URL)
     try:
-        response = ctx.post(
-            "/api/projects",
-            data={"name": probe_name},
-            headers={
-                "Authorization": (
-                    f"Bearer {token_for(ctx, ADMIN_USERNAME, ADMIN_PASSWORD)}"
-                )
-            },
+        login = ctx.post(
+            "/api/auth/login",
+            data={"username": ADMIN_USERNAME, "password": ADMIN_PASSWORD},
+        )
+        if login.status != 200:
+            raise RuntimeError(
+                f"e2e 后端 {BACKEND_URL} 不可用：{login.status} {login.text()}"
+            )
+        headers = {"Authorization": f"Bearer {login.json()['access_token']}"}
+        me = ctx.get("/api/auth/me", headers=headers)
+        projects = ctx.get("/api/projects", headers=headers)
+        if me.status != 200 or projects.status != 200:
+            raise RuntimeError(
+                f"e2e 后端 {BACKEND_URL} 取身份/项目失败："
+                f"me={me.status} projects={projects.status}"
+            )
+        api_fingerprint = (
+            me.json()["id"],
+            frozenset(item["id"] for item in projects.json()),
         )
     finally:
         ctx.dispose()
-    if response.status not in (200, 201):
-        raise RuntimeError(
-            f"e2e 后端 {BACKEND_URL} 不可用：{response.status} {response.text()}"
-        )
 
-    found = {}
+    found: dict[str, tuple[int | None, frozenset[int]]] = {}
     for label, dsn in (("e2e", _e2e_dsn()), ("dev", _dev_dsn())):
         engine = create_engine(dsn, pool_pre_ping=True, future=True)
-        probe_session = Session(engine, expire_on_commit=False)
+        session = Session(engine, expire_on_commit=False)
         try:
-            rows = probe_session.execute(
-                text("SELECT id FROM projects WHERE name = :name"),
-                {"name": probe_name},
-            ).all()
-            if rows:
-                found[label] = rows[0][0]
+            found[label] = _db_fingerprint(session, ADMIN_USERNAME)
         finally:
-            probe_session.close()
+            session.close()
             engine.dispose()
 
-    if "dev" in found:
+    if found["e2e"] == api_fingerprint and found["dev"] != api_fingerprint:
+        return
+    if found["dev"] == api_fingerprint and found["e2e"] != api_fingerprint:
         raise RuntimeError(
-            f"e2e 后端把探针项目 {probe_name} 写进了开发库（项目 {found['dev']}），"
+            f"e2e 后端连的是开发库（admin id={api_fingerprint[0]} 落在 dev），"
             "前台用例会污染开发库并打红后端全量断言。先停掉占用 8001 的后端。"
         )
-    if "e2e" not in found:
-        raise RuntimeError(
-            f"探针项目 {probe_name} 没落在隔离库 {_e2e_dsn()}，"
-            f"却出现在 {sorted(found)}。先确认 e2e 后端用的是 `_e2e` 库。"
-        )
+    raise RuntimeError(
+        "无法确认 e2e 后端连的是隔离库："
+        f"后端指纹 admin id={api_fingerprint[0]}、项目 {len(api_fingerprint[1])} 个；"
+        f"e2e 库 {found['e2e']}，dev 库 {found['dev']}。"
+        "确认 8001 上跑的是 `DB_DSN=..._e2e` 的后端。"
+    )
 
 
 @pytest.fixture(scope="session", autouse=True)
