@@ -1,6 +1,7 @@
 """项目内的文档上传（T47 / AC-49 ~ AC-51）。"""
 
 from fastapi import APIRouter, Depends, File, Form, UploadFile
+from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
 from app.common.config import get_settings
@@ -196,6 +197,29 @@ def void_version(
         actor=user,
     )
     return _version_out(version)
+
+
+@router.get(
+    "/{project_id}/documents/{document_id}/versions/{version_id}/download",
+    response_class=FileResponse,
+)
+def download_source(
+    project_id: int,
+    document_id: int,
+    version_id: int,
+    session: Session = Depends(get_db),
+    user: User = Depends(require_project_member_or_system_admin),
+) -> FileResponse:
+    """下载原文。文件名用中文也能正确落盘：Starlette 会写成 RFC 5987 的 `filename*`。"""
+    path, file_name = service.get_source_file(
+        session, project_id=project_id, document_id=document_id, version_id=version_id
+    )
+    return FileResponse(
+        path,
+        media_type="application/octet-stream",
+        filename=file_name,
+        content_disposition_type="attachment",
+    )
 
 
 @router.get("/{project_id}/baselines", response_model=list[BaselineOut])

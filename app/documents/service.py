@@ -382,6 +382,23 @@ def void_version(
     return version
 
 
+def get_source_file(
+    session: Session, *, project_id: int, document_id: int, version_id: int
+) -> tuple[Path, str]:
+    """返回（磁盘绝对路径, 原始文件名），供下载接口使用。
+
+    库里只存相对路径，这里才和 `upload_dir` 拼起来；文件被误删时报 404，
+    避免把内部路径或 IO 异常暴露给前端。
+    """
+    _load_document(session, project_id=project_id, document_id=document_id)
+    version = _load_version(session, document_id=document_id, version_id=version_id)
+
+    target = Path(get_settings().upload_dir) / version.file_path
+    if not target.is_file():
+        raise DocumentVersionNotFound("原文文件缺失")
+    return target, version.file_name
+
+
 def list_baselines(session: Session, project_id: int) -> list[dict]:
     """基线快照列表，新序号在前；带上文档名便于前端直接展示。"""
     rows = session.execute(
@@ -478,6 +495,7 @@ def _insert_chapters(
 
 __all__ = [
     "activate_version",
+    "get_source_file",
     "list_baselines",
     "list_chapters",
     "list_documents",
