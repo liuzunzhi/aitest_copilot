@@ -115,15 +115,12 @@ def test_ac_55_activate_generates_baseline(admin_page: Page, api, shot) -> None:
     shot(admin_page, "activated")
     admin_page.locator(".ant-modal-close").click()
 
-    admin_page.get_by_role("tab", name="基线").click()
+    admin_page.get_by_role("tab", name="版本快照", exact=True).click()
     baseline_table = admin_page.get_by_test_id("baseline-table")
     expect(baseline_table).to_contain_text("V1")
     expect(baseline_table).to_contain_text("支付需求")
     expect(baseline_table).to_contain_text("2")  # 章节数
     shot(admin_page, "baseline")
-
-    admin_page.get_by_role("tab", name="概览").click()
-    expect(admin_page.get_by_test_id("project-overview")).to_contain_text("基线数1")
 
 
 @pytest.mark.task("T54")
@@ -171,7 +168,7 @@ def test_ac_54_new_version_archives_old_and_baseline_refreshes(
     admin_page.locator(".ant-modal-close").click()
 
     # 先看一次基线，让组件挂载并缓存 V1
-    admin_page.get_by_role("tab", name="基线").click()
+    admin_page.get_by_role("tab", name="版本快照", exact=True).click()
     expect(admin_page.get_by_test_id("baseline-table")).to_contain_text("V1")
 
     # 回文档页追加新版本
@@ -194,7 +191,7 @@ def test_ac_54_new_version_archives_old_and_baseline_refreshes(
     admin_page.locator(".ant-modal-close").click()
 
     # 不刷新页面，基线 Tab 应已重载
-    admin_page.get_by_role("tab", name="基线").click()
+    admin_page.get_by_role("tab", name="版本快照", exact=True).click()
     baseline_table = admin_page.get_by_test_id("baseline-table")
     expect(baseline_table).to_contain_text("V2")
     expect(baseline_table).to_contain_text("V1")

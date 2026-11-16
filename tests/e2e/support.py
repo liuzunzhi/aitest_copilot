@@ -12,7 +12,7 @@ import uuid
 from pathlib import Path
 
 from playwright.sync_api import APIRequestContext
-from sqlalchemy import Engine, create_engine
+from sqlalchemy import Engine, create_engine, text
 from sqlalchemy.orm import Session
 
 from app.common.security import hash_password
@@ -61,6 +61,65 @@ def _session() -> Session:
     if _engine is None:
         _engine = create_engine(_e2e_dsn(), pool_pre_ping=True, future=True)
     return Session(_engine, expire_on_commit=False)
+
+
+def cleanup_e2e_data(name_prefix: str = "e2e-") -> dict[str, int]:
+    """删掉前台用例造的数据（项目名以 `e2e-` 开头，用例统一用这个前缀）。
+
+    不清理的代价：e2e 库会越跑越大（T65 时已积到 200+ 个项目），用例变慢，
+    而且 `dev_check.py` 用「admin 参与的项目集合」认库，历史数据会让判定失真。
+    用户只删 `e2e-` 前缀的，`admin` 与手工造的数据不动。
+
+    子表按外键依赖顺序删（文档章节 → 版本/标签/快照 → 结构 → 项目），
+    删完把会话的外键检查恢复，不影响同连接的后续语句。
+    """
+    session = _session()
+    counts: dict[str, int] = {}
+    in_projects = "SELECT id FROM projects WHERE name LIKE :prefix"
+    in_documents = (
+        "SELECT d.id FROM documents d JOIN projects p ON p.id = d.project_id "
+        "WHERE p.name LIKE :prefix"
+    )
+    statements = [
+        (
+            "document_chapters",
+            "DELETE FROM document_chapters WHERE version_id IN ("
+            "SELECT dv.id FROM document_versions dv WHERE dv.document_id IN ("
+            f"{in_documents}))",
+        ),
+        ("baseline_labels", f"DELETE FROM baseline_labels WHERE project_id IN ({in_projects})"),
+        ("baseline_revisions", f"DELETE FROM baseline_revisions WHERE project_id IN ({in_projects})"),
+        ("baseline_snapshots", f"DELETE FROM baseline_snapshots WHERE project_id IN ({in_projects})"),
+        (
+            "document_versions",
+            f"DELETE FROM document_versions WHERE document_id IN ({in_documents})",
+        ),
+        (
+            "baseline_feature_points",
+            f"DELETE FROM baseline_feature_points WHERE project_id IN ({in_projects})",
+        ),
+        ("baseline_functions", f"DELETE FROM baseline_functions WHERE project_id IN ({in_projects})"),
+        ("baseline_modules", f"DELETE FROM baseline_modules WHERE project_id IN ({in_projects})"),
+        ("documents", f"DELETE FROM documents WHERE project_id IN ({in_projects})"),
+        (
+            "project_applications",
+            f"DELETE FROM project_applications WHERE project_id IN ({in_projects})",
+        ),
+        ("project_members", f"DELETE FROM project_members WHERE project_id IN ({in_projects})"),
+        ("audit_logs", f"DELETE FROM audit_logs WHERE project_id IN ({in_projects})"),
+        ("projects", "DELETE FROM projects WHERE name LIKE :prefix"),
+    ]
+    try:
+        session.execute(text("SET FOREIGN_KEY_CHECKS=0"))
+        for table, sql in statements:
+            affected = session.execute(text(sql), {"prefix": f"{name_prefix}%"}).rowcount or 0
+            if affected:
+                counts[table] = affected
+        session.execute(text("SET FOREIGN_KEY_CHECKS=1"))
+        session.commit()
+    finally:
+        session.close()
+    return counts
 
 
 def create_user(global_role: str = "user") -> dict:

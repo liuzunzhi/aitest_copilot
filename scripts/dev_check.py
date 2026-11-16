@@ -154,6 +154,9 @@ def check_database(label: str, dsn: str, head: str | None) -> dict | None:
             version = row[0] if row else None
             cur.execute("SHOW TABLES LIKE 'baseline%%'")
             tables = {row[0] for row in cur.fetchall()}
+            cur.execute("SELECT id FROM users WHERE username = %s", ("admin",))
+            admin_row = cur.fetchone()
+            admin_id = admin_row[0] if admin_row else None
             # 与 GET /api/projects 同口径：admin 参与的项目
             cur.execute(
                 "SELECT DISTINCT pm.project_id FROM project_members pm "
@@ -174,7 +177,11 @@ def check_database(label: str, dsn: str, head: str | None) -> dict | None:
         else:
             ok(f"{label} 库 04 基线表齐（{len(BASELINE_TABLES)} 张）")
 
-        return {"database": params["database"], "admin_projects": admin_projects}
+        return {
+            "database": params["database"],
+            "admin_id": admin_id,
+            "admin_projects": admin_projects,
+        }
     finally:
         conn.close()
 
@@ -339,28 +346,32 @@ def check_backend_api(base: str, dbs: dict[str, dict | None]) -> str | None:
         return None
 
     try:
+        _, me = http_json(f"{base}/api/auth/me", token=token)
         _, projects = http_json(f"{base}/api/projects", token=token)
-        api_projects = {item["id"] for item in projects}
-    except (urllib.error.URLError, OSError, ValueError, TypeError) as exc:
+        # 用「admin 的 id + 参与的项目集合」认库：只看项目集合时，两库都空就会判定不出来
+        api_fingerprint = (me["id"], frozenset(item["id"] for item in projects))
+    except (urllib.error.URLError, OSError, ValueError, TypeError, KeyError) as exc:
         warn(f"后端 {base} 取项目列表失败，无法判定连的是哪个库：{exc}")
         return None
 
     matches = [
         label
         for label, db in dbs.items()
-        if db is not None and db["admin_projects"] == api_projects
+        if db is not None
+        and (db["admin_id"], frozenset(db["admin_projects"])) == api_fingerprint
     ]
     if len(matches) == 1:
         label = matches[0]
-        ok(f"后端 {base} 实际连的是【{dbs[label]['database']}】（{label}）")
+        ok(
+            f"后端 {base} 实际连的是【{dbs[label]['database']}】"
+            f"（{label}，admin id={api_fingerprint[0]}，"
+            f"{len(api_fingerprint[1])} 个参与项目）"
+        )
         return dbs[label]["database"]
     if len(matches) > 1:
-        warn(f"后端 {base}：两个库的 admin 项目集合一致（{len(api_projects)} 个），无法判定连接库")
+        warn(f"后端 {base}：两个库的 admin 指纹一致，无法判定连接库")
     else:
-        warn(
-            f"后端 {base} 返回的 admin 项目集合与两个库都不匹配"
-            f"（{len(api_projects)} 个），可能是第三种 DSN"
-        )
+        warn(f"后端 {base} 的 admin 指纹与两个库都不匹配，可能是第三种 DSN")
     return None
 
 

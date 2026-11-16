@@ -104,6 +104,30 @@ def _e2e_backend_isolation(playwright) -> None:
     _assert_backend_is_isolated(playwright)
 
 
+@pytest.fixture(scope="session", autouse=True)
+def _e2e_data_cleanup(pytestconfig: pytest.Config) -> Iterator[None]:
+    """会话结束清掉 `e2e-` 前缀的项目，避免 e2e 库越跑越大。
+
+    需要现场排查时设 `E2E_KEEP_DATA=1` 跳过清理（`scripts/run_e2e.py --keep-data`）。
+    """
+    yield
+    if os.getenv("E2E_KEEP_DATA"):
+        print("\n[e2e] E2E_KEEP_DATA 已设置，跳过数据清理")
+        return
+
+    from tests.e2e.support import cleanup_e2e_data
+
+    counts = cleanup_e2e_data()
+    summary = "，".join(f"{table} {rows}" for table, rows in counts.items()) or "没有可清理的数据"
+    message = f"\n[e2e] 已清理：{summary}"
+    # 会话收尾的 print 会被 pytest 捕获，走 terminal writer 才能直接看到
+    writer = getattr(pytestconfig, "get_terminal_writer", None)
+    if callable(writer):
+        writer().line(message)
+    else:
+        print(message)
+
+
 @pytest.fixture(scope="session")
 def admin_storage_state(browser: Browser, base_url: str) -> dict:
     """登录一次，把 localStorage 里的令牌存下来给所有用例复用。"""
