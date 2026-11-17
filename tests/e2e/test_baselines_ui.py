@@ -167,7 +167,7 @@ def test_ac_64_module_not_empty_gives_two_actions(admin_page: Page, api, shot) -
     _open_management(admin_page, project["name"])
 
     node = _tree_node(admin_page, "待删模块")
-    node.get_by_role("button", name="删除").first.click()
+    node.get_by_test_id(f"delete-module-{module['id']}").click()
     admin_page.locator(".ant-popover:visible").get_by_role("button", name="删除").click()
 
     expect(admin_page.get_by_text("模块下还有功能")).to_be_visible()
@@ -192,7 +192,7 @@ def test_ac_65_migrate_functions_ui(admin_page: Page, api, shot) -> None:
     admin_page.reload()
     _open_management(admin_page, project["name"])
 
-    _tree_node(admin_page, "源模块").get_by_role("button", name="迁移功能").click()
+    _tree_node(admin_page, "源模块").get_by_test_id(f"migrate-{source['id']}").click()
     _pick(admin_page, "目标模块", "目标模块")
     _pick(admin_page, "要迁移的功能", "要迁移的功能")
     _modal(admin_page).get_by_role("button", name="迁移").click()

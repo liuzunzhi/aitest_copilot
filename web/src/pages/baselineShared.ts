@@ -21,3 +21,10 @@ export function isValidationError(error: unknown): boolean {
     Array.isArray((error as { errorFields?: unknown[] }).errorFields)
   )
 }
+
+/** 打标对象：功能级 / 功能点级。 */
+export interface LabelTarget {
+  targetType: 'function' | 'feature_point'
+  targetId: number
+  name: string
+}
