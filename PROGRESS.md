@@ -15,13 +15,13 @@
 - [x] 02-projects (项目与申请)
 - [x] 03-documents (文档解析)
 - [x] 04-baseline (基线管理、快照、标签) —— **已完成（含 T67 收尾）**
-- [x] 05-increment-analysis (增量分析) —— **第一期（T68~T70）+ 第二期（T71~T78）+ 第三期 T79~T80 完成（T81~T83 待做）**
+- [x] 05-increment-analysis (增量分析) —— **第一期（T68~T70）+ 第二期（T71~T78）+ 第三期 T79~T81 完成（T82~T83 待做）**
 - [ ] 06 及后续模块 —— ****[TBD 待定，严禁 AI 擅自规划]****
 
 ## 3. 当前冲刺任务（⚠️ 务必先做这个）
 
 **当前目标**：05 增量分析——**第三期（产出段）进行中**，
-T80（产出引擎：标签收集 + 落库）已完成，下一步 T81（产出服务与接口）。
+T81（产出服务与接口：`apply` / `applied-labels`）已完成，下一步 T82（前端产出区块）。
 
 > 第三期范围：把第二遍裁决落成基线标签 + 待审核快照；仍零真实网络请求、
 > 不写 `unchanged` 标签、不自动批准快照、**不物理删除任何标签行**、
@@ -61,7 +61,7 @@ T80（产出引擎：标签收集 + 落库）已完成，下一步 T81（产出�
 
 | 项 | 值 |
 |---|---|
-| 后端全量 pytest | **615 passed**（串行；T80 后） |
+| 后端全量 pytest | **626 passed**（串行；T81 后） |
 | e2e | 34 条（含增量分析第一期 2 条 + 第二期 3 条），一条命令 `.\.venv\Scripts\python.exe scripts\run_e2e.py`（8001/5174 + `aitest_copilot_e2e`） |
 | 前端构建 | `npm run build`（`web/` 目录，端口 5173，代理到 8000） |
 | 开跑前自检 | `.\.venv\Scripts\python.exe scripts\dev_check.py`（跑 e2e 时加 `--expect-db e2e`） |
@@ -127,7 +127,8 @@ T80（产出引擎：标签收集 + 落库）已完成，下一步 T81（产出�
       唯一键 `(analysis_id, baseline_label_id)`，标签类型只收 `changed` / `affected`）
 - [x] T80 产出引擎：`app/incremental/apply.py`（收集规则 / 复用或新建 submitted 快照 /
       写标签 + 映射 / 重跑逻辑清除），标签行只置 `cleared`、绝不物理删除
-- [ ] T81 产出服务与接口
+- [x] T81 产出服务与接口：`run_apply`（固定校验顺序 + 逻辑清除 + 落标签 + 审计）、
+      `list_applied_labels`（历史行可查 + `revoked` 派生）、两个路由与 3 个错误码；审计覆盖补 1 条
 - [ ] T82 前端（应用产出区块）
 - [ ] T83 收尾
 
@@ -137,9 +138,12 @@ T80（产出引擎：标签收集 + 落库）已完成，下一步 T81（产出�
 **T80 验证结果**：`tests/incremental/test_apply_engine.py` 11 passed；
 后端全量 **615 passed**（串行）。未改 `app/baselines/` 任何代码，未物理删除标签行。
 
+**T81 验证结果**：`tests/incremental/test_apply_flow.py` 10 passed，
+审计覆盖清单新增 `incremental.apply.run` 1 条；后端全量 **626 passed**（串行）。
+
 ## 6. 待办（不属当前冲刺，等用户点头再做）
 
-- 05 第三期剩余任务：T80 ~ T83（见 `specs/05-incremental-analysis/tasks-phase3.md`）
+- 05 第三期剩余任务：T82 ~ T83（见 `specs/05-incremental-analysis/tasks-phase3.md`）
 - 05 第四期：真实模型供应商接入（密钥加密、运行日志表）
 - 05 第五期：模板管理 UI 与阈值回填（依赖基准集）
 - 修 `tests/projects/` 的 xdist flaky（断言未按项目隔离）
