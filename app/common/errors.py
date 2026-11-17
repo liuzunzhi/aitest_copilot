@@ -584,6 +584,27 @@ class SecondPassConflictsPending(AppError):
     code = "SECOND_PASS_CONFLICTS_PENDING"
 
 
+class ApplyNotReady(AppError):
+    """AC-102：第二遍还没成功，不能应用产出。"""
+
+    status_code = 409
+    code = "APPLY_NOT_READY"
+
+
+class ApplyConflictsPending(AppError):
+    """AC-102：仍有待裁决冲突，必须先裁决再应用产出。"""
+
+    status_code = 409
+    code = "APPLY_CONFLICTS_PENDING"
+
+
+class ApplyNoLabelableTarget(AppError):
+    """AC-102：没有可落标签的 changed / affected 目标。"""
+
+    status_code = 409
+    code = "APPLY_NO_LABELABLE_TARGET"
+
+
 class ConflictNotFound(AppError):
     """AC-93：冲突不存在或不属于该分析。"""
 
@@ -621,6 +642,9 @@ __all__ = [
     "AccountLocked",
     "AlreadyProjectMember",
     "AppError",
+    "ApplyConflictsPending",
+    "ApplyNoLabelableTarget",
+    "ApplyNotReady",
     "ApplicationNotFound",
     "ApplicationNotPending",
     "ApplyCooldown",

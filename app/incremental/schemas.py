@@ -14,6 +14,8 @@ from app.baselines.schemas import Page
 __all__ = [
     "AnalysisCreate",
     "AnalysisOut",
+    "AppliedLabelOut",
+    "ApplyResultOut",
     "ChapterLinkCreate",
     "ChapterLinkOut",
     "ConclusionOut",
@@ -153,4 +155,36 @@ class ConflictResolve(BaseModel):
 
     decision: str
     label_type: str | None = None
+
+
+class AppliedLabelOut(BaseModel):
+    """一条产出映射 + 对应基线标签的当前状态。
+
+    `id` 是映射行 id；`baseline_label_id` 指向 `baseline_labels`。
+    被清除的标签仍然返回（`status='cleared'` + 清除人 / 时间 / 原因），
+    这样历史产出可追溯，只是「当前产出」为空。
+    """
+
+    id: int
+    baseline_label_id: int
+    revision_id: int
+    target_type: str
+    target_id: int
+    target_name: str | None = None
+    label_type: str
+    status: str
+    cleared_by: int | None = None
+    cleared_at: datetime | None = None
+    clear_reason: str | None = None
+
+
+class ApplyResultOut(BaseModel):
+    """`apply` 与 `applied-labels` 共用的响应形状。"""
+
+    analysis_id: int
+    apply_status: str | None = None
+    apply_revision_id: int | None = None
+    apply_stats: dict | None = None
+    labels: list[AppliedLabelOut]
+    revoked: bool = False
 

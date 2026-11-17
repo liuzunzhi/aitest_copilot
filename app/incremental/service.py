@@ -31,6 +31,9 @@ from app.common.audit import write_audit
 from app.common.deps import SYSTEM_ADMIN
 from app.common.errors import (
     AppError,
+    ApplyConflictsPending,
+    ApplyNoLabelableTarget,
+    ApplyNotReady,
     BaselineRevisionRequired,
     ConflictAlreadyResolved,
     ConflictNotFound,
@@ -50,11 +53,16 @@ from app.common.errors import (
     TemplateDisabled,
     TemplateNotFound,
 )
-from app.incremental import engine, links, second_pass
+from app.incremental import apply as apply_engine, engine, links, second_pass
 from app.incremental.engine import ChapterResult, PassResult
 from app.incremental.schemas import AnalysisCreate, ConflictResolve
 from app.llm.provider import LLMProvider
-from app.models.baseline import BaselineRevision
+from app.models.baseline import (
+    BaselineFeaturePoint,
+    BaselineFunction,
+    BaselineLabel,
+    BaselineRevision,
+)
 from app.models.chapter_link import DocumentChapterLink
 from app.models.document import Document, DocumentVersion
 from app.models.incremental import (
@@ -63,6 +71,7 @@ from app.models.incremental import (
     IncrementalConclusion,
     IncrementalConflict,
     IncrementalDecision,
+    IncrementalLabel,
     PromptTemplate,
 )
 from app.models.project import Project, ProjectMember
@@ -887,14 +896,255 @@ def resolve_conflict(
     return conflict
 
 
+# ------------------------------------------------------------ 产出段（第三期）
+
+
+def _apply_sources(
+    session: Session, analysis: IncrementalAnalysis
+) -> tuple[list[IncrementalDecision], list[IncrementalConflict], list]:
+    """读第二遍结果并挑出可落标签的目标（spec §5.1）。"""
+    decisions = session.scalars(
+        select(IncrementalDecision)
+        .where(IncrementalDecision.analysis_id == analysis.id)
+        .order_by(IncrementalDecision.id)
+    ).all()
+    conflicts = session.scalars(
+        select(IncrementalConflict)
+        .where(IncrementalConflict.analysis_id == analysis.id)
+        .order_by(IncrementalConflict.id)
+    ).all()
+    return decisions, conflicts, apply_engine.collect_labelable(decisions, conflicts)
+
+
+def _apply_stats(
+    *,
+    revision: BaselineRevision,
+    decisions: list[IncrementalDecision],
+    conflicts: list[IncrementalConflict],
+    targets: list[apply_engine.LabelableTarget],
+    result: apply_engine.WriteResult,
+) -> dict:
+    """`apply_stats`：标签计数 + 跳过原因计数（spec §4.2.1）。"""
+    written = {(row.target_type, row.target_id) for row in result.labels}
+    return {
+        "revision_id": revision.id,
+        "revision_status": revision.status,
+        "label_count": result.label_count,
+        "changed_count": sum(
+            1 for row in result.labels if row.label_type == "changed"
+        ),
+        "affected_count": sum(
+            1 for row in result.labels if row.label_type == "affected"
+        ),
+        "skipped_missing_count": len(result.skipped_missing),
+        "skipped_new_count": sum(
+            1
+            for row in conflicts
+            if row.conflict_type == "new" and row.status == "confirmed"
+        ),
+        "unchanged_count": sum(
+            1 for row in decisions if row.decision == "unchanged"
+        )
+        + sum(
+            1
+            for row in conflicts
+            if row.status == "confirmed" and row.resolved_label_type == "unchanged"
+        ),
+        "conflict_label_count": sum(
+            1
+            for target in targets
+            if target.source == "conflict"
+            and (target.target_type, target.target_id) in written
+        ),
+    }
+
+
+def run_apply(
+    session: Session,
+    *,
+    project_id: int,
+    analysis_id: int,
+    actor: User,
+) -> IncrementalAnalysis:
+    """把第二遍结果落成基线标签，并复用 / 新建待审核快照。
+
+    固定校验顺序（spec-phase3 §6）：
+
+    1. 项目 404 / 归档 409 / 角色 403；
+    2. 分析记录存在且属本项目 404；
+    3. 第二遍 `succeeded`，否则 409 `APPLY_NOT_READY`；
+    4. 无 `pending` 冲突，否则 409 `APPLY_CONFLICTS_PENDING`；
+    5. 有可落标签的目标，否则 409 `APPLY_NO_LABELABLE_TARGET`；
+    6. 置 running → 逻辑清除旧产出 → 落标签 + 快照 → 回填统计与状态。
+
+    失败置 `failed` + `apply_error_*`，已产出的标签保留（不物理删除）。
+    """
+    _ensure_writable_project(session, project_id)
+    _ensure_admin(session, project_id=project_id, actor=actor)
+
+    analysis = _load_analysis(session, project_id=project_id, analysis_id=analysis_id)
+    if analysis.second_pass_status != "succeeded":
+        raise ApplyNotReady("第二遍分析尚未成功，不能应用产出")
+    if _pending_conflict_count(session, analysis.id):
+        raise ApplyConflictsPending("仍有待人工裁决的冲突，请先完成裁决")
+
+    decisions, conflicts, targets = _apply_sources(session, analysis)
+    if not targets:
+        raise ApplyNoLabelableTarget("没有可落标签的 changed / affected 目标")
+
+    analysis.apply_status = "running"
+    analysis.apply_started_at = _now()
+    analysis.apply_finished_at = None
+    analysis.apply_error_code = None
+    analysis.apply_error_message = None
+    analysis.apply_revision_id = None
+    analysis.apply_stats = None
+    session.flush()
+
+    revision: BaselineRevision | None = None
+    try:
+        apply_engine.clear_previous(session, analysis=analysis, actor=actor)
+        revision = apply_engine.resolve_revision(
+            session,
+            project_id=project_id,
+            actor=actor,
+            analysis=analysis,
+        )
+        result = apply_engine.write_labels(
+            session,
+            analysis=analysis,
+            revision_id=revision.id,
+            targets=targets,
+            actor=actor,
+        )
+        stats = _apply_stats(
+            revision=revision,
+            decisions=decisions,
+            conflicts=conflicts,
+            targets=targets,
+            result=result,
+        )
+    except AppError as exc:
+        analysis.apply_status = "failed"
+        analysis.apply_error_code = exc.code[:64]
+        analysis.apply_error_message = (exc.message or exc.code)[:500]
+        analysis.apply_finished_at = _now()
+        if revision is not None:
+            analysis.apply_revision_id = revision.id
+        session.commit()
+        raise
+    except Exception as exc:  # 内部异常同样落 failed，不让前端干等
+        analysis.apply_status = "failed"
+        analysis.apply_error_code = "INTERNAL_ERROR"
+        analysis.apply_error_message = f"产出执行失败：{exc}"[:500]
+        analysis.apply_finished_at = _now()
+        session.commit()
+        raise
+
+    analysis.apply_status = "succeeded"
+    analysis.apply_revision_id = revision.id
+    analysis.apply_stats = stats
+    analysis.apply_finished_at = _now()
+    session.flush()
+
+    write_audit(
+        session,
+        "incremental.apply.run",
+        actor_id=actor.id,
+        actor_role=actor.global_role,
+        project_id=project_id,
+        target_type="incremental_analysis",
+        target_id=analysis.id,
+        after_data={
+            "revision_id": revision.id,
+            "revision_status": revision.status,
+            **stats,
+        },
+    )
+    session.commit()
+    return analysis
+
+
+def _target_names(session: Session, labels: list[BaselineLabel]) -> dict[tuple[str, int], str]:
+    """产出标签的目标名称。删除 / 归档的实体也查得到名字。"""
+    function_ids = {
+        row.target_id for row in labels if row.target_type == "function"
+    }
+    point_ids = {
+        row.target_id for row in labels if row.target_type == "feature_point"
+    }
+    names: dict[tuple[str, int], str] = {}
+    if function_ids:
+        for function_id, name in session.execute(
+            select(BaselineFunction.id, BaselineFunction.name).where(
+                BaselineFunction.id.in_(function_ids)
+            )
+        ):
+            names[("function", int(function_id))] = name
+    if point_ids:
+        for point_id, name in session.execute(
+            select(BaselineFeaturePoint.id, BaselineFeaturePoint.name).where(
+                BaselineFeaturePoint.id.in_(point_ids)
+            )
+        ):
+            names[("feature_point", int(point_id))] = name
+    return names
+
+
+def list_applied_labels(
+    session: Session, *, project_id: int, analysis_id: int
+) -> dict:
+    """本次分析产出的标签列表 + `revoked` 派生标记（spec §5.5）。
+
+    返回全部映射行（含已清除的历史行）；`revoked` 只在
+    「有过产出且全部被清除」时为真，记录本身不动。
+    """
+    analysis = _load_analysis(session, project_id=project_id, analysis_id=analysis_id)
+    rows = session.execute(
+        select(IncrementalLabel, BaselineLabel)
+        .join(BaselineLabel, BaselineLabel.id == IncrementalLabel.baseline_label_id)
+        .where(IncrementalLabel.analysis_id == analysis.id)
+        .order_by(IncrementalLabel.id)
+    ).all()
+    labels = [label for _, label in rows]
+    names = _target_names(session, labels)
+
+    items = [
+        {
+            "id": mapping.id,
+            "baseline_label_id": label.id,
+            "revision_id": label.revision_id,
+            "target_type": label.target_type,
+            "target_id": label.target_id,
+            "target_name": names.get((label.target_type, label.target_id)),
+            "label_type": label.label_type,
+            "status": label.status,
+            "cleared_by": label.cleared_by,
+            "cleared_at": label.cleared_at,
+            "clear_reason": label.clear_reason,
+        }
+        for mapping, label in rows
+    ]
+    return {
+        "analysis_id": analysis.id,
+        "apply_status": analysis.apply_status,
+        "apply_revision_id": analysis.apply_revision_id,
+        "apply_stats": analysis.apply_stats,
+        "labels": items,
+        "revoked": bool(items) and all(item["status"] == "cleared" for item in items),
+    }
+
+
 __all__ = [
     "create_analysis",
     "ensure_readable",
     "get_analysis",
     "list_analyses",
+    "list_applied_labels",
     "list_conflicts",
     "list_conclusions",
     "list_decisions",
     "resolve_conflict",
+    "run_apply",
     "run_second_pass",
 ]

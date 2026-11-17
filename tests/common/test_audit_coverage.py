@@ -18,9 +18,14 @@ from app.common.clock import FixedClock
 from app.common.config import get_settings
 from app.common.security import hash_password
 from app.models.application import ProjectApplication
-from app.models.baseline import BaselineRevision
+from app.models.baseline import BaselineFunction, BaselineModule, BaselineRevision
 from app.models.document import DocumentChapter
-from app.models.incremental import IncrementalAnalysis, IncrementalConflict, PromptTemplate
+from app.models.incremental import (
+    IncrementalAnalysis,
+    IncrementalConflict,
+    IncrementalDecision,
+    PromptTemplate,
+)
 from app.models.project import Project, ProjectMember
 from app.models.system import AuditLog
 from app.models.user import User
@@ -797,6 +802,75 @@ def _incremental_conflict_resolve(
     assert analysis is not None
 
 
+def _incremental_apply_run(client: TestClient, db: Session, monkeypatch) -> None:
+    """05 第三期：应用产出（第二遍成功 + 已裁决 + 可落标签目标）。"""
+    project, user, headers, body = _uploaded(client, db)
+    response = client.post(
+        ACTIVATE.format(
+            project_id=project.id,
+            document_id=body["document"]["id"],
+            version_id=body["version"]["id"],
+        ),
+        headers=headers,
+    )
+    assert response.status_code == 200, response.text
+
+    revision = BaselineRevision(project_id=project.id, status="approved")
+    db.add(revision)
+    db.flush()
+    module = BaselineModule(
+        project_id=project.id, name="审计模块", created_by=user.id
+    )
+    db.add(module)
+    db.flush()
+    function = BaselineFunction(
+        project_id=project.id,
+        module_id=module.id,
+        name="审计功能",
+        created_by=user.id,
+    )
+    db.add(function)
+    db.flush()
+
+    template = db.scalar(
+        select(PromptTemplate).where(
+            PromptTemplate.task_type == "incremental",
+            PromptTemplate.name == "增量分析·第一遍·章节局部",
+        )
+    )
+    assert template is not None
+    analysis = IncrementalAnalysis(
+        project_id=project.id,
+        template_id=template.id,
+        template_version=template.version_no,
+        baseline_revision_id=revision.id,
+        document_id=body["document"]["id"],
+        document_version_id=body["version"]["id"],
+        status="succeeded",
+        second_pass_status="succeeded",
+        created_by=user.id,
+    )
+    db.add(analysis)
+    db.flush()
+    db.add(
+        IncrementalDecision(
+            analysis_id=analysis.id,
+            target_type="function",
+            target_id=function.id,
+            target_name="审计功能",
+            decision="changed",
+        )
+    )
+    db.flush()
+
+    response = client.post(
+        INCREMENTAL.format(project_id=project.id)
+        + f"/analyses/{analysis.id}/apply",
+        headers=headers,
+    )
+    assert response.status_code == 200, response.text
+
+
 def _chapter_link_create(client: TestClient, db: Session, monkeypatch) -> None:
     """05 第二期：人工补一条章节引用边。"""
     project, _, headers, body = _uploaded(client, db)
@@ -870,6 +944,7 @@ SCENARIOS = {
     "incremental.analysis.create": _incremental_analysis_create,
     "incremental.second_pass.run": _incremental_second_pass_run,
     "incremental.conflict.resolve": _incremental_conflict_resolve,
+    "incremental.apply.run": _incremental_apply_run,
     "document.chapter_link.create": _chapter_link_create,
 }
 

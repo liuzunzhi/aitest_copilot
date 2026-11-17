@@ -10,6 +10,8 @@
 - `GET  /analyses/{analysis_id}/decisions` 第二遍裁决列表（分页）
 - `GET  /analyses/{analysis_id}/conflicts` 第二遍待人工裁决队列（分页）
 - `POST /analyses/{analysis_id}/conflicts/{conflict_id}/resolve` 人工裁决（项目管理员）
+- `POST /analyses/{analysis_id}/apply`       应用产出（项目管理员）
+- `GET  /analyses/{analysis_id}/applied-labels` 本次产出的标签与撤销标记
 """
 
 from fastapi import APIRouter, Depends, Query
@@ -21,6 +23,7 @@ from app.incremental import service
 from app.incremental.schemas import (
     AnalysisCreate,
     AnalysisOut,
+    ApplyResultOut,
     ConclusionOut,
     ConflictOut,
     ConflictResolve,
@@ -255,6 +258,47 @@ def resolve_conflict(
         resolved_by=conflict.resolved_by,
         resolved_at=conflict.resolved_at,
         created_at=conflict.created_at,
+    )
+
+
+@router.post(
+    "/analyses/{analysis_id}/apply", response_model=ApplyResultOut
+)
+def apply_analysis(
+    project_id: int,
+    analysis_id: int,
+    session: Session = Depends(get_db),
+    user: User = Depends(current_user),
+) -> ApplyResultOut:
+    """应用产出：把第二遍结果落成标签 + 待审核快照，同步返回产出列表。"""
+    service.run_apply(
+        session,
+        project_id=project_id,
+        analysis_id=analysis_id,
+        actor=user,
+    )
+    return ApplyResultOut(
+        **service.list_applied_labels(
+            session, project_id=project_id, analysis_id=analysis_id
+        )
+    )
+
+
+@router.get(
+    "/analyses/{analysis_id}/applied-labels", response_model=ApplyResultOut
+)
+def list_applied_labels(
+    project_id: int,
+    analysis_id: int,
+    session: Session = Depends(get_db),
+    user: User = Depends(current_user),
+) -> ApplyResultOut:
+    """本次分析产出的标签列表（含已清除的历史行）与 `revoked` 标记。"""
+    service.ensure_readable(session, project_id=project_id, actor=user)
+    return ApplyResultOut(
+        **service.list_applied_labels(
+            session, project_id=project_id, analysis_id=analysis_id
+        )
     )
 
 
