@@ -135,6 +135,17 @@ export default function ProjectIncrementalTab({ projectId, canWrite }: Props) {
     }
   }
 
+  /** 第二遍跑完后重新拉详情，让抽屉里的状态与统计同步。 */
+  async function refreshDetail() {
+    if (!detail) return
+    try {
+      const fresh = await fetchIncrementalAnalysis(projectId, detail.id)
+      setDetail(fresh)
+    } catch (error) {
+      message.error(errorMessage(error))
+    }
+  }
+
   const columns: ColumnsType<IncrementalAnalysis> = [
     {
       title: '发起时间',
@@ -166,13 +177,17 @@ export default function ProjectIncrementalTab({ projectId, canWrite }: Props) {
     {
       title: '章节 / 结论 / 丢弃',
       key: 'stats',
-      width: 170,
+      width: 200,
       render: (_: unknown, analysis) => {
         const stats = analysis.stats
         return (
           <span data-testid={`incremental-stats-${analysis.id}`}>
             {stats?.chapter_count ?? 0} / {stats?.conclusion_count ?? 0} /{' '}
             {stats?.discarded_count ?? 0}
+            <br />
+            <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+              第二遍 {analysis.second_pass_status ?? '未执行'}
+            </Typography.Text>
           </span>
         )
       },
@@ -294,7 +309,9 @@ export default function ProjectIncrementalTab({ projectId, canWrite }: Props) {
         analysis={detail}
         conclusions={conclusions}
         loading={detailLoading}
+        canWrite={canWrite}
         onClose={() => setDrawerOpen(false)}
+        onRefresh={refreshDetail}
       />
     </div>
   )

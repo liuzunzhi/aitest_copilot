@@ -83,6 +83,18 @@ def cleanup_e2e_data(name_prefix: str = "e2e-") -> dict[str, int]:
     )
     statements = [
         (
+            "incremental_conflicts",
+            "DELETE FROM incremental_conflicts WHERE analysis_id IN ("
+            "SELECT id FROM incremental_analyses WHERE project_id IN ("
+            f"{in_projects}))",
+        ),
+        (
+            "incremental_decisions",
+            "DELETE FROM incremental_decisions WHERE analysis_id IN ("
+            "SELECT id FROM incremental_analyses WHERE project_id IN ("
+            f"{in_projects}))",
+        ),
+        (
             "incremental_conclusions",
             "DELETE FROM incremental_conclusions WHERE analysis_id IN ("
             "SELECT id FROM incremental_analyses WHERE project_id IN ("
@@ -91,6 +103,12 @@ def cleanup_e2e_data(name_prefix: str = "e2e-") -> dict[str, int]:
         (
             "incremental_analyses",
             f"DELETE FROM incremental_analyses WHERE project_id IN ({in_projects})",
+        ),
+        (
+            "document_chapter_links",
+            "DELETE FROM document_chapter_links WHERE version_id IN ("
+            "SELECT dv.id FROM document_versions dv WHERE dv.document_id IN ("
+            f"{in_documents}))",
         ),
         (
             "document_chapters",
@@ -216,6 +234,98 @@ def seed_analysis_conclusions(analysis_id: int, targets: list[dict]) -> None:
             text("UPDATE incremental_analyses SET stats = :stats WHERE id = :id"),
             {"stats": json.dumps(stats, ensure_ascii=False), "id": analysis_id},
         )
+        session.commit()
+    finally:
+        session.close()
+
+
+def seed_chapter_links(version_id: int, links: list[dict]) -> None:
+    """给一个文档版本补写章节引用边。
+
+    `links` 每项：{from_chapter_id, link_type, to_chapter_id?, entity?, source?}
+    `source` 默认 `manual`（人工补链）；`rule` 表示规则抽取的边。
+    """
+    session = _session()
+    try:
+        for link in links:
+            session.execute(
+                text(
+                    "INSERT INTO document_chapter_links (version_id, from_chapter_id,"
+                    " to_chapter_id, link_type, entity, confidence, source, created_by,"
+                    " created_at) VALUES (:version_id, :from_chapter_id, :to_chapter_id,"
+                    " :link_type, :entity, :confidence, :source, :created_by, NOW(3))"
+                ),
+                {
+                    "version_id": version_id,
+                    "from_chapter_id": link["from_chapter_id"],
+                    "to_chapter_id": link.get("to_chapter_id"),
+                    "link_type": link.get("link_type", "references"),
+                    "entity": link.get("entity"),
+                    "confidence": link.get("confidence"),
+                    "source": link.get("source", "manual"),
+                    "created_by": link.get("created_by", 1),
+                },
+            )
+        session.commit()
+    finally:
+        session.close()
+
+
+def seed_second_pass_rows(
+    analysis_id: int,
+    *,
+    decisions: list[dict] | None = None,
+    conflicts: list[dict] | None = None,
+) -> None:
+    """给一次分析补写第二遍的裁决与冲突。
+
+    Mock 第二遍默认返回 `unchanged`，能跑出裁决，但冲突 / 新增要展示就得造数。
+    只造数，不绕过被验证的接口——裁决动作仍走真实 `resolve` 接口。
+
+    `decisions` 每项：{target_type, target_id, target_name, decision, confidence?, rationale?}
+    `conflicts` 每项：{target_type, target_id, target_name, conflict_type, candidates}
+    """
+    session = _session()
+    try:
+        for item in decisions or []:
+            session.execute(
+                text(
+                    "INSERT INTO incremental_decisions (analysis_id, target_type,"
+                    " target_id, target_name, decision, confidence, rationale, evidence,"
+                    " created_at) VALUES (:analysis_id, :target_type, :target_id,"
+                    " :target_name, :decision, :confidence, :rationale, :evidence,"
+                    " NOW(3))"
+                ),
+                {
+                    "analysis_id": analysis_id,
+                    "target_type": item["target_type"],
+                    "target_id": item["target_id"],
+                    "target_name": item["target_name"],
+                    "decision": item.get("decision", "changed"),
+                    "confidence": item.get("confidence", 0.8),
+                    "rationale": item.get("rationale"),
+                    "evidence": json.dumps(item.get("evidence", {}), ensure_ascii=False),
+                },
+            )
+        for item in conflicts or []:
+            session.execute(
+                text(
+                    "INSERT INTO incremental_conflicts (analysis_id, target_type,"
+                    " target_id, target_name, conflict_type, candidates, status,"
+                    " created_at) VALUES (:analysis_id, :target_type, :target_id,"
+                    " :target_name, :conflict_type, :candidates, 'pending', NOW(3))"
+                ),
+                {
+                    "analysis_id": analysis_id,
+                    "target_type": item["target_type"],
+                    "target_id": item.get("target_id"),
+                    "target_name": item["target_name"],
+                    "conflict_type": item.get("conflict_type", "conflict"),
+                    "candidates": json.dumps(
+                        item.get("candidates", []), ensure_ascii=False
+                    ),
+                },
+            )
         session.commit()
     finally:
         session.close()

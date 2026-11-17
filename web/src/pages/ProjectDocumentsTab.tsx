@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import type { ReactNode } from 'react'
 import {
   App as AntdApp,
   Button,
@@ -23,6 +22,8 @@ import {
 } from '../api'
 import type { Chapter, DocVersion, DocumentItem } from '../api'
 import { errorMessage } from '../api/client'
+import ChapterLinkDrawer from './ChapterLinkDrawer'
+import { ChapterNodes } from './chapterNodes'
 
 const VERSION_STATUS_LABELS: Record<string, string> = {
   pending: '待确认',
@@ -36,22 +37,6 @@ const VERSION_STATUS_COLORS: Record<string, string> = {
   active: 'green',
   archived: 'blue',
   void: 'default',
-}
-
-function ChapterNodes({ nodes, depth = 0 }: { nodes: Chapter[]; depth?: number }): ReactNode {
-  return (
-    <>
-      {nodes.map((node) => (
-        <div key={node.id} data-testid="chapter-node" style={{ paddingLeft: depth * 16 }}>
-          <Typography.Text strong={depth === 0}>{node.title}</Typography.Text>
-          <Typography.Text type="secondary"> · {node.char_count} 字</Typography.Text>
-          {node.children.length > 0 ? (
-            <ChapterNodes nodes={node.children} depth={depth + 1} />
-          ) : null}
-        </div>
-      ))}
-    </>
-  )
 }
 
 export default function ProjectDocumentsTab({
@@ -77,6 +62,10 @@ export default function ProjectDocumentsTab({
 
   const [chapterTitle, setChapterTitle] = useState<string | null>(null)
   const [chapters, setChapters] = useState<Chapter[]>([])
+
+  const [linkVersion, setLinkVersion] = useState<{ documentId: number; versionId: number } | null>(
+    null,
+  )
 
   const reload = useCallback(async () => {
     setLoading(true)
@@ -252,7 +241,7 @@ export default function ProjectDocumentsTab({
     {
       title: '操作',
       key: 'actions',
-      width: 200,
+      width: 280,
       render: (_: unknown, version) =>
         versionDoc ? (
           <Space size={8}>
@@ -262,6 +251,15 @@ export default function ProjectDocumentsTab({
               onClick={() => openChapters(versionDoc, version)}
             >
               章节
+            </Button>
+            <Button
+              size="small"
+              data-testid={`chapter-link-btn-${version.id}`}
+              onClick={() =>
+                setLinkVersion({ documentId: versionDoc.id, versionId: version.id })
+              }
+            >
+              引用图
             </Button>
             {version.status === 'pending' && canWrite ? (
               <>
@@ -375,6 +373,15 @@ export default function ProjectDocumentsTab({
           <ChapterNodes nodes={chapters} />
         </div>
       </Modal>
+
+      <ChapterLinkDrawer
+        open={linkVersion !== null}
+        projectId={projectId}
+        documentId={linkVersion?.documentId ?? 0}
+        versionId={linkVersion?.versionId ?? 0}
+        canWrite={canWrite}
+        onClose={() => setLinkVersion(null)}
+      />
     </div>
   )
 }

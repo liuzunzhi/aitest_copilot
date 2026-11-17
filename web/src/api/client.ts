@@ -89,6 +89,15 @@ const CODE_TEXT: Record<string, string> = {
   INVALID_SPLIT_GRANULARITY: '本期只支持按章节切分',
   LLM_CALL_FAILED: '模型调用失败，分析已终止',
   LLM_OUTPUT_INVALID: '模型输出不合法，分析已终止',
+  /* 增量分析第二期（第二遍 + 引用图） */
+  INVALID_CHAPTER_LINK: '引用关系不合法：目标章节与实体名必须二选一',
+  DUPLICATE_CHAPTER_LINK: '相同的引用关系已存在',
+  SECOND_PASS_NOT_READY: '第一遍分析尚未成功，不能执行第二遍',
+  SECOND_PASS_TEMPLATE_MISSING: '第二遍提示词模板缺失或已停用',
+  SECOND_PASS_CONFLICTS_PENDING: '仍有待裁决的冲突，请先完成裁决再重跑',
+  CONFLICT_NOT_FOUND: '冲突记录不存在',
+  CONFLICT_ALREADY_RESOLVED: '该冲突已完成裁决，不能重复处理',
+  INVALID_CONFLICT_RESOLUTION: '裁决参数不合法：确认需选择标签，驳回不带标签',
 }
 
 /**

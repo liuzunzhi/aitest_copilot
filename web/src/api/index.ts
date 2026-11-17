@@ -790,6 +790,14 @@ export interface IncrementalAnalysis {
   stats: AnalysisStats | null
   started_at: string | null
   finished_at: string | null
+  // ---- 第二遍（第二期）。null 表示未执行，不是失败 ----
+  second_pass_template_id: number | null
+  second_pass_status: SecondPassStatus | null
+  second_pass_stats: SecondPassStats | null
+  second_pass_error_code: string | null
+  second_pass_error_message: string | null
+  second_pass_started_at: string | null
+  second_pass_finished_at: string | null
   created_by: number
   created_at: string
 }
@@ -863,6 +871,200 @@ export async function listIncrementalConclusions(
   const { data } = await client.get<Page<IncrementalConclusion>>(
     `${INCREMENTAL(projectId)}/analyses/${analysisId}/conclusions`,
     { params },
+  )
+  return data
+}
+
+/* ---------------------------------------------- 增量分析第二期（第二遍） */
+
+/** 第二遍状态：NULL（未执行）/ running / succeeded / failed。 */
+export type SecondPassStatus = 'running' | 'succeeded' | 'failed'
+
+/** 裁决只有三值，`new` 不落裁决表，只进冲突队列。 */
+export type DecisionType = 'changed' | 'affected' | 'unchanged'
+
+export type ConflictType = 'conflict' | 'possible_impact' | 'new'
+
+export type ConflictStatus = 'pending' | 'confirmed' | 'rejected'
+
+export interface SecondPassStats {
+  template_id: number
+  template_version: number
+  /** 恒为 mock（本期零真实网络请求）。 */
+  provider: string
+  chapter_link_count: number
+  point_count: number
+  decision_count: number
+  new_count: number
+  conflict_count: number
+  propagated_count: number
+  failed_target_type?: string | null
+  failed_target_id?: number | null
+}
+
+export interface IncrementalDecision {
+  id: number
+  analysis_id: number
+  target_type: 'function' | 'feature_point'
+  target_id: number
+  target_name: string
+  decision: DecisionType
+  confidence: number | null
+  rationale: string | null
+  evidence: {
+    chapter_ids?: number[]
+    conclusion_ids?: number[]
+    propagated_from?: number[]
+  } | null
+  created_at: string
+}
+
+export interface ConflictCandidate {
+  label_type: string
+  confidence?: number | null
+  rationale?: string | null
+  /** `point_pass` 表示来自 2b-2；`chapter:{id}` 表示来自图传播。 */
+  source: string
+}
+
+export interface IncrementalConflict {
+  id: number
+  analysis_id: number
+  target_type: 'function' | 'feature_point'
+  /** `new` 没有基线 id，为 NULL。 */
+  target_id: number | null
+  target_name: string
+  conflict_type: ConflictType
+  candidates: ConflictCandidate[]
+  status: ConflictStatus
+  resolved_label_type: DecisionType | null
+  resolved_by: number | null
+  resolved_at: string | null
+  created_at: string
+}
+
+/** 章节引用图的一条边。 */
+export interface ChapterLink {
+  id: number
+  version_id: number
+  from_chapter_id: number
+  from_chapter_title: string | null
+  to_chapter_id: number | null
+  to_chapter_title: string | null
+  link_type: 'references' | 'depends_on' | 'mentions_entity'
+  entity: string | null
+  confidence: number | null
+  source: 'rule' | 'manual'
+  created_by: number
+  created_at: string
+}
+
+/**
+ * 触发第二遍。后端同步跑完才返回，失败时抛
+ * `SECOND_PASS_NOT_READY` / `SECOND_PASS_TEMPLATE_MISSING` /
+ * `SECOND_PASS_CONFLICTS_PENDING` / `LLM_OUTPUT_INVALID` 等错误码。
+ */
+export async function runIncrementalSecondPass(
+  projectId: number,
+  analysisId: number,
+): Promise<IncrementalAnalysis> {
+  const { data } = await client.post<IncrementalAnalysis>(
+    `${INCREMENTAL(projectId)}/analyses/${analysisId}/second-pass`,
+  )
+  return data
+}
+
+export async function listIncrementalDecisions(
+  projectId: number,
+  analysisId: number,
+  params?: {
+    target_type?: 'function' | 'feature_point'
+    decision?: DecisionType
+    page?: number
+    page_size?: number
+  },
+): Promise<Page<IncrementalDecision>> {
+  const { data } = await client.get<Page<IncrementalDecision>>(
+    `${INCREMENTAL(projectId)}/analyses/${analysisId}/decisions`,
+    { params },
+  )
+  return data
+}
+
+export async function listIncrementalConflicts(
+  projectId: number,
+  analysisId: number,
+  params?: {
+    status?: ConflictStatus
+    conflict_type?: ConflictType
+    page?: number
+    page_size?: number
+  },
+): Promise<Page<IncrementalConflict>> {
+  const { data } = await client.get<Page<IncrementalConflict>>(
+    `${INCREMENTAL(projectId)}/analyses/${analysisId}/conflicts`,
+    { params },
+  )
+  return data
+}
+
+/** 人工裁决。只改冲突行，不写基线标签（产出段是下一期的事）。 */
+export async function resolveIncrementalConflict(
+  projectId: number,
+  analysisId: number,
+  conflictId: number,
+  body: { decision: 'confirmed' | 'rejected'; label_type?: DecisionType },
+): Promise<IncrementalConflict> {
+  const { data } = await client.post<IncrementalConflict>(
+    `${INCREMENTAL(projectId)}/analyses/${analysisId}/conflicts/${conflictId}/resolve`,
+    body,
+  )
+  return data
+}
+
+const CHAPTER_LINKS = (projectId: number, documentId: number, versionId: number) =>
+  `/projects/${projectId}/documents/${documentId}/versions/${versionId}/links`
+
+export async function listChapterLinks(
+  projectId: number,
+  documentId: number,
+  versionId: number,
+  params?: { link_type?: ChapterLink['link_type']; source?: ChapterLink['source'] },
+): Promise<ChapterLink[]> {
+  const { data } = await client.get<ChapterLink[]>(
+    CHAPTER_LINKS(projectId, documentId, versionId),
+    { params },
+  )
+  return data
+}
+
+/** 手动补一条引用边。目标二选一：`to_chapter_id` 或 `entity`。 */
+export async function createChapterLink(
+  projectId: number,
+  documentId: number,
+  versionId: number,
+  body: {
+    from_chapter_id: number
+    link_type: ChapterLink['link_type']
+    to_chapter_id?: number | null
+    entity?: string | null
+  },
+): Promise<ChapterLink> {
+  const { data } = await client.post<ChapterLink>(
+    CHAPTER_LINKS(projectId, documentId, versionId),
+    body,
+  )
+  return data
+}
+
+/** 按规则重抽引用图（幂等，人工边不受影响）。 */
+export async function extractChapterLinks(
+  projectId: number,
+  documentId: number,
+  versionId: number,
+): Promise<ChapterLink[]> {
+  const { data } = await client.post<ChapterLink[]>(
+    `${CHAPTER_LINKS(projectId, documentId, versionId)}/extract`,
   )
   return data
 }

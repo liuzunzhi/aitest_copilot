@@ -2,12 +2,14 @@ import { Alert, Descriptions, Drawer, Space, Table, Typography } from 'antd'
 import type { ColumnsType } from 'antd/es/table'
 
 import type { DiscardedConclusion, IncrementalAnalysis, IncrementalConclusion } from '../api'
+import IncrementalSecondPass from './IncrementalSecondPass'
 import {
   DISCARD_LABELS,
   GRANULARITY_LABEL,
   TEMPLATE_LABEL,
   TARGET_LABELS,
   labelTag,
+  secondPassStatusTag,
   statusTag,
 } from './incrementalMeta'
 
@@ -16,16 +18,22 @@ interface Props {
   analysis: IncrementalAnalysis | null
   conclusions: IncrementalConclusion[]
   loading: boolean
+  /** 触发第二遍与裁决限项目管理员。 */
+  canWrite: boolean
   onClose: () => void
+  /** 第二遍跑完后刷新父级持有的分析详情。 */
+  onRefresh: () => void
 }
 
-/** 一次分析的详情抽屉：元信息 + 局部结论 + 丢弃明细。 */
+/** 一次分析的详情抽屉：元信息 + 局部结论 + 丢弃明细 + 第二遍区块。 */
 export default function ProjectIncrementalDrawer({
   open,
   analysis,
   conclusions,
   loading,
+  canWrite,
   onClose,
+  onRefresh,
 }: Props) {
   const conclusionColumns: ColumnsType<IncrementalConclusion> = [
     { title: '章节', dataIndex: 'chapter_title' },
@@ -108,6 +116,14 @@ export default function ProjectIncrementalDrawer({
             <Descriptions.Item label="结束时间">
               {analysis.finished_at ? new Date(analysis.finished_at).toLocaleString() : '—'}
             </Descriptions.Item>
+            <Descriptions.Item label="第二遍">
+              {secondPassStatusTag(analysis.second_pass_status)}
+            </Descriptions.Item>
+            <Descriptions.Item label="第二遍结束时间">
+              {analysis.second_pass_finished_at
+                ? new Date(analysis.second_pass_finished_at).toLocaleString()
+                : '—'}
+            </Descriptions.Item>
           </Descriptions>
 
           {analysis.status === 'failed' ? (
@@ -158,6 +174,13 @@ export default function ProjectIncrementalDrawer({
               />
             </div>
           ) : null}
+
+          <IncrementalSecondPass
+            projectId={analysis.project_id}
+            analysis={analysis}
+            canWrite={canWrite}
+            onChanged={onRefresh}
+          />
         </Space>
       ) : null}
     </Drawer>
