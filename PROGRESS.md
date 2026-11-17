@@ -15,39 +15,32 @@
 - [x] 02-projects (项目与申请)
 - [x] 03-documents (文档解析)
 - [x] 04-baseline (基线管理、快照、标签) —— **已完成（含 T67 收尾）**
-- [x] 05-increment-analysis (增量分析) —— **第一期完成（T68~T70）**
+- [x] 05-increment-analysis (增量分析) —— **第一期（T68~T70）+ 第二期（T71~T78）完成**
 - [ ] 06 及后续模块 —— ****[TBD 待定，严禁 AI 擅自规划]****
 
 ## 3. 当前冲刺任务（⚠️ 务必先做这个）
 
-**当前目标**：05 增量分析——第一期只做「第一遍 · 章节局部比对」。
+**当前目标**：05 增量分析——**第二期（第二遍 · 全局裁决）已完成（T71~T78）**，
+本期边界内的任务全部收尾，等待用户指示下一步。
 
-> 04 遗留收尾已全部完成（见第 5 节），**现在可以开 05**。
+> 05 第三期（产出段：把裁决写进 `baseline_labels` / 生成新快照）**尚未开工**，
+> 需用户明确要求后才能启动。
 
-### 范围（极简，不可扩大）
+### 第二期范围（已完成，不可扩大）
 
-- 只做**第一遍 · 章节局部比对**：章节 → LLM 比对 → 局部结论落库。
-- **零真实网络请求**：LLM 调用走 `LLMProvider` 抽象，本期只实现 `MockProvider`。
-- 表结构**只建三张表**：`prompt_templates`、`incremental_analyses`、`incremental_conclusions`。
+- 只做**第二遍 · 全局裁决**：章节引用图 + 2b-1 功能点索引 / 2b-2 按点分治 / 2b-3 一跳图传播。
+- **零真实网络请求**：仍只有 `MockProvider`（第二遍默认响应 `unchanged`）。
+- 表结构只加三张：`document_chapter_links`（0014）、`incremental_decisions` / `incremental_conflicts`（0015）。
 
-### 红线（违反即返工）
+### 第二期红线（已遵守）
 
-1. **不许写任何真实的网络请求代码**——不许引入 `openai` / `httpx` 调模型，不许写 `requests.post`。
-   本期 `LLMProvider` 只有 `MockProvider` 一个实现。
-2. **不许做模板管理 UI**——提示词模板只落库 + 被读取，不做增删改查页面。
-3. **不许做全局裁决**（v2.2 §4.2 的 2b-1 / 2b-2 / 2b-3）——那是下一期的事。
-4. **不许写第二遍**——第一遍产出直接落 `incremental_conclusions`。
-5. 不许顺手修无关模块（例：03 的 PDF 解析、清除原因枚举对齐）——记到待办里，等用户点头。
+1. **不写 `baseline_labels`**——人工裁决只改冲突行，产出段是第三期的事。
+2. **不做模板管理 UI / 模板 CRUD**——第二遍模板由迁移播种、只读。
+3. **不自动裁决冲突**——冲突只能人工确认 / 驳回。
+4. **不引入真实模型供应商**、不做密钥加密与运行日志表。
+5. 不许顺手修无关模块——引用抽取代码放 05 包内，没改 03 的解析器。
 
-### 三个 Task
-
-| Task | 内容 | 关键产出 |
-|---|---|---|
-| **T68 · 建表与 Mock** | 三张表 + 迁移 `0013_incremental`；`app/llm/` 抽象与 `MockProvider`；`app/incremental/` 骨架 | `MockProvider` 能返回固定 JSON；表约束（唯一键 / 外键 / 默认值）有对应用例 |
-| **T69 · 后端第一遍业务流** | `engine.py` 第一遍 + `service.py` + `router.py` + 错误码 + 审计 | **两个核心 AC 的用例**（见下） |
-| **T70 · 前端最小展示** | 项目详情页第 7 个 Tab「增量分析」+ API 分节 + 错误码映射 | `npm run build` 通过；e2e 前台用例 |
-
-### 两个核心 AC（必须覆盖，不可省略）
+### 第一期核心 AC（已覆盖，见下方历史任务）
 
 **AC-① 章节局部结论能否正确落库**
 - Given 项目有基线快照（含功能 F）+ 生效文档版本（含章节 C）+ Mock 返回固定 JSON（结论指向 F，`label_type='changed'`）
@@ -63,19 +56,16 @@
 - Then **Mock 收到的 `user` 以该模板的 `user_prompt` 开头**，且包含章节标题与章节正文
 - Then 模板被删除 / `status='disabled'` → 发起分析返回对应错误码，**不产生分析记录**
 
-> AC-② 的可测性依赖 Mock 暴露「收到的请求」——`LLMResponse.raw` 或等价手段，
-> 用例据此断言，而不是靠日志或 mock 打补丁。
-
 ## 4. 环境与验证现状
 
 | 项 | 值 |
 |---|---|
-| 后端全量 pytest | **516 passed**（串行；T70 后） |
-| e2e | 31 条（含增量分析 2 条），一条命令 `.\.venv\Scripts\python.exe scripts\run_e2e.py`（8001/5174 + `aitest_copilot_e2e`） |
+| 后端全量 pytest | **589 passed**（串行；T78 后） |
+| e2e | 34 条（含增量分析第一期 2 条 + 第二期 3 条），一条命令 `.\.venv\Scripts\python.exe scripts\run_e2e.py`（8001/5174 + `aitest_copilot_e2e`） |
 | 前端构建 | `npm run build`（`web/` 目录，端口 5173，代理到 8000） |
 | 开跑前自检 | `.\.venv\Scripts\python.exe scripts\dev_check.py`（跑 e2e 时加 `--expect-db e2e`） |
 | 账号 | `admin` / `Admin12345` |
-| 迁移 head | `0013`（05 增量分析三表） |
+| 迁移 head | `0015`（05 第二期：引用图 + 第二遍裁决 / 冲突表） |
 | 截图目录 | 仓库根 `.screenshots/`（`E2E_SCREENSHOT_DIR` 可覆盖） |
 
 ### ⚠️ 两个已知的坑（别重复踩）
@@ -101,8 +91,41 @@
 
 **提交**：`1539646` / `0f06583` / `4ab12fe` / `9d3a885`，已推送到 `origin/main`。
 
+## 5.1 05 收尾完成情况（2026-11-17）
+
+### 第一期（T68~T70）· 第一遍 · 章节局部比对
+
+- [x] 三张表 + 迁移 `0013_incremental`；`app/llm/` 抽象与 `MockProvider`
+- [x] `engine.py` 第一遍 + `service.py` + `router.py` + 错误码 + 审计
+- [x] 项目详情页第 7 个 Tab「增量分析」+ API 分节 + 错误码映射
+
+**验证结果**：后端全量 516 passed；e2e 31 passed（新增 2 条）；构建通过。
+
+### 第二期（T71~T78）· 第二遍 · 全局裁决
+
+- [x] T71 章节引用图：迁移 `0014` + `links.py` 规则抽取 + `links_router.py` 三接口
+- [x] T72 第二遍表结构：迁移 `0015`（`incremental_decisions` / `incremental_conflicts`
+      + `analyses` 第二遍列）+ 第二遍模板种子
+- [x] T73 2b-1 功能点索引 + 2b-2 按点分治（含证据一致性判定与 Mock 第二遍默认响应）
+- [x] T74 2b-3 一跳图传播（`possible_impact` 只进人工队列）
+- [x] T75 第二遍服务与四个接口（触发 / 裁决列表 / 冲突列表）
+- [x] T76 人工裁决接口（确认 / 驳回，**不写 `baseline_labels`**）
+- [x] T77 前端：第二遍区块 + 引用图抽屉 + 3 条 e2e
+- [x] T78 收尾：全量 pytest 串行 + e2e 全量 + `dev_check` + build + 文档回填
+
+**验证结果**：后端全量 **589 passed**（T70 后 516 + 新增 73）；e2e **34 passed**
+（新增 3 条）；`npm run build` 通过；两个库迁移 head 均在 `0015`；
+截图 `.screenshots/T77/`（5 张）。
+
+**提交**：`2dd6161` / `41a4cf4`（T71）、`c51d2e6`（T72）、`478f429`（T73）、
+`c51d7d1`（T74）、`d015b7f`（T75）、`8b1cc3f`（T76）、`a7d93a5`（T77）。
+
 ## 6. 待办（不属当前冲刺，等用户点头再做）
 
+- **05 第三期（产出段）**：把第二遍裁决写进 `baseline_labels`、生成新快照——
+  本期**明确不做**（spec-phase2 §2.2 红线），需用户点头才能开工
+- 05 第四期：真实模型供应商接入（密钥加密、运行日志表）
+- 05 第五期：模板管理 UI 与阈值回填（依赖基准集）
 - 修 `tests/projects/` 的 xdist flaky（断言未按项目隔离）
 - 03 的 PDF 解析（PRD 2.4.1 要求支持 pdf，当前只支持 md/docx/txt；需新增 `pypdf` 依赖，
   并改写 AC-50 已通过的前台用例）
