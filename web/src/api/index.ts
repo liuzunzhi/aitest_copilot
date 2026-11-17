@@ -741,3 +741,128 @@ export async function updateRetention(
   })
   return data
 }
+
+/* ---------------------------------------------------------- 增量分析（05） */
+
+export type IncrementalAnalysisStatus = 'pending' | 'running' | 'succeeded' | 'failed'
+
+/** 第一遍结论只允许 changed / affected / unchanged（`new` 由后端丢弃）。 */
+export type IncrementalLabelType = 'changed' | 'affected' | 'unchanged'
+
+export interface DiscardedConclusion {
+  chapter_id: number
+  chapter_title: string
+  target_type: 'function' | 'feature_point'
+  target_id: number
+  label_type: string
+  code: string
+}
+
+export interface AnalysisStats {
+  chapter_count: number
+  conclusion_count: number
+  discarded_count: number
+  dropped_new_count: number
+  discarded: DiscardedConclusion[]
+  /** 失败时记录卡住的那一章（spec §4.2.1） */
+  failed_chapter_id?: number
+  failed_chapter_title?: string | null
+}
+
+export interface IncrementalAnalysis {
+  id: number
+  project_id: number
+  template_id: number
+  template_name: string | null
+  template_version: number
+  provider: string
+  baseline_revision_id: number
+  /** 形如 v1.0，由后端拼好 */
+  baseline_revision_version: string | null
+  document_id: number
+  document_name: string | null
+  document_version_id: number
+  document_version_no: number | null
+  split_granularity: string
+  status: IncrementalAnalysisStatus
+  error_code: string | null
+  error_message: string | null
+  stats: AnalysisStats | null
+  started_at: string | null
+  finished_at: string | null
+  created_by: number
+  created_at: string
+}
+
+export interface IncrementalConclusion {
+  id: number
+  analysis_id: number
+  chapter_id: number
+  chapter_title: string
+  target_type: 'function' | 'feature_point'
+  target_id: number
+  label_type: IncrementalLabelType
+  confidence: number | null
+  rationale: string | null
+  created_at: string
+}
+
+const INCREMENTAL = (projectId: number) => `/projects/${projectId}/incremental`
+
+export async function listIncrementalAnalyses(
+  projectId: number,
+  params?: { status?: string; page?: number; page_size?: number },
+): Promise<Page<IncrementalAnalysis>> {
+  const { data } = await client.get<Page<IncrementalAnalysis>>(
+    `${INCREMENTAL(projectId)}/analyses`,
+    { params },
+  )
+  return data
+}
+
+/**
+ * 发起分析。本期后端同步跑完第一遍才返回，失败时抛 `LLM_CALL_FAILED` 等错误码；
+ * 记录本身已落库为 `failed`，调用方刷新列表即可看到。
+ */
+export async function createIncrementalAnalysis(
+  projectId: number,
+  body: {
+    template_id: number
+    baseline_revision_id: number
+    document_version_id: number
+    split_granularity?: string
+  },
+): Promise<IncrementalAnalysis> {
+  const { data } = await client.post<IncrementalAnalysis>(
+    `${INCREMENTAL(projectId)}/analyses`,
+    body,
+  )
+  return data
+}
+
+export async function fetchIncrementalAnalysis(
+  projectId: number,
+  analysisId: number,
+): Promise<IncrementalAnalysis> {
+  const { data } = await client.get<IncrementalAnalysis>(
+    `${INCREMENTAL(projectId)}/analyses/${analysisId}`,
+  )
+  return data
+}
+
+export async function listIncrementalConclusions(
+  projectId: number,
+  analysisId: number,
+  params?: {
+    chapter_id?: number
+    target_type?: 'function' | 'feature_point'
+    page?: number
+    page_size?: number
+  },
+): Promise<Page<IncrementalConclusion>> {
+  const { data } = await client.get<Page<IncrementalConclusion>>(
+    `${INCREMENTAL(projectId)}/analyses/${analysisId}/conclusions`,
+    { params },
+  )
+  return data
+}

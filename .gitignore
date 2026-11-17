@@ -16,8 +16,9 @@ venv/
 htmlcov/
 reports/
 
-# Playwright 前台用例产物（截图另存 .screenshots/）
+# Playwright 前台用例产物（截图落仓库根 .screenshots/）
 test-results/
+.screenshots/
 
 # 上传的文档原文（03-documents）
 var/uploads/

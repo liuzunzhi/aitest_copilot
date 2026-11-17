@@ -33,6 +33,7 @@ import ProjectBaselineSnapshots from './ProjectBaselineSnapshots'
 import ProjectBaselineTree from './ProjectBaselineTree'
 import ProjectBaselinesTab from './ProjectBaselinesTab'
 import ProjectDocumentsTab from './ProjectDocumentsTab'
+import ProjectIncrementalTab from './ProjectIncrementalTab'
 
 const PROJECT_ROLE_LABELS: Record<string, string> = {
   project_admin: '项目管理员',
@@ -321,6 +322,11 @@ export default function ProjectDetailPage() {
                 pagination={false}
               />
             ),
+          },
+          {
+            key: 'incremental',
+            label: '增量分析',
+            children: <ProjectIncrementalTab projectId={projectId} canWrite={canManage} />,
           },
         ]}
       />

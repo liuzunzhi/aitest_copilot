@@ -26,8 +26,9 @@ from tests.e2e.support import (
     token_for,
 )
 
+REPO_ROOT = Path(__file__).resolve().parents[2]
 SCREENSHOT_ROOT = Path(
-    os.getenv("E2E_SCREENSHOT_DIR", r"D:\学习\AI辅助测试平台\.screenshots")
+    os.getenv("E2E_SCREENSHOT_DIR", str(REPO_ROOT / ".screenshots"))
 )
 ADMIN_USERNAME = os.getenv("E2E_ADMIN_USERNAME", SUPPORT_ADMIN_USERNAME)
 ADMIN_PASSWORD = os.getenv("E2E_ADMIN_PASSWORD", SUPPORT_ADMIN_PASSWORD)

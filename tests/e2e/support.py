@@ -8,6 +8,7 @@
 """
 
 import os
+import json
 import uuid
 from pathlib import Path
 
@@ -82,6 +83,16 @@ def cleanup_e2e_data(name_prefix: str = "e2e-") -> dict[str, int]:
     )
     statements = [
         (
+            "incremental_conclusions",
+            "DELETE FROM incremental_conclusions WHERE analysis_id IN ("
+            "SELECT id FROM incremental_analyses WHERE project_id IN ("
+            f"{in_projects}))",
+        ),
+        (
+            "incremental_analyses",
+            f"DELETE FROM incremental_analyses WHERE project_id IN ({in_projects})",
+        ),
+        (
             "document_chapters",
             "DELETE FROM document_chapters WHERE version_id IN ("
             "SELECT dv.id FROM document_versions dv WHERE dv.document_id IN ("
@@ -120,6 +131,94 @@ def cleanup_e2e_data(name_prefix: str = "e2e-") -> dict[str, int]:
     finally:
         session.close()
     return counts
+
+
+def seed_analysis_conclusions(analysis_id: int, targets: list[dict]) -> None:
+    """给一次增量分析补写「局部结论」与「丢弃明细」。
+
+    本期模型侧只有 `MockProvider`（默认返回空结论），发起分析跑不出真实结论；
+    前台用例又要核对结论表 / 丢弃表的展示，所以按真实表结构直接写 e2e 库。
+    只造数，不绕过任何被验证的接口——结论仍由详情 / 结论接口读出。
+
+    `targets` 每项：
+        {target_type, target_id, label_type, rationale}
+        discard=True 时改成写进 `stats.discarded`，用 `code` 指定丢弃标识。
+    """
+    session = _session()
+    try:
+        analysis = session.execute(
+            text(
+                "SELECT document_version_id, stats FROM incremental_analyses "
+                "WHERE id = :id"
+            ),
+            {"id": analysis_id},
+        ).first()
+        assert analysis is not None, f"分析记录 {analysis_id} 不存在"
+        version_id, raw_stats = analysis
+        chapters = session.execute(
+            text(
+                "SELECT id, title FROM document_chapters "
+                "WHERE version_id = :version_id AND char_count > 0 ORDER BY seq"
+            ),
+            {"version_id": version_id},
+        ).all()
+        assert chapters, "生效版本没有可分析的章节"
+
+        stats = raw_stats
+        if isinstance(stats, str):
+            stats = json.loads(stats or "{}")
+        stats = dict(stats or {})
+        conclusions: list[dict] = []
+        discarded: list[dict] = []
+
+        for index, target in enumerate(targets):
+            chapter_id, chapter_title = chapters[index % len(chapters)]
+            if target.get("discard"):
+                discarded.append(
+                    {
+                        "chapter_id": chapter_id,
+                        "chapter_title": chapter_title,
+                        "target_type": target["target_type"],
+                        "target_id": target["target_id"],
+                        "label_type": target["label_type"],
+                        "code": target.get("code", "INCREMENTAL_LABEL_NEW_DROPPED"),
+                    }
+                )
+                continue
+            session.execute(
+                text(
+                    "INSERT INTO incremental_conclusions (analysis_id, chapter_id,"
+                    " chapter_title, target_type, target_id, label_type, confidence,"
+                    " rationale, created_at) VALUES (:analysis_id, :chapter_id,"
+                    " :chapter_title, :target_type, :target_id, :label_type,"
+                    " :confidence, :rationale, NOW(3))"
+                ),
+                {
+                    "analysis_id": analysis_id,
+                    "chapter_id": chapter_id,
+                    "chapter_title": chapter_title,
+                    "target_type": target["target_type"],
+                    "target_id": target["target_id"],
+                    "label_type": target["label_type"],
+                    "confidence": target.get("confidence", 0.9),
+                    "rationale": target.get("rationale"),
+                },
+            )
+            conclusions.append(target)
+
+        stats["conclusion_count"] = len(conclusions)
+        stats["discarded_count"] = len(discarded)
+        stats["dropped_new_count"] = sum(
+            1 for item in discarded if item["code"] == "INCREMENTAL_LABEL_NEW_DROPPED"
+        )
+        stats["discarded"] = discarded
+        session.execute(
+            text("UPDATE incremental_analyses SET stats = :stats WHERE id = :id"),
+            {"stats": json.dumps(stats, ensure_ascii=False), "id": analysis_id},
+        )
+        session.commit()
+    finally:
+        session.close()
 
 
 def create_user(global_role: str = "user") -> dict:

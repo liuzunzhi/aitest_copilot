@@ -79,6 +79,16 @@ const CODE_TEXT: Record<string, string> = {
   SNAPSHOT_NOT_FOUND: '基线快照不存在',
   SNAPSHOT_REFERENCED: '该快照仍被引用，请先解除引用',
   TRACE_FIELDS_READONLY: '来源追溯字段只读，不能手工修改',
+  /* 增量分析（05） */
+  INCREMENTAL_ANALYSIS_NOT_FOUND: '分析记录不存在',
+  BASELINE_REVISION_REQUIRED: '请选择审核通过的基线快照',
+  NO_ACTIVE_DOCUMENT_VERSION: '文档版本不存在或不属于该项目',
+  DOCUMENT_VERSION_NOT_ANALYZABLE: '只有生效版本可参与分析',
+  TEMPLATE_NOT_FOUND: '提示词模板不存在',
+  TEMPLATE_DISABLED: '提示词模板已停用',
+  INVALID_SPLIT_GRANULARITY: '本期只支持按章节切分',
+  LLM_CALL_FAILED: '模型调用失败，分析已终止',
+  LLM_OUTPUT_INVALID: '模型输出不合法，分析已终止',
 }
 
 /**
