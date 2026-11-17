@@ -14,6 +14,11 @@ from app.models.baseline import (
     BaselineRevision,
 )
 from app.models.document import BaselineSnapshot, Document, DocumentChapter, DocumentVersion
+from app.models.incremental import (
+    IncrementalAnalysis,
+    IncrementalConclusion,
+    PromptTemplate,
+)
 from app.models.project import Project, ProjectMember
 from app.models.system import AuditLog, SystemSetting
 from app.models.token import AccessToken
@@ -34,9 +39,12 @@ __all__ = [
     "Document",
     "DocumentChapter",
     "DocumentVersion",
+    "IncrementalAnalysis",
+    "IncrementalConclusion",
     "Project",
     "ProjectApplication",
     "ProjectMember",
+    "PromptTemplate",
     "SystemSetting",
     "User",
     "target_metadata",

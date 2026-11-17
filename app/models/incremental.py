@@ -1,0 +1,214 @@
+"""增量分析模型（05-incremental 第一期）。
+
+三张表：
+
+- `prompt_templates` 提示词模板：本期只读，由迁移播种一条 `incremental` 模板。
+  模板内容必须来自数据库，这样改文案不用改代码、不用发版。
+- `incremental_analyses` 分析记录：一次分析一行，记录模板快照、比对基准、
+  文档版本、状态与统计。
+- `incremental_conclusions` 第一遍局部结论：逐条落库，带章节与目标。
+  被丢弃的结论（越界、`new`）**不落本表**，只记进 `analyses.stats.discarded`。
+
+与 04 的硬约束：表名 `incremental_analyses`、列 `baseline_revision_id`、
+列 `status` 三个名字不能改——`app/baselines/references.py` 的引用解析器
+按这三个名字探测，改一个字「快照被引用禁止删除」就会静默失效。
+"""
+
+from datetime import datetime
+from decimal import Decimal
+
+from sqlalchemy import (
+    CheckConstraint,
+    ForeignKeyConstraint,
+    Index,
+    JSON,
+    String,
+    text,
+)
+from sqlalchemy.dialects.mysql import BIGINT, DATETIME, DECIMAL, INTEGER, MEDIUMTEXT
+from sqlalchemy.orm import Mapped, mapped_column
+
+from app.common.db import Base
+
+_TABLE_OPTS = {
+    "mysql_engine": "InnoDB",
+    "mysql_default_charset": "utf8mb4",
+    "mysql_collate": "utf8mb4_0900_ai_ci",
+}
+
+TASK_TYPES = ("document_parse", "incremental", "test_point", "test_case")
+TEMPLATE_STATUSES = ("active", "disabled")
+ANALYSIS_STATUSES = ("pending", "running", "succeeded", "failed")
+SPLIT_GRANULARITIES = ("chapter",)
+TARGET_TYPES = ("function", "feature_point")
+CONCLUSION_LABEL_TYPES = ("changed", "affected", "unchanged")
+
+
+class PromptTemplate(Base):
+    """提示词模板。本期只被读取，不做增删改查接口。"""
+
+    __tablename__ = "prompt_templates"
+    __table_args__ = (
+        Index("uk_ptemplates_type_name", "task_type", "name", unique=True),
+        CheckConstraint(
+            "task_type IN ('document_parse','incremental','test_point','test_case')",
+            name="ck_ptemplates_task_type",
+        ),
+        CheckConstraint(
+            "status IN ('active','disabled')", name="ck_ptemplates_status"
+        ),
+        _TABLE_OPTS,
+    )
+
+    id: Mapped[int] = mapped_column(BIGINT(unsigned=True), primary_key=True, autoincrement=True)
+    name: Mapped[str] = mapped_column(String(128), nullable=False)
+    task_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    description: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    system_prompt: Mapped[str] = mapped_column(MEDIUMTEXT, nullable=False)
+    user_prompt: Mapped[str] = mapped_column(MEDIUMTEXT, nullable=False)
+    version_no: Mapped[int] = mapped_column(
+        INTEGER(unsigned=True), nullable=False, server_default=text("1")
+    )
+    status: Mapped[str] = mapped_column(
+        String(16), nullable=False, server_default=text("'active'")
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DATETIME(fsp=3), nullable=False, server_default=text("CURRENT_TIMESTAMP(3)")
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DATETIME(fsp=3),
+        nullable=False,
+        server_default=text("CURRENT_TIMESTAMP(3)"),
+        server_onupdate=text("CURRENT_TIMESTAMP(3)"),
+    )
+
+
+class IncrementalAnalysis(Base):
+    """一次增量分析。同步跑完第一遍后回填状态与统计。"""
+
+    __tablename__ = "incremental_analyses"
+    __table_args__ = (
+        ForeignKeyConstraint(["project_id"], ["projects.id"], name="fk_ianalyses_project"),
+        ForeignKeyConstraint(
+            ["template_id"], ["prompt_templates.id"], name="fk_ianalyses_template"
+        ),
+        ForeignKeyConstraint(
+            ["baseline_revision_id"],
+            ["baseline_revisions.id"],
+            name="fk_ianalyses_revision",
+        ),
+        ForeignKeyConstraint(["document_id"], ["documents.id"], name="fk_ianalyses_document"),
+        ForeignKeyConstraint(
+            ["document_version_id"],
+            ["document_versions.id"],
+            name="fk_ianalyses_version",
+        ),
+        ForeignKeyConstraint(["created_by"], ["users.id"], name="fk_ianalyses_creator"),
+        Index("idx_ianalyses_project", "project_id"),
+        Index("idx_ianalyses_template", "template_id"),
+        # 04 引用解析器按该列查询，索引必须保留
+        Index("idx_ianalyses_revision", "baseline_revision_id"),
+        Index("idx_ianalyses_document", "document_id"),
+        Index("idx_ianalyses_version", "document_version_id"),
+        CheckConstraint(
+            "status IN ('pending','running','succeeded','failed')",
+            name="ck_ianalyses_status",
+        ),
+        CheckConstraint(
+            "split_granularity IN ('chapter')", name="ck_ianalyses_granularity"
+        ),
+        _TABLE_OPTS,
+    )
+
+    id: Mapped[int] = mapped_column(BIGINT(unsigned=True), primary_key=True, autoincrement=True)
+    project_id: Mapped[int] = mapped_column(BIGINT(unsigned=True), nullable=False)
+    template_id: Mapped[int] = mapped_column(BIGINT(unsigned=True), nullable=False)
+    template_version: Mapped[int] = mapped_column(INTEGER(unsigned=True), nullable=False)
+    provider: Mapped[str] = mapped_column(
+        String(32), nullable=False, server_default=text("'mock'")
+    )
+    baseline_revision_id: Mapped[int] = mapped_column(BIGINT(unsigned=True), nullable=False)
+    document_id: Mapped[int] = mapped_column(BIGINT(unsigned=True), nullable=False)
+    document_version_id: Mapped[int] = mapped_column(BIGINT(unsigned=True), nullable=False)
+    split_granularity: Mapped[str] = mapped_column(
+        String(16), nullable=False, server_default=text("'chapter'")
+    )
+    status: Mapped[str] = mapped_column(
+        String(16), nullable=False, server_default=text("'pending'")
+    )
+    error_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    error_message: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    stats: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    started_at: Mapped[datetime | None] = mapped_column(DATETIME(fsp=3), nullable=True)
+    finished_at: Mapped[datetime | None] = mapped_column(DATETIME(fsp=3), nullable=True)
+    created_by: Mapped[int] = mapped_column(BIGINT(unsigned=True), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DATETIME(fsp=3), nullable=False, server_default=text("CURRENT_TIMESTAMP(3)")
+    )
+
+
+class IncrementalConclusion(Base):
+    """第一遍局部结论。目标为功能或功能点（多态，不建外键）。"""
+
+    __tablename__ = "incremental_conclusions"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["analysis_id"],
+            ["incremental_analyses.id"],
+            name="fk_iconclusions_analysis",
+            ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            ["chapter_id"], ["document_chapters.id"], name="fk_iconclusions_chapter"
+        ),
+        # 同一次分析里，同一章节对同一目标的结论只留一条
+        Index(
+            "uk_iconclusions_unique",
+            "analysis_id",
+            "chapter_id",
+            "target_type",
+            "target_id",
+            unique=True,
+        ),
+        Index("idx_iconclusions_analysis", "analysis_id"),
+        Index("idx_iconclusions_chapter", "chapter_id"),
+        CheckConstraint(
+            "target_type IN ('function','feature_point')",
+            name="ck_iconclusions_target_type",
+        ),
+        CheckConstraint(
+            "label_type IN ('changed','affected','unchanged')",
+            name="ck_iconclusions_label_type",
+        ),
+        _TABLE_OPTS,
+    )
+
+    id: Mapped[int] = mapped_column(BIGINT(unsigned=True), primary_key=True, autoincrement=True)
+    analysis_id: Mapped[int] = mapped_column(BIGINT(unsigned=True), nullable=False)
+    chapter_id: Mapped[int] = mapped_column(BIGINT(unsigned=True), nullable=False)
+    chapter_title: Mapped[str] = mapped_column(
+        String(255), nullable=False, comment="落库时快照，章节改名不影响历史结论"
+    )
+    target_type: Mapped[str] = mapped_column(String(16), nullable=False)
+    target_id: Mapped[int] = mapped_column(
+        BIGINT(unsigned=True), nullable=False, comment="功能或功能点 id（多态，不建外键）"
+    )
+    label_type: Mapped[str] = mapped_column(String(16), nullable=False)
+    confidence: Mapped[Decimal | None] = mapped_column(DECIMAL(3, 2), nullable=True)
+    rationale: Mapped[str | None] = mapped_column(String(1000), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DATETIME(fsp=3), nullable=False, server_default=text("CURRENT_TIMESTAMP(3)")
+    )
+
+
+__all__ = [
+    "ANALYSIS_STATUSES",
+    "CONCLUSION_LABEL_TYPES",
+    "IncrementalAnalysis",
+    "IncrementalConclusion",
+    "PromptTemplate",
+    "SPLIT_GRANULARITIES",
+    "TARGET_TYPES",
+    "TASK_TYPES",
+    "TEMPLATE_STATUSES",
+]
