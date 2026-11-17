@@ -9,6 +9,14 @@
 - 作用域内标签不一致 → 不调模型，直接产出 `conflict` 候选；
 - 一致 → 调 Mock，以模型 `decision` 为准产出 `decisions`；
 - `new_points` 只产出 `new` 冲突（没有基线 id），同名去重、理由合并。
+
+2b-3 图传播（`propagate_impacts`）：
+
+- 只沿 `references` / `depends_on` 边走一跳，源章节有 `changed` / `affected` 结论才触发；
+- 传播结果一律产 `possible_impact` 冲突，不改写 `decisions`；
+- 命中已被 2b-2 裁决的目标 → 删除该 `decisions`，原标签并入候选，
+  保证同一目标只出现在 `decisions` / `conflicts` 之一；
+- 同目标既有 `conflict` 又有 `possible_impact` → 合并为一条 `conflict`。
 """
 
 import json
@@ -37,6 +45,7 @@ from app.models.incremental import (
 
 POINT_PASS_SOURCE = "point_pass"
 _PROPAGATION_LINK_TYPES = ("references", "depends_on")
+_STRONG_LABELS = ("changed", "affected")
 
 
 @dataclass(frozen=True)
@@ -96,6 +105,7 @@ class SecondPassResult:
     prompted_count: int
     decisions: list[PendingDecision] = field(default_factory=list)
     conflicts: list[PendingConflict] = field(default_factory=list)
+    propagated_count: int = 0
 
 
 # ------------------------------------------------------------ 2b-1 索引
@@ -419,6 +429,134 @@ def run_point_pass(
     return result
 
 
+# ------------------------------------------------------------ 2b-3 图传播
+
+
+def _targets_of_chapter(
+    index: PointIndex, chapter_id: int
+) -> list[tuple[str, int]]:
+    """某章节直接命中的基线目标（结论所在章节 == 该章节）。"""
+    return [
+        key
+        for key, items in index.conclusions.items()
+        if any(item.chapter_id == chapter_id for item in items)
+    ]
+
+
+def _candidate_key(candidate: dict[str, Any]) -> tuple[str, str, str]:
+    return (
+        str(candidate.get("label_type")),
+        str(candidate.get("source")),
+        str(candidate.get("rationale")),
+    )
+
+
+def _merge_candidates(
+    existing: list[dict[str, Any]], extra: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """按 `(label_type, source, rationale)` 去重合并候选。"""
+    seen = {_candidate_key(item) for item in existing}
+    merged = list(existing)
+    for candidate in extra:
+        key = _candidate_key(candidate)
+        if key in seen:
+            continue
+        seen.add(key)
+        merged.append(candidate)
+    return merged
+
+
+def propagate_impacts(
+    index: PointIndex, result: SecondPassResult
+) -> SecondPassResult:
+    """沿章节引用图传播「可能连带变更」，就地改写 `result`。
+
+    - 一跳：只沿 `references` / `depends_on` 走一层；
+    - 源章节有 `changed` / `affected` 结论才触发；
+    - 传播结果一律进冲突队列（`possible_impact`），不直接改写标签；
+    - 命中已有 `decisions` 的目标 → 删除该裁决，原标签并入候选；
+    - 同目标既有 `conflict` 又有 `possible_impact` → 合并为 `conflict`。
+    """
+    strong_targets: dict[int, set[tuple[str, int]]] = {}
+    for chapter_id in index.chapter_links:
+        for key in _targets_of_chapter(index, chapter_id):
+            labels = {
+                item.label_type
+                for item in index.conclusions[key]
+                if item.chapter_id == chapter_id and item.label_type in _STRONG_LABELS
+            }
+            if labels:
+                strong_targets.setdefault(chapter_id, set()).add(key)
+
+    decisions_by_target = {
+        (item.target_type, item.target_id): item for item in result.decisions
+    }
+    conflicts_by_target: dict[tuple[str, int], PendingConflict] = {
+        (item.target_type, item.target_id): item
+        for item in result.conflicts
+        if item.target_id is not None
+    }
+
+    propagated: list[tuple[str, int]] = []
+    for from_chapter_id, to_chapter_ids in index.chapter_links.items():
+        sources = strong_targets.get(from_chapter_id)
+        if not sources:
+            continue
+        for to_chapter_id in to_chapter_ids:
+            for key in _targets_of_chapter(index, to_chapter_id):
+                if key in sources:
+                    # 源章节自己就是这个目标，不算连带
+                    continue
+                if key not in propagated:
+                    propagated.append(key)
+
+                candidates: list[dict[str, Any]] = [
+                    {
+                        "label_type": "affected",
+                        "confidence": None,
+                        "rationale": f"章节 {from_chapter_id} 变更可能连带影响",
+                        "source": f"chapter:{from_chapter_id}",
+                    }
+                ]
+
+                decision = decisions_by_target.get(key)
+                if decision is not None:
+                    # 同一目标只出现在一张表：删除裁决，原标签并入候选
+                    result.decisions.remove(decision)
+                    decisions_by_target.pop(key, None)
+                    candidates.append(
+                        {
+                            "label_type": decision.decision,
+                            "confidence": (
+                                float(decision.confidence)
+                                if decision.confidence is not None
+                                else None
+                            ),
+                            "rationale": decision.rationale,
+                            "source": POINT_PASS_SOURCE,
+                        }
+                    )
+
+                conflict = conflicts_by_target.get(key)
+                if conflict is None:
+                    conflict = PendingConflict(
+                        target_type=key[0],
+                        target_id=key[1],
+                        target_name=target_name(index, key[0], key[1]),
+                        conflict_type="possible_impact",
+                        candidates=candidates,
+                    )
+                    conflicts_by_target[key] = conflict
+                    result.conflicts.append(conflict)
+                else:
+                    conflict.candidates = _merge_candidates(conflict.candidates, candidates)
+                    # 类型保持：2b-2 产的 conflict 仍是 conflict（人工裁决优先级更高），
+                    # 两次传播命中仍是 possible_impact
+
+    result.propagated_count = len(propagated)
+    return result
+
+
 __all__ = [
     "LocalConclusion",
     "POINT_PASS_SOURCE",
@@ -428,6 +566,7 @@ __all__ = [
     "SecondPassResult",
     "build_point_index",
     "participating_targets",
+    "propagate_impacts",
     "run_point_pass",
     "scoped_conclusions",
     "target_name",
