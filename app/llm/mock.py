@@ -1,16 +1,22 @@
 """Mock 供应商：可编程返回、记录收到的请求。
 
-两个可观察点：
+三个可观察点：
 
 - `calls: list[LLMRequest]`：每次 `chat` 追加一条，用例据此断言 Prompt 来源；
-- `queue: list[str]`：预设返回队列，为空时返回 `default_response`。
-
-默认返回 `{"conclusions": []}`，保证「不预设也能跑通」。
+- `queue: list[str]`：预设返回队列，为空时按 Prompt 类型返回默认响应；
+- 默认响应分两套：第一遍（`{"conclusions": []}`）与第二遍
+  （`[INCREMENTAL_2B_SYSTEM]` 前缀的 system → `decision=unchanged`）。
+  这样 e2e 不预设队列也能跑通第一遍和第二遍。
 """
 
 from app.llm.schemas import LLMRequest, LLMResponse, TokenUsage
 
 DEFAULT_RESPONSE = '{"conclusions": []}'
+SECOND_PASS_SYSTEM_PREFIX = "[INCREMENTAL_2B_SYSTEM]"
+SECOND_PASS_DEFAULT_RESPONSE = (
+    '{"decision": "unchanged", "confidence": 0.5, '
+    '"rationale": "mock 默认结论", "new_points": []}'
+)
 
 
 class MockProvider:
@@ -32,7 +38,12 @@ class MockProvider:
         index = len(self.calls)
         self.calls.append(req)
 
-        content = self.queue.pop(0) if self.queue else self.default_response
+        if self.queue:
+            content = self.queue.pop(0)
+        elif req.system.startswith(SECOND_PASS_SYSTEM_PREFIX):
+            content = SECOND_PASS_DEFAULT_RESPONSE
+        else:
+            content = self.default_response
         prompt_tokens = len(req.system) + len(req.user)
         completion_tokens = len(content)
         return LLMResponse(
@@ -47,4 +58,9 @@ class MockProvider:
         )
 
 
-__all__ = ["DEFAULT_RESPONSE", "MockProvider"]
+__all__ = [
+    "DEFAULT_RESPONSE",
+    "MockProvider",
+    "SECOND_PASS_DEFAULT_RESPONSE",
+    "SECOND_PASS_SYSTEM_PREFIX",
+]

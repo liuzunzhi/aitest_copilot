@@ -1,6 +1,7 @@
 """增量分析用例的造数与登录辅助。"""
 
 import uuid
+from decimal import Decimal
 
 from fastapi.testclient import TestClient
 from sqlalchemy import select
@@ -14,7 +15,11 @@ from app.models.baseline import (
     BaselineRevision,
 )
 from app.models.document import Document, DocumentChapter, DocumentVersion
-from app.models.incremental import PromptTemplate
+from app.models.incremental import (
+    IncrementalAnalysis,
+    IncrementalConclusion,
+    PromptTemplate,
+)
 from app.models.project import Project, ProjectMember
 from app.models.user import User
 
@@ -237,4 +242,60 @@ def build_chain(
         "chapters": chapter_rows,
         "structure": structure,
     }
+
+
+def second_pass_template(db: Session) -> PromptTemplate:
+    """迁移 0015 播种的第二遍模板。"""
+    template = db.scalar(
+        select(PromptTemplate).where(
+            PromptTemplate.name == "增量分析·第二遍·按点分治"
+        )
+    )
+    assert template is not None, "迁移 0015 应播种一条第二遍模板"
+    return template
+
+
+def make_analysis(
+    db: Session, chain: dict, *, status: str = "succeeded"
+) -> IncrementalAnalysis:
+    """直接建一条分析记录（绕过接口，便于引擎级用例）。"""
+    analysis = IncrementalAnalysis(
+        project_id=chain["project"].id,
+        template_id=chain["template"].id,
+        template_version=chain["template"].version_no,
+        baseline_revision_id=chain["revision"].id,
+        document_id=chain["document"].id,
+        document_version_id=chain["version"].id,
+        status=status,
+        created_by=chain["admin"].id,
+    )
+    db.add(analysis)
+    db.flush()
+    return analysis
+
+
+def make_conclusion(
+    db: Session,
+    analysis: IncrementalAnalysis,
+    *,
+    chapter_id: int,
+    target_type: str,
+    target_id: int,
+    label_type: str = "changed",
+    confidence: Decimal | None = Decimal("0.80"),
+    rationale: str | None = "正文有改动",
+) -> IncrementalConclusion:
+    row = IncrementalConclusion(
+        analysis_id=analysis.id,
+        chapter_id=chapter_id,
+        chapter_title=db.get(DocumentChapter, chapter_id).title,
+        target_type=target_type,
+        target_id=target_id,
+        label_type=label_type,
+        confidence=confidence,
+        rationale=rationale,
+    )
+    db.add(row)
+    db.flush()
+    return row
 
