@@ -674,7 +674,10 @@ def _incremental_analysis_create(
     db.add(revision)
     db.flush()
     template = db.scalar(
-        select(PromptTemplate).where(PromptTemplate.task_type == "incremental")
+        select(PromptTemplate).where(
+            PromptTemplate.task_type == "incremental",
+            PromptTemplate.name == "增量分析·第一遍·章节局部",
+        )
     )
     assert template is not None
 

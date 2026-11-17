@@ -18,6 +18,8 @@ from app.models.document import BaselineSnapshot, Document, DocumentChapter, Doc
 from app.models.incremental import (
     IncrementalAnalysis,
     IncrementalConclusion,
+    IncrementalConflict,
+    IncrementalDecision,
     PromptTemplate,
 )
 from app.models.project import Project, ProjectMember
@@ -43,6 +45,8 @@ __all__ = [
     "DocumentVersion",
     "IncrementalAnalysis",
     "IncrementalConclusion",
+    "IncrementalConflict",
+    "IncrementalDecision",
     "Project",
     "ProjectApplication",
     "ProjectMember",

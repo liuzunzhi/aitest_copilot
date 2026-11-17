@@ -42,6 +42,10 @@ ANALYSIS_STATUSES = ("pending", "running", "succeeded", "failed")
 SPLIT_GRANULARITIES = ("chapter",)
 TARGET_TYPES = ("function", "feature_point")
 CONCLUSION_LABEL_TYPES = ("changed", "affected", "unchanged")
+SECOND_PASS_STATUSES = ("running", "succeeded", "failed")
+DECISION_TYPES = ("changed", "affected", "unchanged")
+CONFLICT_TYPES = ("conflict", "possible_impact", "new")
+CONFLICT_STATUSES = ("pending", "confirmed", "rejected")
 
 
 class PromptTemplate(Base):
@@ -104,6 +108,11 @@ class IncrementalAnalysis(Base):
             name="fk_ianalyses_version",
         ),
         ForeignKeyConstraint(["created_by"], ["users.id"], name="fk_ianalyses_creator"),
+        ForeignKeyConstraint(
+            ["second_pass_template_id"],
+            ["prompt_templates.id"],
+            name="fk_ianalyses_2b_template",
+        ),
         Index("idx_ianalyses_project", "project_id"),
         Index("idx_ianalyses_template", "template_id"),
         # 04 引用解析器按该列查询，索引必须保留
@@ -116,6 +125,10 @@ class IncrementalAnalysis(Base):
         ),
         CheckConstraint(
             "split_granularity IN ('chapter')", name="ck_ianalyses_granularity"
+        ),
+        CheckConstraint(
+            "second_pass_status IS NULL OR second_pass_status IN ('running','succeeded','failed')",
+            name="ck_ianalyses_2b_status",
         ),
         _TABLE_OPTS,
     )
@@ -141,6 +154,20 @@ class IncrementalAnalysis(Base):
     stats: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     started_at: Mapped[datetime | None] = mapped_column(DATETIME(fsp=3), nullable=True)
     finished_at: Mapped[datetime | None] = mapped_column(DATETIME(fsp=3), nullable=True)
+    # ---- 第二遍（第二期）。NULL 表示从未跑过；与第一遍 status 互不覆盖 ----
+    second_pass_template_id: Mapped[int | None] = mapped_column(
+        BIGINT(unsigned=True), nullable=True, comment="第二遍按点分治模板"
+    )
+    second_pass_status: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    second_pass_stats: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    second_pass_error_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    second_pass_error_message: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    second_pass_started_at: Mapped[datetime | None] = mapped_column(
+        DATETIME(fsp=3), nullable=True
+    )
+    second_pass_finished_at: Mapped[datetime | None] = mapped_column(
+        DATETIME(fsp=3), nullable=True
+    )
     created_by: Mapped[int] = mapped_column(BIGINT(unsigned=True), nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DATETIME(fsp=3), nullable=False, server_default=text("CURRENT_TIMESTAMP(3)")
@@ -201,12 +228,135 @@ class IncrementalConclusion(Base):
     )
 
 
+class IncrementalDecision(Base):
+    """第二遍无争议裁决。目标为功能或功能点（多态，不建外键）。
+
+    `new` 不落本表——新增没有基线 id，只能进 `incremental_conflicts`。
+    """
+
+    __tablename__ = "incremental_decisions"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["analysis_id"],
+            ["incremental_analyses.id"],
+            name="fk_idecisions_analysis",
+            ondelete="CASCADE",
+        ),
+        Index(
+            "uk_idecisions_target",
+            "analysis_id",
+            "target_type",
+            "target_id",
+            unique=True,
+        ),
+        Index("idx_idecisions_analysis", "analysis_id"),
+        CheckConstraint(
+            "target_type IN ('function','feature_point')",
+            name="ck_idecisions_target_type",
+        ),
+        CheckConstraint(
+            "decision IN ('changed','affected','unchanged')",
+            name="ck_idecisions_decision",
+        ),
+        _TABLE_OPTS,
+    )
+
+    id: Mapped[int] = mapped_column(BIGINT(unsigned=True), primary_key=True, autoincrement=True)
+    analysis_id: Mapped[int] = mapped_column(BIGINT(unsigned=True), nullable=False)
+    target_type: Mapped[str] = mapped_column(String(16), nullable=False)
+    target_id: Mapped[int] = mapped_column(
+        BIGINT(unsigned=True), nullable=False, comment="功能或功能点 id（多态，不建外键）"
+    )
+    target_name: Mapped[str] = mapped_column(
+        String(255), nullable=False, comment="裁决时快照名称"
+    )
+    decision: Mapped[str] = mapped_column(String(16), nullable=False)
+    confidence: Mapped[Decimal | None] = mapped_column(DECIMAL(3, 2), nullable=True)
+    rationale: Mapped[str | None] = mapped_column(String(1000), nullable=True)
+    evidence: Mapped[dict | None] = mapped_column(
+        JSON, nullable=True, comment="{chapter_ids, conclusion_ids, propagated_from}"
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DATETIME(fsp=3), nullable=False, server_default=text("CURRENT_TIMESTAMP(3)")
+    )
+
+
+class IncrementalConflict(Base):
+    """第二遍待人工裁决队列：冲突 / 可能连带变更 / 新增。
+
+    不加数据库唯一键：`new` 的 `target_id` 为 NULL，唯一键对它会失效，
+    去重由服务层保证（spec-phase2 §4.3）。
+    """
+
+    __tablename__ = "incremental_conflicts"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["analysis_id"],
+            ["incremental_analyses.id"],
+            name="fk_iconflicts_analysis",
+            ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            ["resolved_by"], ["users.id"], name="fk_iconflicts_resolver"
+        ),
+        Index("idx_iconflicts_analysis", "analysis_id"),
+        Index("idx_iconflicts_status", "analysis_id", "status"),
+        CheckConstraint(
+            "target_type IN ('function','feature_point')",
+            name="ck_iconflicts_target_type",
+        ),
+        CheckConstraint(
+            "conflict_type IN ('conflict','possible_impact','new')",
+            name="ck_iconflicts_type",
+        ),
+        CheckConstraint(
+            "status IN ('pending','confirmed','rejected')",
+            name="ck_iconflicts_status",
+        ),
+        CheckConstraint(
+            "resolved_label_type IS NULL OR resolved_label_type IN ('changed','affected','unchanged')",
+            name="ck_iconflicts_resolved_label",
+        ),
+        CheckConstraint(
+            "(conflict_type = 'new' AND target_id IS NULL)"
+            " OR (conflict_type <> 'new' AND target_id IS NOT NULL)",
+            name="ck_iconflicts_target",
+        ),
+        _TABLE_OPTS,
+    )
+
+    id: Mapped[int] = mapped_column(BIGINT(unsigned=True), primary_key=True, autoincrement=True)
+    analysis_id: Mapped[int] = mapped_column(BIGINT(unsigned=True), nullable=False)
+    target_type: Mapped[str] = mapped_column(String(16), nullable=False)
+    target_id: Mapped[int | None] = mapped_column(
+        BIGINT(unsigned=True), nullable=True, comment="new 没有基线 id"
+    )
+    target_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    conflict_type: Mapped[str] = mapped_column(String(16), nullable=False)
+    candidates: Mapped[list] = mapped_column(JSON, nullable=False)
+    status: Mapped[str] = mapped_column(
+        String(16), nullable=False, server_default=text("'pending'")
+    )
+    resolved_label_type: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    resolved_by: Mapped[int | None] = mapped_column(BIGINT(unsigned=True), nullable=True)
+    resolved_at: Mapped[datetime | None] = mapped_column(DATETIME(fsp=3), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DATETIME(fsp=3), nullable=False, server_default=text("CURRENT_TIMESTAMP(3)")
+    )
+
+
 __all__ = [
     "ANALYSIS_STATUSES",
     "CONCLUSION_LABEL_TYPES",
+    "CONFLICT_STATUSES",
+    "CONFLICT_TYPES",
+    "DECISION_TYPES",
     "IncrementalAnalysis",
     "IncrementalConclusion",
+    "IncrementalConflict",
+    "IncrementalDecision",
     "PromptTemplate",
+    "SECOND_PASS_STATUSES",
     "SPLIT_GRANULARITIES",
     "TARGET_TYPES",
     "TASK_TYPES",

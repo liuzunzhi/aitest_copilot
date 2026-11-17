@@ -64,9 +64,12 @@ def add_member(
 
 
 def seed_template(db: Session) -> PromptTemplate:
-    """迁移 0013 播种的 incremental 模板。"""
+    """迁移 0013 播种的第一遍 incremental 模板（第二遍也有模板，必须按名字取）。"""
     template = db.scalar(
-        select(PromptTemplate).where(PromptTemplate.task_type == "incremental")
+        select(PromptTemplate).where(
+            PromptTemplate.task_type == "incremental",
+            PromptTemplate.name == "增量分析·第一遍·章节局部",
+        )
     )
     assert template is not None, "迁移 0013 应播种一条 incremental 模板"
     return template

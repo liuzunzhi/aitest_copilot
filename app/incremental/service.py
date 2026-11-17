@@ -368,6 +368,13 @@ def _analysis_item(session: Session, analysis: IncrementalAnalysis) -> dict:
         "stats": analysis.stats,
         "started_at": analysis.started_at,
         "finished_at": analysis.finished_at,
+        "second_pass_template_id": analysis.second_pass_template_id,
+        "second_pass_status": analysis.second_pass_status,
+        "second_pass_stats": analysis.second_pass_stats,
+        "second_pass_error_code": analysis.second_pass_error_code,
+        "second_pass_error_message": analysis.second_pass_error_message,
+        "second_pass_started_at": analysis.second_pass_started_at,
+        "second_pass_finished_at": analysis.second_pass_finished_at,
         "created_by": analysis.created_by,
         "created_at": analysis.created_at,
     }

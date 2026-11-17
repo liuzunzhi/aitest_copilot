@@ -17,6 +17,9 @@ __all__ = [
     "ChapterLinkCreate",
     "ChapterLinkOut",
     "ConclusionOut",
+    "ConflictOut",
+    "ConflictResolve",
+    "DecisionOut",
     "Page",
 ]
 
@@ -52,6 +55,14 @@ class AnalysisOut(BaseModel):
     stats: dict | None = None
     started_at: datetime | None = None
     finished_at: datetime | None = None
+    # ---- 第二遍（第二期）。NULL 表示未执行，不是失败 ----
+    second_pass_template_id: int | None = None
+    second_pass_status: str | None = None
+    second_pass_stats: dict | None = None
+    second_pass_error_code: str | None = None
+    second_pass_error_message: str | None = None
+    second_pass_started_at: datetime | None = None
+    second_pass_finished_at: datetime | None = None
     created_by: int
     created_at: datetime
 
@@ -99,4 +110,47 @@ class ChapterLinkOut(BaseModel):
     source: str
     created_by: int
     created_at: datetime
+
+
+class DecisionOut(BaseModel):
+    """第二遍无争议裁决。`decision` 不含 `new`。"""
+
+    id: int
+    analysis_id: int
+    target_type: str
+    target_id: int
+    target_name: str
+    decision: str
+    confidence: float | None = None
+    rationale: str | None = None
+    evidence: dict | None = None
+    created_at: datetime
+
+
+class ConflictOut(BaseModel):
+    """待人工裁决项：冲突 / 可能连带变更 / 新增。"""
+
+    id: int
+    analysis_id: int
+    target_type: str
+    target_id: int | None = None
+    target_name: str
+    conflict_type: str
+    candidates: list
+    status: str
+    resolved_label_type: str | None = None
+    resolved_by: int | None = None
+    resolved_at: datetime | None = None
+    created_at: datetime
+
+
+class ConflictResolve(BaseModel):
+    """人工裁决入参。`decision` 只允许 confirmed / rejected，校验在服务层。
+
+    与 `ChapterLinkCreate` 同理：非法值走 400 `INVALID_CONFLICT_RESOLUTION`，
+    不用 pydantic 的枚举校验（那会变成 422）。
+    """
+
+    decision: str
+    label_type: str | None = None
 
