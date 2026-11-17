@@ -285,6 +285,16 @@ def extract_links(
             DocumentChapterLink.source == "rule",
         )
     )
+    # 人工边优先：规则重抽命中同一条（同源同类型同目标）时跳过，避免撞唯一键
+    manual_keys = {
+        (row.from_chapter_id, row.link_type, row.to_chapter_id, row.entity)
+        for row in session.scalars(
+            select(DocumentChapterLink).where(
+                DocumentChapterLink.version_id == version_id,
+                DocumentChapterLink.source == "manual",
+            )
+        ).all()
+    }
     rows = [
         DocumentChapterLink(
             version_id=version_id,
@@ -297,6 +307,8 @@ def extract_links(
             created_by=actor.id,
         )
         for item in sorted(candidates.values(), key=lambda c: (c.from_chapter_id, c.link_type))
+        if (item.from_chapter_id, item.link_type, item.to_chapter_id, item.entity)
+        not in manual_keys
     ]
     if rows:
         session.add_all(rows)

@@ -140,6 +140,30 @@ def test_ac_86_mentions_feature_point_entity(client: TestClient, db: Session):
     assert body[0]["confidence"] == pytest.approx(0.6)
 
 
+def test_ac_86_manual_entity_not_duplicated_by_extract(client: TestClient, db: Session):
+    """人工补的实体边与规则抽中同一条时，重抽跳过而不是撞唯一键。"""
+    admin, project, document, version, rows = _chain(
+        db, chapters=[("1 支付", "本章讲退款审核的规则。")]
+    )
+    helpers.make_function(db, project, admin, function_name="退款", point_name="退款审核")
+    headers = helpers.login(client, admin)
+    url = _url(project, document, version)
+
+    manual = client.post(
+        url,
+        json={"from_chapter_id": rows[0].id, "link_type": "mentions_entity", "entity": "退款审核"},
+        headers=headers,
+    )
+    assert manual.status_code == 201, manual.text
+
+    for _ in range(2):
+        response = client.post(f"{url}/extract", headers=headers)
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert len(body) == 1
+        assert body[0]["source"] == "manual"
+
+
 # ------------------------------------------------------------ AC-87
 
 
