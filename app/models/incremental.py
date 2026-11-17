@@ -46,6 +46,10 @@ SECOND_PASS_STATUSES = ("running", "succeeded", "failed")
 DECISION_TYPES = ("changed", "affected", "unchanged")
 CONFLICT_TYPES = ("conflict", "possible_impact", "new")
 CONFLICT_STATUSES = ("pending", "confirmed", "rejected")
+# 第三期：产出段状态。NULL 表示从未应用过。
+APPLY_STATUSES = ("running", "succeeded", "failed")
+# 产出段只写变更类标签，「确实没变」不落标签
+APPLIED_LABEL_TYPES = ("changed", "affected")
 
 
 class PromptTemplate(Base):
@@ -113,6 +117,11 @@ class IncrementalAnalysis(Base):
             ["prompt_templates.id"],
             name="fk_ianalyses_2b_template",
         ),
+        ForeignKeyConstraint(
+            ["apply_revision_id"],
+            ["baseline_revisions.id"],
+            name="fk_ianalyses_apply_revision",
+        ),
         Index("idx_ianalyses_project", "project_id"),
         Index("idx_ianalyses_template", "template_id"),
         # 04 引用解析器按该列查询，索引必须保留
@@ -129,6 +138,10 @@ class IncrementalAnalysis(Base):
         CheckConstraint(
             "second_pass_status IS NULL OR second_pass_status IN ('running','succeeded','failed')",
             name="ck_ianalyses_2b_status",
+        ),
+        CheckConstraint(
+            "apply_status IS NULL OR apply_status IN ('running','succeeded','failed')",
+            name="ck_ianalyses_apply_status",
         ),
         _TABLE_OPTS,
     )
@@ -166,6 +179,20 @@ class IncrementalAnalysis(Base):
         DATETIME(fsp=3), nullable=True
     )
     second_pass_finished_at: Mapped[datetime | None] = mapped_column(
+        DATETIME(fsp=3), nullable=True
+    )
+    # ---- 产出段（第三期）。NULL 表示从未应用过；与第一遍 / 第二遍状态互不覆盖 ----
+    apply_status: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    apply_stats: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    apply_revision_id: Mapped[int | None] = mapped_column(
+        BIGINT(unsigned=True), nullable=True, comment="产物标签挂在哪份快照上"
+    )
+    apply_error_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    apply_error_message: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    apply_started_at: Mapped[datetime | None] = mapped_column(
+        DATETIME(fsp=3), nullable=True
+    )
+    apply_finished_at: Mapped[datetime | None] = mapped_column(
         DATETIME(fsp=3), nullable=True
     )
     created_by: Mapped[int] = mapped_column(BIGINT(unsigned=True), nullable=False)
@@ -345,8 +372,79 @@ class IncrementalConflict(Base):
     )
 
 
+class IncrementalLabel(Base):
+    """产出段标签映射：分析 ↔ 04 基线标签（双向可追溯）。
+
+    重跑产出走逻辑清除，旧映射行必须保留，因此唯一键只能是
+    `(analysis_id, baseline_label_id)`；若按目标建唯一键，旧行会挡住新一行。
+    查询「当前产出」时需与 `baseline_labels.status='active'` 联查。
+    """
+
+    __tablename__ = "incremental_labels"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["analysis_id"],
+            ["incremental_analyses.id"],
+            name="fk_ilabels_analysis",
+            ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            ["baseline_label_id"],
+            ["baseline_labels.id"],
+            name="fk_ilabels_label",
+            ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            ["revision_id"], ["baseline_revisions.id"], name="fk_ilabels_revision"
+        ),
+        # 一个标签只能被一条映射行指向；重跑新增映射，不覆盖旧行
+        Index(
+            "uk_ilabels_analysis_label",
+            "analysis_id",
+            "baseline_label_id",
+            unique=True,
+        ),
+        Index("idx_ilabels_analysis", "analysis_id"),
+        Index("idx_ilabels_label", "baseline_label_id"),
+        Index("idx_ilabels_revision", "revision_id"),
+        # 普通索引：按目标查「本次分析产出的标签」
+        Index(
+            "idx_ilabels_target",
+            "analysis_id",
+            "target_type",
+            "target_id",
+            "label_type",
+        ),
+        CheckConstraint(
+            "target_type IN ('function','feature_point')",
+            name="ck_ilabels_target_type",
+        ),
+        CheckConstraint(
+            "label_type IN ('changed','affected')", name="ck_ilabels_label_type"
+        ),
+        _TABLE_OPTS,
+    )
+
+    id: Mapped[int] = mapped_column(BIGINT(unsigned=True), primary_key=True, autoincrement=True)
+    analysis_id: Mapped[int] = mapped_column(BIGINT(unsigned=True), nullable=False)
+    baseline_label_id: Mapped[int] = mapped_column(BIGINT(unsigned=True), nullable=False)
+    revision_id: Mapped[int] = mapped_column(
+        BIGINT(unsigned=True), nullable=False, comment="标签挂在哪份快照上"
+    )
+    target_type: Mapped[str] = mapped_column(String(16), nullable=False)
+    target_id: Mapped[int] = mapped_column(
+        BIGINT(unsigned=True), nullable=False, comment="功能或功能点 id（多态，不建外键）"
+    )
+    label_type: Mapped[str] = mapped_column(String(16), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DATETIME(fsp=3), nullable=False, server_default=text("CURRENT_TIMESTAMP(3)")
+    )
+
+
 __all__ = [
     "ANALYSIS_STATUSES",
+    "APPLIED_LABEL_TYPES",
+    "APPLY_STATUSES",
     "CONCLUSION_LABEL_TYPES",
     "CONFLICT_STATUSES",
     "CONFLICT_TYPES",
@@ -355,6 +453,7 @@ __all__ = [
     "IncrementalConclusion",
     "IncrementalConflict",
     "IncrementalDecision",
+    "IncrementalLabel",
     "PromptTemplate",
     "SECOND_PASS_STATUSES",
     "SPLIT_GRANULARITIES",

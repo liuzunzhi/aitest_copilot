@@ -20,6 +20,7 @@ from app.models.incremental import (
     IncrementalConclusion,
     IncrementalConflict,
     IncrementalDecision,
+    IncrementalLabel,
     PromptTemplate,
 )
 from app.models.project import Project, ProjectMember
@@ -47,6 +48,7 @@ __all__ = [
     "IncrementalConclusion",
     "IncrementalConflict",
     "IncrementalDecision",
+    "IncrementalLabel",
     "Project",
     "ProjectApplication",
     "ProjectMember",
