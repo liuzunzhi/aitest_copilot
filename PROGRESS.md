@@ -15,13 +15,13 @@
 - [x] 02-projects (项目与申请)
 - [x] 03-documents (文档解析)
 - [x] 04-baseline (基线管理、快照、标签) —— **已完成（含 T67 收尾）**
-- [x] 05-increment-analysis (增量分析) —— **第一期（T68~T70）+ 第二期（T71~T78）+ 第三期 T79 完成（T80~T83 待做）**
+- [x] 05-increment-analysis (增量分析) —— **第一期（T68~T70）+ 第二期（T71~T78）+ 第三期 T79~T80 完成（T81~T83 待做）**
 - [ ] 06 及后续模块 —— ****[TBD 待定，严禁 AI 擅自规划]****
 
 ## 3. 当前冲刺任务（⚠️ 务必先做这个）
 
 **当前目标**：05 增量分析——**第三期（产出段）进行中**，
-T79（产出段模型与迁移 0016）已完成，下一步 T80（产出引擎）。
+T80（产出引擎：标签收集 + 落库）已完成，下一步 T81（产出服务与接口）。
 
 > 第三期范围：把第二遍裁决落成基线标签 + 待审核快照；仍零真实网络请求、
 > 不写 `unchanged` 标签、不自动批准快照、**不物理删除任何标签行**、
@@ -61,7 +61,7 @@ T79（产出段模型与迁移 0016）已完成，下一步 T80（产出引擎�
 
 | 项 | 值 |
 |---|---|
-| 后端全量 pytest | **604 passed**（串行；T79 后） |
+| 后端全量 pytest | **615 passed**（串行；T80 后） |
 | e2e | 34 条（含增量分析第一期 2 条 + 第二期 3 条），一条命令 `.\.venv\Scripts\python.exe scripts\run_e2e.py`（8001/5174 + `aitest_copilot_e2e`） |
 | 前端构建 | `npm run build`（`web/` 目录，端口 5173，代理到 8000） |
 | 开跑前自检 | `.\.venv\Scripts\python.exe scripts\dev_check.py`（跑 e2e 时加 `--expect-db e2e`） |
@@ -125,13 +125,17 @@ T79（产出段模型与迁移 0016）已完成，下一步 T80（产出引擎�
 
 - [x] T79 产出段模型与迁移：`0016`（`incremental_labels` 映射表 + `analyses` 的 `apply_*` 列，
       唯一键 `(analysis_id, baseline_label_id)`，标签类型只收 `changed` / `affected`）
-- [ ] T80 产出引擎（标签收集 + 落库）
+- [x] T80 产出引擎：`app/incremental/apply.py`（收集规则 / 复用或新建 submitted 快照 /
+      写标签 + 映射 / 重跑逻辑清除），标签行只置 `cleared`、绝不物理删除
 - [ ] T81 产出服务与接口
 - [ ] T82 前端（应用产出区块）
 - [ ] T83 收尾
 
 **T79 验证结果**：定向 15 passed；后端全量 **604 passed**（串行）；
 `alembic downgrade 0015 → upgrade head` 往返通过；两个库迁移 head 均在 `0016`。
+
+**T80 验证结果**：`tests/incremental/test_apply_engine.py` 11 passed；
+后端全量 **615 passed**（串行）。未改 `app/baselines/` 任何代码，未物理删除标签行。
 
 ## 6. 待办（不属当前冲刺，等用户点头再做）
 
