@@ -9,6 +9,7 @@
 - `POST /analyses/{analysis_id}/second-pass` 触发第二遍（项目管理员）
 - `GET  /analyses/{analysis_id}/decisions` 第二遍裁决列表（分页）
 - `GET  /analyses/{analysis_id}/conflicts` 第二遍待人工裁决队列（分页）
+- `POST /analyses/{analysis_id}/conflicts/{conflict_id}/resolve` 人工裁决（项目管理员）
 """
 
 from fastapi import APIRouter, Depends, Query
@@ -22,6 +23,7 @@ from app.incremental.schemas import (
     AnalysisOut,
     ConclusionOut,
     ConflictOut,
+    ConflictResolve,
     DecisionOut,
     Page,
 )
@@ -216,6 +218,43 @@ def list_conflicts(
         total=result["total"],
         page=result["page"],
         page_size=result["page_size"],
+    )
+
+
+@router.post(
+    "/analyses/{analysis_id}/conflicts/{conflict_id}/resolve",
+    response_model=ConflictOut,
+)
+def resolve_conflict(
+    project_id: int,
+    analysis_id: int,
+    conflict_id: int,
+    payload: ConflictResolve,
+    session: Session = Depends(get_db),
+    user: User = Depends(current_user),
+) -> ConflictOut:
+    """人工裁决一条冲突。只改冲突行，不写基线标签。"""
+    conflict = service.resolve_conflict(
+        session,
+        project_id=project_id,
+        analysis_id=analysis_id,
+        conflict_id=conflict_id,
+        actor=user,
+        payload=payload,
+    )
+    return ConflictOut(
+        id=conflict.id,
+        analysis_id=conflict.analysis_id,
+        target_type=conflict.target_type,
+        target_id=conflict.target_id,
+        target_name=conflict.target_name,
+        conflict_type=conflict.conflict_type,
+        candidates=conflict.candidates,
+        status=conflict.status,
+        resolved_label_type=conflict.resolved_label_type,
+        resolved_by=conflict.resolved_by,
+        resolved_at=conflict.resolved_at,
+        created_at=conflict.created_at,
     )
 
 

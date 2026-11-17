@@ -32,8 +32,11 @@ from app.common.deps import SYSTEM_ADMIN
 from app.common.errors import (
     AppError,
     BaselineRevisionRequired,
+    ConflictAlreadyResolved,
+    ConflictNotFound,
     DocumentVersionNotAnalyzable,
     IncrementalAnalysisNotFound,
+    InvalidConflictResolution,
     InvalidSplitGranularity,
     LLMCallFailed,
     NoActiveDocumentVersion,
@@ -49,7 +52,7 @@ from app.common.errors import (
 )
 from app.incremental import engine, links, second_pass
 from app.incremental.engine import ChapterResult, PassResult
-from app.incremental.schemas import AnalysisCreate
+from app.incremental.schemas import AnalysisCreate, ConflictResolve
 from app.llm.provider import LLMProvider
 from app.models.baseline import BaselineRevision
 from app.models.chapter_link import DocumentChapterLink
@@ -805,6 +808,85 @@ def list_conflicts(
     return _page(items, page, page_size)
 
 
+# ------------------------------------------------------------ 人工裁决
+
+
+def _validate_resolution(payload: ConflictResolve) -> tuple[str, str | None]:
+    """`confirmed` 必带 `label_type`，`rejected` 不允许带；其余非法。"""
+    decision = payload.decision
+    if decision not in ("confirmed", "rejected"):
+        raise InvalidConflictResolution("decision 只允许 confirmed 或 rejected")
+    if decision == "confirmed":
+        if payload.label_type is None:
+            raise InvalidConflictResolution("确认裁决必须指定 label_type")
+        if payload.label_type not in ("changed", "affected", "unchanged"):
+            raise InvalidConflictResolution(
+                "label_type 只允许 changed / affected / unchanged"
+            )
+        return decision, payload.label_type
+    if payload.label_type is not None:
+        raise InvalidConflictResolution("驳回时不允许带 label_type")
+    return decision, None
+
+
+def resolve_conflict(
+    session: Session,
+    *,
+    project_id: int,
+    analysis_id: int,
+    conflict_id: int,
+    actor: User,
+    payload: ConflictResolve,
+) -> IncrementalConflict:
+    """人工裁决一条冲突。
+
+    只改冲突行本身（`status` / `resolved_label_type` / `resolved_by` / `resolved_at`），
+    **不写 `baseline_labels`**——产出段是下一期的事。
+    """
+    _ensure_writable_project(session, project_id)
+    _ensure_admin(session, project_id=project_id, actor=actor)
+
+    analysis = _load_analysis(session, project_id=project_id, analysis_id=analysis_id)
+    conflict = session.scalar(
+        select(IncrementalConflict).where(
+            IncrementalConflict.id == conflict_id,
+            IncrementalConflict.analysis_id == analysis.id,
+        )
+    )
+    if conflict is None:
+        raise ConflictNotFound("冲突记录不存在或不属于该分析")
+    if conflict.status != "pending":
+        raise ConflictAlreadyResolved("该冲突已完成裁决，不能重复处理")
+
+    decision, label_type = _validate_resolution(payload)
+
+    conflict.status = decision
+    conflict.resolved_label_type = label_type
+    conflict.resolved_by = actor.id
+    conflict.resolved_at = _now()
+    session.flush()
+
+    write_audit(
+        session,
+        "incremental.conflict.resolve",
+        actor_id=actor.id,
+        actor_role=actor.global_role,
+        project_id=project_id,
+        target_type="incremental_conflict",
+        target_id=conflict.id,
+        after_data={
+            "analysis_id": analysis.id,
+            "conflict_type": conflict.conflict_type,
+            "target_type": conflict.target_type,
+            "target_id": conflict.target_id,
+            "decision": decision,
+            "label_type": label_type,
+        },
+    )
+    session.commit()
+    return conflict
+
+
 __all__ = [
     "create_analysis",
     "ensure_readable",
@@ -813,5 +895,6 @@ __all__ = [
     "list_conflicts",
     "list_conclusions",
     "list_decisions",
+    "resolve_conflict",
     "run_second_pass",
 ]

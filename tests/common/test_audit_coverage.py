@@ -20,7 +20,7 @@ from app.common.security import hash_password
 from app.models.application import ProjectApplication
 from app.models.baseline import BaselineRevision
 from app.models.document import DocumentChapter
-from app.models.incremental import PromptTemplate
+from app.models.incremental import IncrementalAnalysis, IncrementalConflict, PromptTemplate
 from app.models.project import Project, ProjectMember
 from app.models.system import AuditLog
 from app.models.user import User
@@ -737,6 +737,66 @@ def _incremental_second_pass_run(client: TestClient, db: Session, monkeypatch) -
     assert response.status_code == 200, response.text
 
 
+def _incremental_conflict_resolve(
+    client: TestClient, db: Session, monkeypatch
+) -> None:
+    """05 第二期：人工裁决一条冲突。"""
+    project, _, headers, body = _uploaded(client, db)
+    response = client.post(
+        ACTIVATE.format(
+            project_id=project.id,
+            document_id=body["document"]["id"],
+            version_id=body["version"]["id"],
+        ),
+        headers=headers,
+    )
+    assert response.status_code == 200, response.text
+
+    revision = BaselineRevision(project_id=project.id, status="approved")
+    db.add(revision)
+    db.flush()
+    template = db.scalar(
+        select(PromptTemplate).where(
+            PromptTemplate.task_type == "incremental",
+            PromptTemplate.name == "增量分析·第一遍·章节局部",
+        )
+    )
+    assert template is not None
+
+    response = client.post(
+        INCREMENTAL.format(project_id=project.id) + "/analyses",
+        json={
+            "template_id": template.id,
+            "baseline_revision_id": revision.id,
+            "document_version_id": body["version"]["id"],
+        },
+        headers=headers,
+    )
+    assert response.status_code == 201, response.text
+    analysis_id = response.json()["id"]
+
+    analysis = db.get(IncrementalAnalysis, analysis_id)
+    conflict = IncrementalConflict(
+        analysis_id=analysis_id,
+        target_type="feature_point",
+        target_id=None,
+        target_name="审计新增功能点",
+        conflict_type="new",
+        candidates=[{"label_type": "new", "source": "point_pass"}],
+    )
+    db.add(conflict)
+    db.flush()
+
+    response = client.post(
+        INCREMENTAL.format(project_id=project.id)
+        + f"/analyses/{analysis_id}/conflicts/{conflict.id}/resolve",
+        json={"decision": "rejected"},
+        headers=headers,
+    )
+    assert response.status_code == 200, response.text
+    assert analysis is not None
+
+
 def _chapter_link_create(client: TestClient, db: Session, monkeypatch) -> None:
     """05 第二期：人工补一条章节引用边。"""
     project, _, headers, body = _uploaded(client, db)
@@ -809,6 +869,7 @@ SCENARIOS = {
     "baseline.retention.update": _baseline_retention_update,
     "incremental.analysis.create": _incremental_analysis_create,
     "incremental.second_pass.run": _incremental_second_pass_run,
+    "incremental.conflict.resolve": _incremental_conflict_resolve,
     "document.chapter_link.create": _chapter_link_create,
 }
 

@@ -584,6 +584,27 @@ class SecondPassConflictsPending(AppError):
     code = "SECOND_PASS_CONFLICTS_PENDING"
 
 
+class ConflictNotFound(AppError):
+    """AC-93：冲突不存在或不属于该分析。"""
+
+    status_code = 404
+    code = "CONFLICT_NOT_FOUND"
+
+
+class ConflictAlreadyResolved(AppError):
+    """AC-93：冲突已确认 / 已驳回，不能重复裁决。"""
+
+    status_code = 409
+    code = "CONFLICT_ALREADY_RESOLVED"
+
+
+class InvalidConflictResolution(AppError):
+    """AC-93：`decision` 非法，或 `confirmed` 缺 `label_type` / `rejected` 带了 `label_type`。"""
+
+    status_code = 400
+    code = "INVALID_CONFLICT_RESOLUTION"
+
+
 def install_error_handlers(app: FastAPI) -> None:
     """把 AppError 统一渲染成 {"code","message",**extra}。"""
 
@@ -611,6 +632,8 @@ __all__ = [
     "CannotRemoveSelf",
     "ClearNoteRequired",
     "ClearReasonRequired",
+    "ConflictAlreadyResolved",
+    "ConflictNotFound",
     "ContactTaken",
     "DocumentParseFailed",
     "DocumentTooLarge",
@@ -629,6 +652,7 @@ __all__ = [
     "InvalidApplicationStatus",
     "InvalidChapterLink",
     "InvalidClearReason",
+    "InvalidConflictResolution",
     "InvalidCredentials",
     "InvalidDesiredRole",
     "InvalidGlobalRole",
