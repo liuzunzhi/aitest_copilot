@@ -2,6 +2,7 @@ import { Alert, Descriptions, Drawer, Space, Table, Typography } from 'antd'
 import type { ColumnsType } from 'antd/es/table'
 
 import type { DiscardedConclusion, IncrementalAnalysis, IncrementalConclusion } from '../api'
+import IncrementalApply from './IncrementalApply'
 import IncrementalSecondPass from './IncrementalSecondPass'
 import {
   DISCARD_LABELS,
@@ -176,6 +177,13 @@ export default function ProjectIncrementalDrawer({
           ) : null}
 
           <IncrementalSecondPass
+            projectId={analysis.project_id}
+            analysis={analysis}
+            canWrite={canWrite}
+            onChanged={onRefresh}
+          />
+
+          <IncrementalApply
             projectId={analysis.project_id}
             analysis={analysis}
             canWrite={canWrite}

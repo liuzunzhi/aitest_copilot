@@ -1068,3 +1068,71 @@ export async function extractChapterLinks(
   )
   return data
 }
+
+/* ---------------------------------------------- 增量分析第三期（产出段） */
+
+/** 产出一行映射：`id` 是映射行 id，`baseline_label_id` 指向基线标签。 */
+export interface AppliedLabel {
+  id: number
+  baseline_label_id: number
+  revision_id: number
+  target_type: 'function' | 'feature_point'
+  target_id: number
+  target_name: string | null
+  /** 产出段只写 changed / affected，不写 unchanged。 */
+  label_type: 'changed' | 'affected'
+  status: 'active' | 'cleared'
+  cleared_by: number | null
+  cleared_at: string | null
+  clear_reason: string | null
+}
+
+/** 产出统计；`apply_stats` 为空表示还没跑过产出段。 */
+export interface ApplyStats {
+  revision_id: number
+  revision_status: string
+  label_count: number
+  changed_count: number
+  affected_count: number
+  skipped_missing_count: number
+  skipped_new_count: number
+  unchanged_count: number
+  conflict_label_count: number
+}
+
+/** `apply` 与 `applied-labels` 共用的响应形状。 */
+export interface ApplyResult {
+  analysis_id: number
+  /** NULL = 从未应用；running / succeeded / failed。 */
+  apply_status: 'running' | 'succeeded' | 'failed' | null
+  apply_revision_id: number | null
+  apply_stats: ApplyStats | null
+  labels: AppliedLabel[]
+  /** 本次产出的标签当前全部被清除时置真（记录本身不删除）。 */
+  revoked: boolean
+}
+
+/**
+ * 应用产出：把第二遍裁决落成基线标签 + 待审核快照，同步跑完返回。
+ * 失败时抛 `APPLY_NOT_READY` / `APPLY_CONFLICTS_PENDING` /
+ * `APPLY_NO_LABELABLE_TARGET` 等错误码。
+ */
+export async function runIncrementalApply(
+  projectId: number,
+  analysisId: number,
+): Promise<ApplyResult> {
+  const { data } = await client.post<ApplyResult>(
+    `${INCREMENTAL(projectId)}/analyses/${analysisId}/apply`,
+  )
+  return data
+}
+
+export async function listAppliedLabels(
+  projectId: number,
+  analysisId: number,
+): Promise<ApplyResult> {
+  const { data } = await client.get<ApplyResult>(
+    `${INCREMENTAL(projectId)}/analyses/${analysisId}/applied-labels`,
+  )
+  return data
+}

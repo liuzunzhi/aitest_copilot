@@ -98,6 +98,10 @@ const CODE_TEXT: Record<string, string> = {
   CONFLICT_NOT_FOUND: '冲突记录不存在',
   CONFLICT_ALREADY_RESOLVED: '该冲突已完成裁决，不能重复处理',
   INVALID_CONFLICT_RESOLUTION: '裁决参数不合法：确认需选择标签，驳回不带标签',
+  /* 增量分析第三期（产出段） */
+  APPLY_NOT_READY: '第二遍尚未成功，不能应用产出',
+  APPLY_CONFLICTS_PENDING: '仍有待裁决的冲突，请先完成裁决再应用产出',
+  APPLY_NO_LABELABLE_TARGET: '没有可落标签的变更 / 受影响目标',
 }
 
 /**
