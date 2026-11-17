@@ -18,6 +18,8 @@ from app.common.clock import FixedClock
 from app.common.config import get_settings
 from app.common.security import hash_password
 from app.models.application import ProjectApplication
+from app.models.baseline import BaselineRevision
+from app.models.incremental import PromptTemplate
 from app.models.project import Project, ProjectMember
 from app.models.system import AuditLog
 from app.models.user import User
@@ -45,6 +47,7 @@ DOCUMENTS = "/api/projects/{project_id}/documents"
 ACTIVATE = DOCUMENTS + "/{document_id}/versions/{version_id}/activate"
 VOID = DOCUMENTS + "/{document_id}/versions/{version_id}/void"
 BASELINES = "/api/projects/{project_id}/baselines"
+INCREMENTAL = "/api/projects/{project_id}/incremental"
 
 
 @pytest.fixture(autouse=True)
@@ -648,6 +651,41 @@ def _baseline_retention_update(client: TestClient, db: Session, monkeypatch) -> 
     assert response.status_code == 200, response.text
 
 
+def _incremental_analysis_create(
+    client: TestClient, db: Session, monkeypatch
+) -> None:
+    """发起增量分析（05）：文档版本生效 + 审核通过的快照 + 种子模板。"""
+    project, _, headers, body = _uploaded(client, db)
+    response = client.post(
+        ACTIVATE.format(
+            project_id=project.id,
+            document_id=body["document"]["id"],
+            version_id=body["version"]["id"],
+        ),
+        headers=headers,
+    )
+    assert response.status_code == 200, response.text
+
+    revision = BaselineRevision(project_id=project.id, status="approved")
+    db.add(revision)
+    db.flush()
+    template = db.scalar(
+        select(PromptTemplate).where(PromptTemplate.task_type == "incremental")
+    )
+    assert template is not None
+
+    response = client.post(
+        INCREMENTAL.format(project_id=project.id) + "/analyses",
+        json={
+            "template_id": template.id,
+            "baseline_revision_id": revision.id,
+            "document_version_id": body["version"]["id"],
+        },
+        headers=headers,
+    )
+    assert response.status_code == 201, response.text
+
+
 SCENARIOS = {
     "register.submit": _register,
     "login.success": _login_success,
@@ -693,6 +731,7 @@ SCENARIOS = {
     "baseline.revision.reject": _baseline_revision_reject,
     "baseline.snapshot.delete": _baseline_snapshot_delete,
     "baseline.retention.update": _baseline_retention_update,
+    "incremental.analysis.create": _incremental_analysis_create,
 }
 
 

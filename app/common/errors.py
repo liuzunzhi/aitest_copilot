@@ -482,6 +482,73 @@ class SnapshotReferenced(AppError):
     code = "SNAPSHOT_REFERENCED"
 
 
+class IncrementalAnalysisNotFound(AppError):
+    """AC-81：分析记录不存在或不属于该项目。"""
+
+    status_code = 404
+    code = "INCREMENTAL_ANALYSIS_NOT_FOUND"
+
+
+class BaselineRevisionRequired(AppError):
+    """AC-78：发起分析必须指定一份审核通过的基线快照。"""
+
+    status_code = 400
+    code = "BASELINE_REVISION_REQUIRED"
+
+
+class NoActiveDocumentVersion(AppError):
+    """AC-78：文档版本不存在或不属于该项目。"""
+
+    status_code = 400
+    code = "NO_ACTIVE_DOCUMENT_VERSION"
+
+
+class DocumentVersionNotAnalyzable(AppError):
+    """AC-78：文档版本存在但不是生效版本，无法比对。"""
+
+    status_code = 400
+    code = "DOCUMENT_VERSION_NOT_ANALYZABLE"
+
+
+class TemplateNotFound(AppError):
+    """AC-78：提示词模板不存在。"""
+
+    status_code = 404
+    code = "TEMPLATE_NOT_FOUND"
+
+
+class TemplateDisabled(AppError):
+    """AC-78：提示词模板已停用。"""
+
+    status_code = 409
+    code = "TEMPLATE_DISABLED"
+
+
+class InvalidSplitGranularity(AppError):
+    """AC-78：本期只支持 `chapter` 切分粒度。"""
+
+    status_code = 400
+    code = "INVALID_SPLIT_GRANULARITY"
+
+
+class LLMCallFailed(AppError):
+    """AC-81：模型调用抛错，整次分析置为 failed。
+
+    同步执行下立即返回 502，不让前端干等；第二期接后台队列后
+    同一错误码仍可用于标记失败原因。
+    """
+
+    status_code = 502
+    code = "LLM_CALL_FAILED"
+
+
+class LLMOutputInvalid(AppError):
+    """AC-81：模型返回不是合法 JSON，或缺少 `conclusions` 字段。"""
+
+    status_code = 502
+    code = "LLM_OUTPUT_INVALID"
+
+
 def install_error_handlers(app: FastAPI) -> None:
     """把 AppError 统一渲染成 {"code","message",**extra}。"""
 
@@ -504,6 +571,7 @@ __all__ = [
     "ApplyDisabled",
     "CaptchaInvalid",
     "CaptchaRequired",
+    "BaselineRevisionRequired",
     "CannotChangeOwnRole",
     "CannotRemoveSelf",
     "ClearNoteRequired",
@@ -511,6 +579,7 @@ __all__ = [
     "ContactTaken",
     "DocumentParseFailed",
     "DocumentTooLarge",
+    "DocumentVersionNotAnalyzable",
     "DuplicateApplication",
     "DuplicateFeaturePointName",
     "DuplicateFunctionName",
@@ -520,6 +589,7 @@ __all__ = [
     "FeaturePointNotFound",
     "Forbidden",
     "FunctionNotFound",
+    "IncrementalAnalysisNotFound",
     "InvalidApplicationStatus",
     "InvalidClearReason",
     "InvalidCredentials",
@@ -532,14 +602,18 @@ __all__ = [
     "InvalidResetCode",
     "InvalidReviewStatus",
     "InvalidRoleAssignment",
+    "InvalidSplitGranularity",
     "InvalidStatus",
     "InvalidVersionStatus",
+    "LLMCallFailed",
+    "LLMOutputInvalid",
     "LabelAlreadyCleared",
     "LabelNotFound",
     "LastProjectAdmin",
     "MemberNotFound",
     "ModuleNotEmpty",
     "ModuleNotFound",
+    "NoActiveDocumentVersion",
     "NotApplicationOwner",
     "NotProjectAdmin",
     "NotProjectMember",
@@ -554,6 +628,8 @@ __all__ = [
     "SelfApprovalForbidden",
     "SnapshotNotFound",
     "SnapshotReferenced",
+    "TemplateDisabled",
+    "TemplateNotFound",
     "TokenExpired",
     "TokenRevoked",
     "TraceFieldsReadOnly",

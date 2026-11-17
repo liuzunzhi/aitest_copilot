@@ -35,6 +35,9 @@ class Settings(BaseSettings):
     # 单个上传文件上限，默认 10MB
     doc_max_bytes: int = Field(default=10 * 1024 * 1024, gt=0)
 
+    # 增量分析单章节 Prompt 的字符上限，超出截断正文并记 WARN
+    incremental_max_input_chars: int = Field(default=8000, gt=0)
+
 
 @lru_cache
 def get_settings() -> Settings:
