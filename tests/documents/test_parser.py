@@ -164,7 +164,7 @@ def test_ac_52_docx_without_heading_single_chapter():
 @pytest.mark.parametrize(
     ("file_name", "data", "error"),
     [
-        ("需求.pdf", b"%PDF-1.4", UnsupportedDocType),
+        ("需求.xlsx", b"PK", UnsupportedDocType),
         ("需求.md", b"", EmptyDocument),
         ("需求.md", b"   \n\n", EmptyDocument),
         ("需求.docx", b"not a docx", DocumentParseFailed),

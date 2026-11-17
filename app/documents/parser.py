@@ -4,6 +4,9 @@
 
 章节归属规则：`content` 只收「该标题到下一个标题之间」的正文，
 子章节正文归子节点——这样树形预览展开时不会重复展示同一段文字。
+
+PDF（T84-PDF）走另一套提取逻辑（见 `app/documents/pdf.py`），
+但**建树复用同一个 `_TreeBuilder`**，所以三种格式的章节树天然同构。
 """
 
 from __future__ import annotations
@@ -18,8 +21,15 @@ from docx.table import Table
 from docx.text.paragraph import Paragraph
 
 from app.common.errors import DocumentParseFailed, EmptyDocument, UnsupportedDocType
+from app.documents.pdf import (
+    PdfLine,
+    extract_lines,
+    heading_level,
+    heading_levels,
+    is_heading,
+)
 
-SUPPORTED_SUFFIXES = frozenset({".md", ".markdown", ".txt", ".docx"})
+SUPPORTED_SUFFIXES = frozenset({".md", ".markdown", ".txt", ".docx", ".pdf"})
 
 _MD_HEADING_RE = re.compile(r"^(#{1,6})[ \t]+(.+?)\s*$")
 _DOCX_HEADING_RE = re.compile(r"^(?:Heading|标题)\s*([1-6])$")
@@ -99,6 +109,8 @@ def parse(file_name: str, data: bytes) -> list[ChapterNode]:
         raise EmptyDocument()
     if suffix == ".docx":
         return _parse_docx(data)
+    if suffix == ".pdf":
+        return _parse_pdf(data)
     return _parse_text(_decode(data))
 
 
@@ -164,6 +176,41 @@ def _parse_docx(data: bytes) -> list[ChapterNode]:
 
     if not builder.roots and not "".join(builder.preamble).strip():
         raise EmptyDocument()
+    return builder.build()
+
+
+def _clean_heading(text: str) -> str:
+    """标题去空白。
+
+    PDF 的标题里常混着排版用的空格（`第一章 引言`），但正文里的空格是有意义的
+    （`APP Application` 不能粘成 `APPApplication`）。标题整体缩掉空格、
+    内部多余空格压成一个，标题读起来才干净。
+    """
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def _parse_pdf(data: bytes) -> list[ChapterNode]:
+    """PDF：按字号 + 编号切章节，复用 `_TreeBuilder` 建树。
+
+    表格文字在提取阶段就按横向间隙切成了 `a | b` 的形式（见 `pdf.py`），
+    与 docx 的表格处理同构——这里不需要再单独跑一遍表格识别
+    （那会与正文流重复，表格内容会出现在章节里两次）。
+    """
+    lines = extract_lines(data)
+    levels = heading_levels(lines)
+
+    builder = _TreeBuilder()
+    for line in lines:
+        if is_heading(line, levels):
+            builder.add_heading(heading_level(line, levels), _clean_heading(line.text))
+        else:
+            builder.add_text(line.text)
+
+    # 一个标题都没切出来：这份 PDF 没有可识别的层级（扫描件、纯正文排版等），
+    # 降级成整文单章——与「txt 无标题整文单章」同一口径，不报错。
+    if not builder.roots:
+        if not "".join(builder.preamble).strip():
+            raise EmptyDocument()
     return builder.build()
 
 

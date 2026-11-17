@@ -303,11 +303,11 @@ export default function ProjectDocumentsTab({
         >
           上传文档
         </Button>
-        <Typography.Text type="secondary">支持 .md / .docx / .txt，单个不超过 10MB</Typography.Text>
+        <Typography.Text type="secondary">支持 .md / .docx / .txt / .pdf，单个不超过 10MB</Typography.Text>
         <input
           ref={fileRef}
           type="file"
-          accept=".md,.docx,.txt"
+          accept=".md,.docx,.txt,.pdf"
           data-testid="doc-file-input"
           style={{ display: 'none' }}
           onChange={pickFile}
@@ -345,7 +345,7 @@ export default function ProjectDocumentsTab({
           <input
             ref={versionFileRef}
             type="file"
-            accept=".md,.docx,.txt"
+            accept=".md,.docx,.txt,.pdf"
             data-testid="version-file-input"
             style={{ display: 'none' }}
             onChange={pickVersionFile}

@@ -43,6 +43,20 @@ def _name(prefix: str) -> str:
     return f"e2e-{prefix}-{uuid.uuid4().hex[:6]}"
 
 
+def _sample_pdf() -> bytes:
+    """现场拼一个最小 PDF——e2e 不往仓库塞二进制夹具。"""
+    from tests.documents.helpers import make_pdf
+
+    return make_pdf(
+        [
+            [("Chapter 1 Payment", 22, 72)],
+            [("payment overview", 10, 72)],
+            [("1.1 Refund", 16, 72)],
+            [("refund body", 10, 72)],
+        ]
+    )
+
+
 def _open_documents(page: Page, api, prefix: str) -> dict:
     project = api.create_project(_name(prefix))
     page.reload()
@@ -198,17 +212,35 @@ def test_ac_54_new_version_archives_old_and_baseline_refreshes(
     shot(admin_page, "baseline-refreshed")
 
 
-@pytest.mark.task("T54")
-def test_ac_50_pdf_rejected_with_chinese_message(admin_page: Page, api, shot) -> None:
+@pytest.mark.task("T84PDF")
+def test_ac_119_pdf_upload_succeeds(admin_page: Page, api, shot) -> None:
+    """PDF 现在受支持：上传后文档出现在列表里。"""
     _open_documents(admin_page, api, "pdf")
 
     admin_page.get_by_test_id("doc-file-input").set_input_files(
-        {"name": "需求.pdf", "mimeType": "application/pdf", "buffer": b"%PDF-1.4 fake"}
+        {
+            "name": "需求说明.pdf",
+            "mimeType": "application/pdf",
+            "buffer": _sample_pdf(),
+        }
     )
 
-    expect(admin_page.locator(".ant-message")).to_contain_text("只支持 .md / .docx / .txt")
+    expect(admin_page.get_by_role("row").filter(has_text="需求说明")).to_be_visible()
+    shot(admin_page, "pdf-uploaded")
+
+
+@pytest.mark.task("T54")
+def test_ac_50_unsupported_type_rejected(admin_page: Page, api, shot) -> None:
+    """未知扩展名仍被拒，提示只支持那几种。"""
+    _open_documents(admin_page, api, "unsupported")
+
+    admin_page.get_by_test_id("doc-file-input").set_input_files(
+        {"name": "需求.xlsx", "mimeType": "application/vnd.ms-excel", "buffer": b"PK\x03\x04"}
+    )
+
+    expect(admin_page.locator(".ant-message")).to_contain_text("只支持 .md / .docx / .txt / .pdf")
     expect(admin_page.get_by_role("row").filter(has_text="需求")).to_have_count(0)
-    shot(admin_page, "pdf-rejected")
+    shot(admin_page, "unsupported-rejected")
 
 
 @pytest.mark.task("T54")

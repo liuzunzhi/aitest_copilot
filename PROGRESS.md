@@ -13,19 +13,40 @@
 
 - [x] 01-auth (登录)
 - [x] 02-projects (项目与申请)
-- [x] 03-documents (文档解析)
+- [x] 03-documents (文档解析) —— **已完成（含 T84-PDF：PDF 解析支持）**
 - [x] 04-baseline (基线管理、快照、标签) —— **已完成（含 T67 收尾）**
 - [x] 05-increment-analysis (增量分析) —— **第一期（T68~T70）+ 第二期（T71~T78）+ 第三期 T79~T83 全部完成**
-- [ ] 06 及后续模块 —— ****[TBD 待定，严禁 AI 擅自规划]****
+- [ ] 06-real-llm (真实大模型接入与提示词模板管理) —— **进行中：T84-PDF 已完成，下一个 T84**
 
 ## 3. 当前冲刺任务（⚠️ 务必先做这个）
 
-**当前目标**：05 增量分析——**第三期（产出段）已完成（T79~T83）**，
-等待用户确认后再规划 05 第四期（真实模型接入）或前置修复项。
+**当前目标**：06 真实大模型接入 —— **T84-PDF 已完成（排头兵）**，下一步 T84
+（配置落库 + 密钥加密 + 动态 Provider + JSON 容错解析）。
 
-> 第三期范围：把第二遍裁决落成基线标签 + 待审核快照；仍零真实网络请求、
-> 不写 `unchanged` 标签、不自动批准快照、**不物理删除任何标签行**、
-> **不改 `app/baselines/` 里的任何现存代码**。
+> **06 期红线（用户 2026-11-17 裁决）**：
+> - 不做 Skill 双轨制 / Token 计费 / 不碰自动化执行；
+> - API Key 绝不明文落库，不出现在响应 / 审计 / 日志 / 异常 / 运行日志；
+> - **不改 05 的判定逻辑与业务语义**——但**允许且必须**把 05 两处
+>   `json.loads` 换成容错解析入口 `parse_llm_json`（真实模型必然返回
+>   Markdown 围栏的 JSON，不容错则整次分析直接 502）；
+> - 不做模板新建 / 删除（只做列表 + 编辑）；
+> - 不引入无超时的网络调用；**任何测试不允许产生真实 socket**。
+>
+> **任务顺序**：`T84-PDF → T84 → T85 → T86 → T87`。
+> T84-PDF 是 06 的**前置排头兵**（T87 验收要用真实 `.pdf` 走端到端）。
+>
+> **真实联调分两层**：
+> - **L1 自动化**（进 CI，零 socket）：真实 `.pdf`/`.docx` + `httpx.MockTransport`
+>   返回**带 Markdown 围栏的 JSON**，一条用例同时覆盖 PDF 与容错；
+> - **L2 人工**（不计入 pytest）：真实 DeepSeek（API Key 走系统设置页存
+>   `llm_providers` 表，**不写 `.env`**）+ 真实文档。
+
+### T84-PDF 已完成（03 模块支持 PDF）
+
+> 范围：`pdfplumber` 纯文本提取 + 字号/加粗/编号规则切章节 + 表格还原成
+> `a | b` + 扫描件整文降级；**不改 `app/documents/service.py` 与
+> `app/common/errors.py`**（章节落库口径不变，`UNSUPPORTED_DOC_TYPE`
+> 回归「未知扩展名」语义）。
 
 ### 第二期范围（已完成，不可扩大）
 
@@ -61,13 +82,15 @@
 
 | 项 | 值 |
 |---|---|
-| 后端全量 pytest | **626 passed**（串行；T83 收尾复核） |
-| e2e | **36 passed**（含增量分析第一期 2 条 + 第二期 3 条 + 第三期 2 条），一条命令 `.\.venv\Scripts\python.exe scripts\run_e2e.py`（8001/5174 + `aitest_copilot_e2e`） |
+| 后端全量 pytest | **636 passed**（串行；T84-PDF 收尾复核，基线 626 + 新增 10 条） |
+| e2e | **37 passed**（含增量分析第一期 2 条 + 第二期 3 条 + 第三期 2 条 + PDF 1 条），一条命令 `.\.venv\Scripts\python.exe scripts\run_e2e.py`（8001/5174 + `aitest_copilot_e2e`） |
 | 前端构建 | `npm run build`（`web/` 目录，端口 5173，代理到 8000） |
 | 开跑前自检 | `.\.venv\Scripts\python.exe scripts\dev_check.py`（跑 e2e 时加 `--expect-db e2e`） |
 | 账号 | `admin` / `Admin12345` |
-| 迁移 head | `0016`（05 第三期：产出标签映射 + `apply_*` 列） |
+| 迁移 head | `0016`（06 期 T84 建 `0017`） |
 | 截图目录 | 仓库根 `.screenshots/`（`E2E_SCREENSHOT_DIR` 可覆盖） |
+| 运行时依赖 | `pdfplumber>=0.11`（T84-PDF 新增）；`httpx` / `cryptography` 在 T84 移入运行时 |
+| 环境变量 | `LLM_SECRET_KEY` 已写入本地 `.env`（随机生成，不入库）；`.env.example` 有说明 |
 
 ### ⚠️ 两个已知的坑（别重复踩）
 
@@ -150,13 +173,59 @@
 `npm run build` 通过；`run_e2e.py` 内联的 `dev_check --expect-db e2e` 通过；
 两个库迁移 head 均在 `0016`；AC-104 复核通过（全链路只有 `MockProvider`，零真实网络请求）。
 
+## 5.2 06 期 · T84-PDF 完成情况（2026-11-17）
+
+**做了什么**：03 模块支持 PDF 上传（`pdfplumber` 运行时依赖）。
+
+- [x] `app/documents/pdf.py`（新增）：逐页取**字符** → 按 top ±2pt 聚行 →
+      横向间隙切列（表格还原成 `a | b`）→ 字号分档 + 编号正则判标题。
+- [x] `app/documents/parser.py`：`SUPPORTED_SUFFIXES` 加 `.pdf`，
+      新增 `_parse_pdf`（复用 `_TreeBuilder`，章节树与 md/docx 同构）。
+- [x] `pyproject.toml`：`pdfplumber>=0.11` 进运行时依赖。
+- [x] 前端：`accept` 加 `.pdf`、提示文案加 `.pdf`、`UNSUPPORTED_DOC_TYPE` 文案改。
+- [x] 3 处既有测试期望值改：`test_parser.py`（PDF 不再是不支持类型，
+      改用 `.xlsx`）、`test_upload.py`（PDF 上传成功 + 损坏 PDF 报错）、
+      `test_documents_ui.py`（PDF 从「被拒」改成「上传成功」）。
+- [x] 新增 `tests/documents/test_pdf_parser.py`（8 条）+ 上传侧 2 条。
+- [x] `.env` 补 `LLM_SECRET_KEY`（随机生成），`.env.example` 补说明；
+      `.gitignore` 补注释并确认 `测试用的需求文档_不提交git/` 命中。
+
+**验证结果**：后端全量 **636 passed**（串行，exit 0）；e2e 全量 **37 passed**；
+`npm run build` 通过；迁移 head 仍在 `0016`（本期不动迁移）。
+
+**实现要点**：
+
+- **为什么用 `pdfplumber` 而不是 `pypdf`**：实测样本 PDF（8 页、2508 字、文本型），
+  `pdfplumber` 能拿到**字号**（`extract_words(extra_attrs=['size'])`）并还原表格；
+  `pypdf` 拿不到字号，PDF 就只能走「整文输入 + LLM 拆解」，复杂度与成本都上一个台阶。
+- **用字符而不是 `extract_words`**：`extract_words` 按空格切词，会**丢掉 PDF 里真实的
+  空格字符**——`APP Application` 会粘成 `APPApplication`，中英混排的需求文档里
+  这明显降低可读性。改用 `page.chars` 逐字符重建。
+- **标题判据是两条硬条件**：
+  ① 字号 > 正文字号（+0.6pt 缓冲）**且**命中编号正则；
+  ② 或 **加粗** **且**命中多级编号（有些文档的小节标题字号与正文相同，
+  只靠加粗区分，样本 PDF 的 `6.1WEB攻击防御手段` 就是这种）。
+  两条都要求命中编号正则——否则正文里的 `1. 防止SQL注入` 列表项会被误判成标题。
+- **编号正则刻意不匹配单级编号**（`1` / `2`）：`1. ` 是列表项的写法，
+  点后不是数字；`\d+(\.\d+)+` 只匹配 `1.1` / `2.4.2` 这类多级编号。
+  结尾用 `(?!\d)` 而不是 `\b`——`6.1WEB` 的数字与字母之间没有词边界。
+- **正文字号取非加粗行的众数**：标题行可能比正文行还多（目录页、短文档），
+  那时全量众数会被标题字号占据，导致「没有标题档」。
+- **表格不单独识别**：PDF 里表格的绝对坐标与正文行不在同一条「行」序列里，
+  单独跑 `find_tables()` 会与正文流**重复**（表格内容出现在章节里两次）。
+  改为在行内按横向间隙切列（正文实测间隙 ≤ 6pt，表格列间隙 ≥ 20pt，取 10pt）。
+- **扫描件降级**：提取不到任何文字 → 整文单章「全文」，**不报错**
+  （与「txt 无标题整文单章」同一口径）。OCR 明确留到后续期。
+
 ## 6. 待办（不属当前冲刺，等用户点头再做）
 
-- 05 第四期：真实模型供应商接入（密钥加密、运行日志表）
+- 06 期其余任务：T84（配置落库 + 加密 + Provider + JSON 容错）→
+  T85（配置与模板管理接口）→ T86（05 运行留痕 + 动态模板下拉）→
+  T87（前端系统设置页 + L1/L2 联调收尾）
+- PDF 扫描件 OCR（本期只做「无文字层 → 整文单章」降级）
+- PDF 表格结构化落库（本期还原成 `a | b` 文本行，与 docx 同构）
 - 05 第五期：模板管理 UI 与阈值回填（依赖基准集）
 - 修 `tests/projects/` 的 xdist flaky（断言未按项目隔离）
-- 03 的 PDF 解析（PRD 2.4.1 要求支持 pdf，当前只支持 md/docx/txt；需新增 `pypdf` 依赖，
-  并改写 AC-50 已通过的前台用例）
 - 前端「来源类型」筛选下拉值是 `'document'`，后端枚举是 `'document_derived'`——**真 bug**，
   选「文档解析」永远 0 条，且无测试覆盖
 - 标签清除原因 6 类枚举与 PRD 2.4.2 不符（`priority_changed` / `duplicate_label`

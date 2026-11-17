@@ -48,7 +48,7 @@ const CODE_TEXT: Record<string, string> = {
   INVALID_APPLICATION_STATUS: '该申请已处理，不能重复操作',
   INVALID_GLOBAL_ROLE: '角色不合法',
   FORBIDDEN: '没有权限执行该操作',
-  UNSUPPORTED_DOC_TYPE: '只支持 .md / .docx / .txt 文档',
+  UNSUPPORTED_DOC_TYPE: '只支持 .md / .docx / .txt / .pdf 文档',
   DOC_TOO_LARGE: '文档超过 10MB 上限',
   EMPTY_DOCUMENT: '文档没有可解析的内容',
   DOCUMENT_PARSE_FAILED: '文档解析失败，请检查文件是否损坏',

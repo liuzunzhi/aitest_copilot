@@ -12,9 +12,11 @@ from tests.documents.helpers import (
     SAMPLE_MD,
     add_member,
     login,
+    make_pdf,
     make_project,
     make_user,
     md_payload,
+    pdf_payload,
 )
 
 
@@ -94,7 +96,7 @@ def test_ac_49_upload_new_document(client: TestClient, db: Session, upload_root)
 
 
 def test_ac_50_unsupported_type(client: TestClient, db: Session, upload_root):
-    """PDF 暂不支持：400，且不落盘、不落库、不写审计。"""
+    """未知扩展名不支持：400，且不落盘、不落库、不写审计。"""
     user = make_user(db)
     project = make_project(db)
     add_member(db, project, user)
@@ -102,7 +104,7 @@ def test_ac_50_unsupported_type(client: TestClient, db: Session, upload_root):
 
     response = client.post(
         f"/api/projects/{project.id}/documents",
-        files={"file": ("需求.pdf", b"%PDF-1.4", "application/pdf")},
+        files={"file": ("需求.xlsx", b"PK\x03\x04", "application/vnd.ms-excel")},
         headers=headers,
     )
 
@@ -110,6 +112,64 @@ def test_ac_50_unsupported_type(client: TestClient, db: Session, upload_root):
     assert response.json()["code"] == "UNSUPPORTED_DOC_TYPE"
     assert _counts(db, project.id) == (0, 0, 0, 0)
     assert list(upload_root.rglob("*")) == []
+
+
+def test_ac_50_corrupted_pdf(client: TestClient, db: Session, upload_root):
+    """扩展名是 .pdf 但内容坏了：400 DOCUMENT_PARSE_FAILED，不留半成品。"""
+    user = make_user(db)
+    project = make_project(db)
+    add_member(db, project, user)
+    headers = login(client, user)
+
+    response = client.post(
+        f"/api/projects/{project.id}/documents",
+        files={"file": ("需求.pdf", b"%PDF-1.4 broken", "application/pdf")},
+        headers=headers,
+    )
+
+    assert response.status_code == 400
+    assert response.json()["code"] == "DOCUMENT_PARSE_FAILED"
+    assert _counts(db, project.id) == (0, 0, 0, 0)
+    assert list(upload_root.rglob("*")) == []
+
+
+def test_ac_119_upload_pdf_document(client: TestClient, db: Session, upload_root):
+    """PDF 上传成功：文档 + 版本 + 章节树都落库。"""
+    user = make_user(db)
+    project = make_project(db)
+    add_member(db, project, user)
+    headers = login(client, user)
+    data = make_pdf(
+        [
+            [("Chapter 1 Payment", 22, 72)],
+            [("payment overview", 10, 72)],
+            [("1.1 Refund", 16, 72)],
+            [("refund body", 10, 72)],
+        ]
+    )
+
+    response = client.post(
+        f"/api/projects/{project.id}/documents",
+        files=pdf_payload(data, name="需求说明.pdf"),
+        headers=headers,
+    )
+
+    assert response.status_code == 201, response.text
+    body = response.json()
+    assert body["document"]["name"] == "需求说明"
+    assert body["version"]["chapter_count"] == 2
+
+    version = db.get(DocumentVersion, body["version"]["id"])
+    chapters = db.scalars(
+        select(DocumentChapter)
+        .where(DocumentChapter.version_id == version.id)
+        .order_by(DocumentChapter.seq)
+    ).all()
+    assert [(c.title, c.level) for c in chapters] == [
+        ("Chapter 1 Payment", 1),
+        ("1.1 Refund", 2),
+    ]
+    assert "refund body" in chapters[1].content
 
 
 def test_ac_50_file_too_large(client: TestClient, db: Session, upload_root, monkeypatch):
