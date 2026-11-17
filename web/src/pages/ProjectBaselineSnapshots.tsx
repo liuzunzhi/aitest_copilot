@@ -46,6 +46,7 @@ const REVISION_STATUS_META: Record<string, { label: string; color: string }> = {
 const REF_SOURCE_LABELS: Record<string, string> = {
   baseline_function: '功能标签',
   baseline_feature_point: '功能点标签',
+  incremental_analysis: '增量分析',
 }
 
 interface Props {

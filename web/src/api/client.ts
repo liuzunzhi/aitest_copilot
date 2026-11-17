@@ -77,14 +77,20 @@ const CODE_TEXT: Record<string, string> = {
   REVIEW_COMMENT_REQUIRED: '驳回必须填写意见',
   SELF_APPROVAL_FORBIDDEN: '不能审核自己提交的基线',
   SNAPSHOT_NOT_FOUND: '基线快照不存在',
-  SNAPSHOT_REFERENCED: '该快照仍被标签引用，请先解除引用',
+  SNAPSHOT_REFERENCED: '该快照仍被引用，请先解除引用',
   TRACE_FIELDS_READONLY: '来源追溯字段只读，不能手工修改',
 }
+
+/**
+ * 这些错误码以后端返回的 message 为准——静态文案说不出「被什么引用」。
+ * 快照被引用时后端会区分「标签引用」与「增量分析引用」，用户要按提示去处理。
+ */
+const BACKEND_MESSAGE_CODES = new Set(['SNAPSHOT_REFERENCED'])
 
 export function errorMessage(error: unknown): string {
   if (axios.isAxiosError(error)) {
     const data = error.response?.data as { code?: string; message?: string } | undefined
-    if (data?.code && CODE_TEXT[data.code]) {
+    if (data?.code && CODE_TEXT[data.code] && !BACKEND_MESSAGE_CODES.has(data.code)) {
       return CODE_TEXT[data.code]
     }
     if (data?.message && data.message !== data.code) {

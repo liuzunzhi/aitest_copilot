@@ -433,7 +433,13 @@ export interface RetentionCandidate {
   id: number
   version_no: number
   referenced_count: number
-  refs: Array<{ target_id: number; target_name?: string; source_type: string }>
+  refs: Array<{
+    target_id: number
+    target_name?: string
+    source_type: string
+    label_type?: string
+    source_analysis_id?: number
+  }>
   created_at: string
 }
 
