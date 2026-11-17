@@ -549,6 +549,20 @@ class LLMOutputInvalid(AppError):
     code = "LLM_OUTPUT_INVALID"
 
 
+class InvalidChapterLink(AppError):
+    """AC-87：补链目标二选一不满足、章节不属该版本或引用自身。"""
+
+    status_code = 400
+    code = "INVALID_CHAPTER_LINK"
+
+
+class DuplicateChapterLink(AppError):
+    """AC-87：同一源章节同类型同目标的链接已存在。"""
+
+    status_code = 409
+    code = "DUPLICATE_CHAPTER_LINK"
+
+
 def install_error_handlers(app: FastAPI) -> None:
     """把 AppError 统一渲染成 {"code","message",**extra}。"""
 
@@ -581,6 +595,7 @@ __all__ = [
     "DocumentTooLarge",
     "DocumentVersionNotAnalyzable",
     "DuplicateApplication",
+    "DuplicateChapterLink",
     "DuplicateFeaturePointName",
     "DuplicateFunctionName",
     "DuplicateLabel",
@@ -591,6 +606,7 @@ __all__ = [
     "FunctionNotFound",
     "IncrementalAnalysisNotFound",
     "InvalidApplicationStatus",
+    "InvalidChapterLink",
     "InvalidClearReason",
     "InvalidCredentials",
     "InvalidDesiredRole",

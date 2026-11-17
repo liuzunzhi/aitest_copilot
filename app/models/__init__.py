@@ -13,6 +13,7 @@ from app.models.baseline import (
     BaselineModule,
     BaselineRevision,
 )
+from app.models.chapter_link import DocumentChapterLink
 from app.models.document import BaselineSnapshot, Document, DocumentChapter, DocumentVersion
 from app.models.incremental import (
     IncrementalAnalysis,
@@ -38,6 +39,7 @@ __all__ = [
     "BaselineSnapshot",
     "Document",
     "DocumentChapter",
+    "DocumentChapterLink",
     "DocumentVersion",
     "IncrementalAnalysis",
     "IncrementalConclusion",

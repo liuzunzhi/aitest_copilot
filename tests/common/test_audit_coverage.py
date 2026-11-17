@@ -19,6 +19,7 @@ from app.common.config import get_settings
 from app.common.security import hash_password
 from app.models.application import ProjectApplication
 from app.models.baseline import BaselineRevision
+from app.models.document import DocumentChapter
 from app.models.incremental import PromptTemplate
 from app.models.project import Project, ProjectMember
 from app.models.system import AuditLog
@@ -48,6 +49,9 @@ ACTIVATE = DOCUMENTS + "/{document_id}/versions/{version_id}/activate"
 VOID = DOCUMENTS + "/{document_id}/versions/{version_id}/void"
 BASELINES = "/api/projects/{project_id}/baselines"
 INCREMENTAL = "/api/projects/{project_id}/incremental"
+CHAPTER_LINKS = (
+    DOCUMENTS + "/{document_id}/versions/{version_id}/links"
+)
 
 
 @pytest.fixture(autouse=True)
@@ -686,6 +690,31 @@ def _incremental_analysis_create(
     assert response.status_code == 201, response.text
 
 
+def _chapter_link_create(client: TestClient, db: Session, monkeypatch) -> None:
+    """05 第二期：人工补一条章节引用边。"""
+    project, _, headers, body = _uploaded(client, db)
+    chapter_id = db.scalar(
+        select(DocumentChapter.id)
+        .where(DocumentChapter.version_id == body["version"]["id"])
+        .limit(1)
+    )
+    assert chapter_id is not None
+    response = client.post(
+        CHAPTER_LINKS.format(
+            project_id=project.id,
+            document_id=body["document"]["id"],
+            version_id=body["version"]["id"],
+        ),
+        json={
+            "from_chapter_id": chapter_id,
+            "link_type": "mentions_entity",
+            "entity": "审计功能",
+        },
+        headers=headers,
+    )
+    assert response.status_code == 201, response.text
+
+
 SCENARIOS = {
     "register.submit": _register,
     "login.success": _login_success,
@@ -732,6 +761,7 @@ SCENARIOS = {
     "baseline.snapshot.delete": _baseline_snapshot_delete,
     "baseline.retention.update": _baseline_retention_update,
     "incremental.analysis.create": _incremental_analysis_create,
+    "document.chapter_link.create": _chapter_link_create,
 }
 
 
