@@ -16,6 +16,7 @@ from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from app.baselines.references import snapshot_references
 from app.baselines.schemas import trace_fields_in
 from app.common.audit import write_audit
 from app.common.deps import SYSTEM_ADMIN
@@ -1703,48 +1704,29 @@ def update_retention(
 
 
 def _snapshot_references(session: Session, revision_id: int) -> list[dict]:
-    """快照的引用来源。本期只查标签引用。
+    """快照的引用来源。
 
-    增量分析记录、测试点、用例、测试报告尚未上线，
-    对应模块落地时在这里补来源类型。
+    标签、增量分析（以及后续的测试点、用例、报告）各类来源统一在
+    `app/baselines/references.py` 里按「来源解析器」拆开，
+    新增来源只写解析器、不动这里。
 
     返回带 `target_name`：用户认对象靠业务名称，不靠内部 ID。
     """
-    rows = session.execute(
-        select(BaselineLabel, BaselineLabel.target_type, BaselineLabel.target_id)
-        .where(BaselineLabel.revision_id == revision_id, BaselineLabel.status == "active")
-    ).all()
-    if not rows:
-        return []
+    return snapshot_references(session, revision_id)
 
-    function_ids = [target_id for _, target_type, target_id in rows if target_type == "function"]
-    point_ids = [target_id for _, target_type, target_id in rows if target_type == "feature_point"]
 
-    names: dict[tuple[str, int], str] = {}
-    if function_ids:
-        for function_id, function_name in session.execute(
-            select(BaselineFunction.id, BaselineFunction.name).where(
-                BaselineFunction.id.in_(function_ids)
-            )
-        ).all():
-            names[("function", function_id)] = function_name
-    if point_ids:
-        for point_id, point_name in session.execute(
-            select(BaselineFeaturePoint.id, BaselineFeaturePoint.name).where(
-                BaselineFeaturePoint.id.in_(point_ids)
-            )
-        ).all():
-            names[("feature_point", point_id)] = point_name
+def _referenced_message(refs: list[dict]) -> str:
+    """按引用来源给一句人话。
 
-    return [
-        {
-            "source_type": f"baseline_{target_type}",
-            "target_id": target_id,
-            "target_name": names.get((target_type, target_id), "已删除的对象"),
-            "label_type": label.label_type,
-        }
-        for label, target_type, target_id in rows
-    ]
+    只被标签引用时说「标签引用」；被增量分析引用时说「增量分析引用」；
+    混在一起时取标签那句——用户先要处理的是标签。
+    """
+    source_types = {ref.get("source_type", "") for ref in refs}
+    if source_types & {"baseline_function", "baseline_feature_point"}:
+        return "该快照仍被标签引用，清理前请先解除引用"
+    if "incremental_analysis" in source_types:
+        return "该快照仍被增量分析引用，清理前请先解除引用"
+    return "该快照仍被引用，清理前请先解除引用"
 
 
 def delete_revision(
@@ -1765,7 +1747,7 @@ def delete_revision(
     refs = _snapshot_references(session, revision_id)
     if refs:
         raise SnapshotReferenced(
-            "该快照仍被标签引用，清理前请先解除引用",
+            _referenced_message(refs),
             refs=refs,
             referenced_count=len(refs),
         )

@@ -471,9 +471,11 @@ class SnapshotNotFound(AppError):
 
 
 class SnapshotReferenced(AppError):
-    """AC-72：快照被标签引用，禁止删除。
+    """AC-72：快照被引用，禁止删除。
 
-    响应带 `refs`，前端据此提示「这份快照被 N 处标签引用，清理前请先解除引用」。
+    响应带 `refs`，前端据此提示「这份快照被 N 处引用，清理前请先解除引用」。
+    `refs` 的来源不止标签——增量分析（以及后续的测试点、用例、报告）
+    同样会引用快照，各来源由 `app/baselines/references.py` 分别解析。
     """
 
     status_code = 409
