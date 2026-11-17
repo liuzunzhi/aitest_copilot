@@ -15,13 +15,13 @@
 - [x] 02-projects (项目与申请)
 - [x] 03-documents (文档解析)
 - [x] 04-baseline (基线管理、快照、标签) —— **已完成（含 T67 收尾）**
-- [x] 05-increment-analysis (增量分析) —— **第一期（T68~T70）+ 第二期（T71~T78）+ 第三期 T79~T82 完成（T83 待做）**
+- [x] 05-increment-analysis (增量分析) —— **第一期（T68~T70）+ 第二期（T71~T78）+ 第三期 T79~T83 全部完成**
 - [ ] 06 及后续模块 —— ****[TBD 待定，严禁 AI 擅自规划]****
 
 ## 3. 当前冲刺任务（⚠️ 务必先做这个）
 
-**当前目标**：05 增量分析——**第三期（产出段）进行中**，
-T82（前端应用产出区块 + 2 条 e2e）已完成，下一步 T83（收尾验证与文档回填）。
+**当前目标**：05 增量分析——**第三期（产出段）已完成（T79~T83）**，
+等待用户确认后再规划 05 第四期（真实模型接入）或前置修复项。
 
 > 第三期范围：把第二遍裁决落成基线标签 + 待审核快照；仍零真实网络请求、
 > 不写 `unchanged` 标签、不自动批准快照、**不物理删除任何标签行**、
@@ -61,7 +61,7 @@ T82（前端应用产出区块 + 2 条 e2e）已完成，下一步 T83（收尾�
 
 | 项 | 值 |
 |---|---|
-| 后端全量 pytest | **626 passed**（串行；T81 后） |
+| 后端全量 pytest | **626 passed**（串行；T83 收尾复核） |
 | e2e | **36 passed**（含增量分析第一期 2 条 + 第二期 3 条 + 第三期 2 条），一条命令 `.\.venv\Scripts\python.exe scripts\run_e2e.py`（8001/5174 + `aitest_copilot_e2e`） |
 | 前端构建 | `npm run build`（`web/` 目录，端口 5173，代理到 8000） |
 | 开跑前自检 | `.\.venv\Scripts\python.exe scripts\dev_check.py`（跑 e2e 时加 `--expect-db e2e`） |
@@ -131,7 +131,8 @@ T82（前端应用产出区块 + 2 条 e2e）已完成，下一步 T83（收尾�
       `list_applied_labels`（历史行可查 + `revoked` 派生）、两个路由与 3 个错误码；审计覆盖补 1 条
 - [x] T82 前端：`IncrementalApply.tsx`（状态 / 触发 / 产出标签表 / 撤销提示）挂进分析详情抽屉，
       `api/index.ts` 补两接口与类型、`client.ts` 补 3 个错误码中文
-- [ ] T83 收尾
+- [x] T83 收尾：后端全量 **626 passed**、e2e **36 passed**、构建通过、自检通过；
+      `验证约定.md` §5.6 与本文件计数回填，第三期收尾完成
 
 **T79 验证结果**：定向 15 passed；后端全量 **604 passed**（串行）；
 `alembic downgrade 0015 → upgrade head` 往返通过；两个库迁移 head 均在 `0016`。
@@ -145,9 +146,12 @@ T82（前端应用产出区块 + 2 条 e2e）已完成，下一步 T83（收尾�
 **T82 验证结果**：`npm run build` 通过；e2e 全量 **36 passed**
 （新增 `test_incremental_apply_ui.py` 2 条）；截图 `.screenshots/T82/`（3 张）。
 
+**T83 验证结果**：后端全量 **626 passed**（串行，exit 0）；e2e 全量 **36 passed**；
+`npm run build` 通过；`run_e2e.py` 内联的 `dev_check --expect-db e2e` 通过；
+两个库迁移 head 均在 `0016`；AC-104 复核通过（全链路只有 `MockProvider`，零真实网络请求）。
+
 ## 6. 待办（不属当前冲刺，等用户点头再做）
 
-- 05 第三期剩余任务：T83 收尾（见 `specs/05-incremental-analysis/tasks-phase3.md`）
 - 05 第四期：真实模型供应商接入（密钥加密、运行日志表）
 - 05 第五期：模板管理 UI 与阈值回填（依赖基准集）
 - 修 `tests/projects/` 的 xdist flaky（断言未按项目隔离）
