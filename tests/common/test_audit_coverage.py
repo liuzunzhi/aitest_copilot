@@ -693,6 +693,50 @@ def _incremental_analysis_create(
     assert response.status_code == 201, response.text
 
 
+def _incremental_second_pass_run(client: TestClient, db: Session, monkeypatch) -> None:
+    """05 第二期：跑第二遍全局裁决。"""
+    project, _, headers, body = _uploaded(client, db)
+    response = client.post(
+        ACTIVATE.format(
+            project_id=project.id,
+            document_id=body["document"]["id"],
+            version_id=body["version"]["id"],
+        ),
+        headers=headers,
+    )
+    assert response.status_code == 200, response.text
+
+    revision = BaselineRevision(project_id=project.id, status="approved")
+    db.add(revision)
+    db.flush()
+    template = db.scalar(
+        select(PromptTemplate).where(
+            PromptTemplate.task_type == "incremental",
+            PromptTemplate.name == "增量分析·第一遍·章节局部",
+        )
+    )
+    assert template is not None
+
+    response = client.post(
+        INCREMENTAL.format(project_id=project.id) + "/analyses",
+        json={
+            "template_id": template.id,
+            "baseline_revision_id": revision.id,
+            "document_version_id": body["version"]["id"],
+        },
+        headers=headers,
+    )
+    assert response.status_code == 201, response.text
+    analysis_id = response.json()["id"]
+
+    response = client.post(
+        INCREMENTAL.format(project_id=project.id)
+        + f"/analyses/{analysis_id}/second-pass",
+        headers=headers,
+    )
+    assert response.status_code == 200, response.text
+
+
 def _chapter_link_create(client: TestClient, db: Session, monkeypatch) -> None:
     """05 第二期：人工补一条章节引用边。"""
     project, _, headers, body = _uploaded(client, db)
@@ -764,6 +808,7 @@ SCENARIOS = {
     "baseline.snapshot.delete": _baseline_snapshot_delete,
     "baseline.retention.update": _baseline_retention_update,
     "incremental.analysis.create": _incremental_analysis_create,
+    "incremental.second_pass.run": _incremental_second_pass_run,
     "document.chapter_link.create": _chapter_link_create,
 }
 

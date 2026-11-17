@@ -11,13 +11,20 @@
 `error_message` + `finished_at`，**立刻返回/抛出**，不进入下一章、不做重试。
 此前章节的结论通过 `on_chapter` 回调已逐章落库，保留在事务里便于排查。
 
-审计：`incremental.analysis.create`，遵循「改数据 → flush → write_audit → commit」，
-`write_audit` 内部不 commit。
+第二遍（第二期）同样同步执行，状态写在 `second_pass_*` 列上，不覆盖第一遍：
+
+    第二遍校验 → second_pass_status='running' → 2b-1/2b-2/2b-3 → 回填统计
+
+失败时置 `second_pass_status='failed'` 并留 `second_pass_error_*`，
+已产出的裁决 / 冲突保留在库里便于排查。
+
+审计：`incremental.analysis.create` / `incremental.second_pass.run`，
+遵循「改数据 → flush → write_audit → commit」，`write_audit` 内部不 commit。
 """
 
 from datetime import datetime, timezone
 
-from sqlalchemy import select
+from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 
 from app.common.audit import write_audit
@@ -34,25 +41,33 @@ from app.common.errors import (
     NotProjectMember,
     ProjectArchived,
     ProjectNotFound,
+    SecondPassConflictsPending,
+    SecondPassNotReady,
+    SecondPassTemplateMissing,
     TemplateDisabled,
     TemplateNotFound,
 )
-from app.incremental import engine
+from app.incremental import engine, links, second_pass
 from app.incremental.engine import ChapterResult, PassResult
 from app.incremental.schemas import AnalysisCreate
 from app.llm.provider import LLMProvider
 from app.models.baseline import BaselineRevision
+from app.models.chapter_link import DocumentChapterLink
 from app.models.document import Document, DocumentVersion
 from app.models.incremental import (
     SPLIT_GRANULARITIES,
     IncrementalAnalysis,
     IncrementalConclusion,
+    IncrementalConflict,
+    IncrementalDecision,
     PromptTemplate,
 )
 from app.models.project import Project, ProjectMember
 from app.models.user import User
 
 DEFAULT_GRANULARITY = "chapter"
+# 第二遍模板按名字前缀取：与第一遍同属 task_type='incremental'，不能用 task_type 区分
+SECOND_PASS_TEMPLATE_PREFIX = "增量分析·第二遍"
 
 
 def _now() -> datetime:
@@ -460,10 +475,343 @@ def list_conclusions(
     return _page(items, page, page_size)
 
 
+# ------------------------------------------------------------ 第二遍
+
+
+def _load_second_pass_template(session: Session) -> PromptTemplate:
+    """第二遍模板：按名字前缀取 active 的最新一条。"""
+    template = session.scalar(
+        select(PromptTemplate)
+        .where(
+            PromptTemplate.name.like(f"{SECOND_PASS_TEMPLATE_PREFIX}%"),
+            PromptTemplate.status == "active",
+        )
+        .order_by(PromptTemplate.version_no.desc(), PromptTemplate.id.desc())
+    )
+    if template is None:
+        raise SecondPassTemplateMissing("第二遍提示词模板缺失或已停用")
+    return template
+
+
+def _pending_conflict_count(session: Session, analysis_id: int) -> int:
+    return (
+        session.execute(
+            select(func.count())
+            .select_from(IncrementalConflict)
+            .where(
+                IncrementalConflict.analysis_id == analysis_id,
+                IncrementalConflict.status == "pending",
+            )
+        ).scalar_one()
+        or 0
+    )
+
+
+def _second_pass_stats(
+    *,
+    template: PromptTemplate,
+    link_count: int,
+    result: second_pass.SecondPassResult,
+    provider_name: str,
+) -> dict:
+    return {
+        "template_id": template.id,
+        "template_version": template.version_no,
+        "provider": provider_name,
+        "chapter_link_count": link_count,
+        "point_count": result.point_count,
+        "decision_count": len(result.decisions),
+        "new_count": sum(
+            1 for item in result.conflicts if item.conflict_type == "new"
+        ),
+        "conflict_count": sum(
+            1 for item in result.conflicts if item.conflict_type == "conflict"
+        ),
+        "propagated_count": result.propagated_count,
+        "failed_target_type": None,
+        "failed_target_id": None,
+    }
+
+
+def _clear_second_pass_rows(session: Session, analysis_id: int) -> None:
+    """重跑前先删本分析的旧裁决与冲突，结果不累加。"""
+    session.execute(
+        delete(IncrementalDecision).where(
+            IncrementalDecision.analysis_id == analysis_id
+        )
+    )
+    session.execute(
+        delete(IncrementalConflict).where(
+            IncrementalConflict.analysis_id == analysis_id
+        )
+    )
+    session.flush()
+
+
+def _ensure_rule_links(
+    session: Session, *, analysis: IncrementalAnalysis, actor: User
+) -> int:
+    """该版本还没有规则边时自动抽一次；已有则不重抽（不覆盖人工调整过的图）。"""
+    existing = session.execute(
+        select(func.count())
+        .select_from(DocumentChapterLink)
+        .where(
+            DocumentChapterLink.version_id == analysis.document_version_id,
+            DocumentChapterLink.source == "rule",
+        )
+    ).scalar_one()
+    if existing:
+        return int(existing)
+
+    links.extract_links(
+        session,
+        project_id=analysis.project_id,
+        document_id=analysis.document_id,
+        version_id=analysis.document_version_id,
+        actor=actor,
+    )
+    return int(
+        session.execute(
+            select(func.count())
+            .select_from(DocumentChapterLink)
+            .where(
+                DocumentChapterLink.version_id == analysis.document_version_id,
+                DocumentChapterLink.source == "rule",
+            )
+        ).scalar_one()
+    )
+
+
+def _persist_second_pass(
+    session: Session, analysis: IncrementalAnalysis, result: second_pass.SecondPassResult
+) -> None:
+    decisions = [
+        IncrementalDecision(
+            analysis_id=analysis.id,
+            target_type=item.target_type,
+            target_id=item.target_id,
+            target_name=item.target_name,
+            decision=item.decision,
+            confidence=item.confidence,
+            rationale=item.rationale,
+            evidence=item.evidence,
+        )
+        for item in result.decisions
+    ]
+    conflicts = [
+        IncrementalConflict(
+            analysis_id=analysis.id,
+            target_type=item.target_type,
+            target_id=item.target_id,
+            target_name=item.target_name,
+            conflict_type=item.conflict_type,
+            candidates=item.candidates,
+        )
+        for item in result.conflicts
+    ]
+    if decisions:
+        session.add_all(decisions)
+    if conflicts:
+        session.add_all(conflicts)
+    session.flush()
+
+
+def run_second_pass(
+    session: Session,
+    *,
+    project_id: int,
+    analysis_id: int,
+    actor: User,
+    provider: LLMProvider,
+) -> IncrementalAnalysis:
+    """触发第二遍。固定校验顺序见 spec-phase2 §5.2。
+
+    1. 项目 404 / 归档 409 / 角色 403；
+    2. 分析记录存在且属本项目 404；
+    3. 第一遍 `succeeded`，否则 409 `SECOND_PASS_NOT_READY`；
+    4. 第二遍模板存在且 active，否则 409 `SECOND_PASS_TEMPLATE_MISSING`；
+    5. 无待裁决冲突，否则 409 `SECOND_PASS_CONFLICTS_PENDING`；
+    6. 跑 2b-1/2b-2/2b-3，回填统计与状态。
+    """
+    _ensure_writable_project(session, project_id)
+    _ensure_admin(session, project_id=project_id, actor=actor)
+
+    analysis = _load_analysis(session, project_id=project_id, analysis_id=analysis_id)
+    if analysis.status != "succeeded":
+        raise SecondPassNotReady("第一遍分析尚未成功，不能执行第二遍")
+
+    template = _load_second_pass_template(session)
+    if _pending_conflict_count(session, analysis.id):
+        raise SecondPassConflictsPending("仍有待人工裁决的冲突，请先完成裁决再重跑")
+
+    analysis.second_pass_template_id = template.id
+    analysis.second_pass_status = "running"
+    analysis.second_pass_error_code = None
+    analysis.second_pass_error_message = None
+    analysis.second_pass_started_at = _now()
+    analysis.second_pass_finished_at = None
+    session.flush()
+
+    link_count = 0
+    try:
+        link_count = _ensure_rule_links(session, analysis=analysis, actor=actor)
+        _clear_second_pass_rows(session, analysis.id)
+
+        index = second_pass.build_point_index(session, analysis)
+        result = second_pass.run_point_pass(
+            session,
+            analysis=analysis,
+            provider=provider,
+            template=template,
+            index=index,
+        )
+        second_pass.propagate_impacts(index, result)
+        _persist_second_pass(session, analysis, result)
+    except AppError as exc:
+        analysis.second_pass_status = "failed"
+        analysis.second_pass_error_code = exc.code[:64]
+        analysis.second_pass_error_message = (exc.message or exc.code)[:500]
+        analysis.second_pass_finished_at = _now()
+        analysis.second_pass_stats = _second_pass_stats(
+            template=template,
+            link_count=link_count,
+            result=second_pass.SecondPassResult(point_count=0, prompted_count=0),
+            provider_name=provider.name,
+        )
+        target_type = exc.extra.get("target_type")
+        target_id = exc.extra.get("target_id")
+        if target_type is not None:
+            analysis.second_pass_stats["failed_target_type"] = target_type
+        if target_id is not None:
+            analysis.second_pass_stats["failed_target_id"] = target_id
+        session.commit()
+        raise
+    except Exception as exc:  # 内部异常同样立刻失败，不让前端干等
+        analysis.second_pass_status = "failed"
+        analysis.second_pass_error_code = LLMCallFailed.code
+        analysis.second_pass_error_message = f"第二遍执行失败：{exc}"[:500]
+        analysis.second_pass_finished_at = _now()
+        session.commit()
+        raise LLMCallFailed("第二遍执行失败") from exc
+
+    analysis.second_pass_status = "succeeded"
+    analysis.second_pass_finished_at = _now()
+    analysis.second_pass_stats = _second_pass_stats(
+        template=template,
+        link_count=link_count,
+        result=result,
+        provider_name=provider.name,
+    )
+    session.flush()
+
+    write_audit(
+        session,
+        "incremental.second_pass.run",
+        actor_id=actor.id,
+        actor_role=actor.global_role,
+        project_id=project_id,
+        target_type="incremental_analysis",
+        target_id=analysis.id,
+        after_data={
+            "template_id": template.id,
+            "template_version": template.version_no,
+            "provider": provider.name,
+            "point_count": result.point_count,
+            "decision_count": len(result.decisions),
+            "conflict_count": len(result.conflicts),
+        },
+    )
+    session.commit()
+    return analysis
+
+
+def list_decisions(
+    session: Session,
+    *,
+    project_id: int,
+    analysis_id: int,
+    target_type: str | None = None,
+    decision: str | None = None,
+    page: int = 1,
+    page_size: int = 50,
+) -> dict:
+    """第二遍裁决列表（分页）。"""
+    _load_analysis(session, project_id=project_id, analysis_id=analysis_id)
+
+    query = select(IncrementalDecision).where(
+        IncrementalDecision.analysis_id == analysis_id
+    )
+    if target_type is not None:
+        query = query.where(IncrementalDecision.target_type == target_type)
+    if decision is not None:
+        query = query.where(IncrementalDecision.decision == decision)
+    rows = session.scalars(query.order_by(IncrementalDecision.id)).all()
+    items = [
+        {
+            "id": row.id,
+            "analysis_id": row.analysis_id,
+            "target_type": row.target_type,
+            "target_id": row.target_id,
+            "target_name": row.target_name,
+            "decision": row.decision,
+            "confidence": float(row.confidence) if row.confidence is not None else None,
+            "rationale": row.rationale,
+            "evidence": row.evidence,
+            "created_at": row.created_at,
+        }
+        for row in rows
+    ]
+    return _page(items, page, page_size)
+
+
+def list_conflicts(
+    session: Session,
+    *,
+    project_id: int,
+    analysis_id: int,
+    status: str | None = None,
+    conflict_type: str | None = None,
+    page: int = 1,
+    page_size: int = 50,
+) -> dict:
+    """第二遍待人工裁决队列（分页）。"""
+    _load_analysis(session, project_id=project_id, analysis_id=analysis_id)
+
+    query = select(IncrementalConflict).where(
+        IncrementalConflict.analysis_id == analysis_id
+    )
+    if status is not None:
+        query = query.where(IncrementalConflict.status == status)
+    if conflict_type is not None:
+        query = query.where(IncrementalConflict.conflict_type == conflict_type)
+    rows = session.scalars(query.order_by(IncrementalConflict.id)).all()
+    items = [
+        {
+            "id": row.id,
+            "analysis_id": row.analysis_id,
+            "target_type": row.target_type,
+            "target_id": row.target_id,
+            "target_name": row.target_name,
+            "conflict_type": row.conflict_type,
+            "candidates": row.candidates,
+            "status": row.status,
+            "resolved_label_type": row.resolved_label_type,
+            "resolved_by": row.resolved_by,
+            "resolved_at": row.resolved_at,
+            "created_at": row.created_at,
+        }
+        for row in rows
+    ]
+    return _page(items, page, page_size)
+
+
 __all__ = [
     "create_analysis",
     "ensure_readable",
     "get_analysis",
     "list_analyses",
+    "list_conflicts",
     "list_conclusions",
+    "list_decisions",
+    "run_second_pass",
 ]

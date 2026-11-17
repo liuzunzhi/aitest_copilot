@@ -563,6 +563,27 @@ class DuplicateChapterLink(AppError):
     code = "DUPLICATE_CHAPTER_LINK"
 
 
+class SecondPassNotReady(AppError):
+    """AC-88：第一遍还没成功，不能跑第二遍。"""
+
+    status_code = 409
+    code = "SECOND_PASS_NOT_READY"
+
+
+class SecondPassTemplateMissing(AppError):
+    """AC-88：第二遍模板不存在或已停用。"""
+
+    status_code = 409
+    code = "SECOND_PASS_TEMPLATE_MISSING"
+
+
+class SecondPassConflictsPending(AppError):
+    """AC-94：仍有待人工裁决的冲突，禁止重跑第二遍。"""
+
+    status_code = 409
+    code = "SECOND_PASS_CONFLICTS_PENDING"
+
+
 def install_error_handlers(app: FastAPI) -> None:
     """把 AppError 统一渲染成 {"code","message",**extra}。"""
 
@@ -642,6 +663,9 @@ __all__ = [
     "ReviewCommentRequired",
     "ReviewNotFound",
     "SelfApprovalForbidden",
+    "SecondPassConflictsPending",
+    "SecondPassNotReady",
+    "SecondPassTemplateMissing",
     "SnapshotNotFound",
     "SnapshotReferenced",
     "TemplateDisabled",
