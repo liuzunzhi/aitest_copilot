@@ -16,12 +16,12 @@
 - [x] 03-documents (文档解析) —— **已完成（含 T84-PDF：PDF 解析支持）**
 - [x] 04-baseline (基线管理、快照、标签) —— **已完成（含 T67 收尾）**
 - [x] 05-increment-analysis (增量分析) —— **第一期（T68~T70）+ 第二期（T71~T78）+ 第三期 T79~T83 全部完成**
-- [ ] 06-real-llm (真实大模型接入与提示词模板管理) —— **进行中：T84-PDF + T84 已完成，下一个 T85**
+- [ ] 06-real-llm (真实大模型接入与提示词模板管理) —— **进行中：T84-PDF + T84 + T85 + T86 已完成，下一个 T87**
 
 ## 3. 当前冲刺任务（⚠️ 务必先做这个）
 
-**当前目标**：06 真实大模型接入 —— **T84-PDF + T84 已完成**，下一步 **T85**
-（配置管理接口 + 模板管理接口）。
+**当前目标**：06 真实大模型接入 —— **T84-PDF + T84 + T85 + T86 已完成**，下一步 **T87**
+（前端系统设置页 + 05 动态模板下拉 + L1/L2 联调收尾）。
 
 > **06 期红线（用户 2026-11-17 裁决）**：
 > - 不做 Skill 双轨制 / Token 计费 / 不碰自动化执行；
@@ -55,6 +55,13 @@
 > **05 的判定逻辑零改动**——`app/incremental/` 下只换了 2 处解析入口
 > （`engine.py` / `second_pass.py`），字段校验 / 标签分类 / 丢弃规则 /
 > 错误码全部原样。
+
+### T85 + T86 已完成（配置管理接口 + 模板管理接口 + 运行留痕）
+
+> 范围：`app/llm_admin/` 三个路由（配置管理 / 模板管理 / 只读模板列表）
+> + 05 两段接入 `llm_run_logs` 运行留痕。
+> **05 仍是纯增量改动**——`app/incremental/service.py` 只多了写日志的调用，
+> 判定逻辑与业务语义一个字节没动（`git diff` 实测 +90 / -0）。
 
 ### 第二期范围（已完成，不可扩大）
 
@@ -90,7 +97,7 @@
 
 | 项 | 值 |
 |---|---|
-| 后端全量 pytest | **732 passed**（串行；T84 收尾复核，基线 636 + 新增 96 条） |
+| 后端全量 pytest | **812 passed**（串行；T85+T86 收尾复核，基线 732 + 新增 80 条） |
 | e2e | **37 passed**（含增量分析第一期 2 条 + 第二期 3 条 + 第三期 2 条 + PDF 1 条），一条命令 `.\.venv\Scripts\python.exe scripts\run_e2e.py`（8001/5174 + `aitest_copilot_e2e`） |
 | 前端构建 | `npm run build`（`web/` 目录，端口 5173，代理到 8000） |
 | 开跑前自检 | `.\.venv\Scripts\python.exe scripts\dev_check.py`（跑 e2e 时加 `--expect-db e2e`） |
@@ -293,11 +300,64 @@
   `requests` / `urlopen` / `aiohttp` / `socket.socket`。
   **守卫意图（断网可跑）保住了，用例一条没删。**
 
+## 5.4 06 期 · T85 + T86 完成情况（2026-11-18）
+
+**做了什么**：配置管理接口 + 模板管理接口 + 05 运行留痕。
+
+- [x] `app/llm_admin/`（新增包）：`__init__.py` / `schemas.py` /
+      `provider_service.py` / `template_service.py` / `router.py`。
+- [x] 三个路由（`app/main.py` 注册）：
+      `/api/admin/llm-providers`（`require_system_admin`）、
+      `/api/admin/prompt-templates`（`require_system_admin`）、
+      `/api/prompt-templates`（只读，`current_user`）。
+- [x] `app/llm/run_log.py`（新增）：运行留痕的统一写入口。
+- [x] `app/incremental/service.py`：第一遍与第二遍各接一处留痕
+      （**纯增量 +90 / -0，判定逻辑零改动**）。
+- [x] `app/llm/openai_compat.py`：加 `provider_name` / `provider_id`
+      快照——留痕要记「用的哪条配置」，不是「用的哪个类型」。
+- [x] `tests/common/test_audit_coverage.py` 的 `SCENARIOS` 补 3 条：
+      `llm.provider.create` / `llm.provider.update` / `prompt_template.update`。
+- [x] 新增 `tests/llm/test_provider_api.py`（31 条）/
+      `test_template_api.py`（27 条）/ `test_readonly_templates.py`（8 条）/
+      `test_run_logs.py`（11 条），共 **77 条**。
+
+**验证结果**：后端全量 **812 passed**（基线 732 + 80）；
+e2e 全量 **37 passed**（零回归）；`npm run build` 通过。
+
+**实现要点**：
+
+- **响应里只有掩码**：只有 `api_key_masked`（`sk-****1234`），
+  **没有 `api_key`、没有 `api_key_ciphertext`**。
+  掩码靠「解密 → `mask()`」还原前缀，所以主密钥换掉时退化成
+  `****{last4}`——宁可少给几个字符，也不让整个列表挂掉。
+- **默认互斥严格「先清后置」**（T84 排的雷）：
+  `_clear_other_defaults()` 逐行改 `is_default`（**不用批量 UPDATE**——
+  批量更新绕过 ORM 脏检查，内存里的对象会留着旧值，
+  后面 flush 可能把刚清掉的老默认行又立起来），
+  flush 之后再把目标行置 1。
+- **连通性测试失败返回 200 + `ok=false`**，不抛 502——
+  它不是业务异常，是「这个配置连不通」的正常反馈，
+  前端要在表单里内联展示。成功与失败**都**写一条
+  `llm_run_logs(task_type='provider_test')`。
+- **失败消息只取 `LLMCallFailed.message`**：其它异常只取**类型名**，
+  不取 `str(exc)`——原始异常里可能带 URL、请求头等敏感片段。
+- **模板版本自增只看正文**：`system_prompt` / `user_prompt` 变了才
+  `version_no += 1`；只改 `description` / `status` **不**升版本
+  （升了「模板版本」就失去「内容变了」的标记意义）。
+  `task_type` **不在入参里**——改了等于换了个模板的身份，历史分析对不上。
+- **运行留痕的调用次数是「本次任务」的**：`provider.calls` 是累计的，
+  所以**跑前记基线、跑完相减**。直接取 `len(calls)` 会把历史调用算进来。
+- **留痕表里根本没有 Prompt / token 列**——不是靠代码自觉，是表结构保证。
+- **连通性测试的 transport 走依赖注入**（`provider_transport`）：
+  生产是 `None`（真实网络），测试注入 `httpx.MockTransport`，
+  **零真实 socket**。
+- **校验一律在服务层做**：pydantic 校验失败会变成 422，
+  而 spec 要求 400 `LLM_PROVIDER_INVALID` / `PROMPT_TEMPLATE_INVALID`
+  （与 01–05 的既有口径一致）。
+
 ## 6. 待办（不属当前冲刺，等用户点头再做）
 
-- 06 期其余任务：T85（配置与模板管理接口）→
-  T86（05 运行留痕 + 动态模板下拉）→
-  T87（前端系统设置页 + L1/L2 联调收尾）
+- 06 期其余任务：T87（前端系统设置页 + 05 动态模板下拉 + L1/L2 联调收尾）
 - PDF 扫描件 OCR（本期只做「无文字层 → 整文单章」降级）
 - PDF 表格结构化落库（本期还原成 `a | b` 文本行，与 docx 同构）
 - 05 第五期：模板管理 UI 与阈值回填（依赖基准集）

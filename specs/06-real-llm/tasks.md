@@ -114,7 +114,7 @@
     - `alembic downgrade 0016 → upgrade head` 往返。
   - 前台：本期无页面，随 T87 一并核对。
 
-- [ ] **T85 · 配置管理接口 + 模板管理接口**
+- [x] **T85 · 配置管理接口 + 模板管理接口**（2026-11-18 完成）
   - 内容：
     - `app/llm_admin/` 包：`__init__.py` / `schemas.py` / `provider_service.py` /
       `template_service.py` / `router.py`。
@@ -139,7 +139,7 @@
     - `-k "ac_105 or ac_113 or ac_114 or ac_115 or ac_116"`
   - 前台：本期无页面，随 T87 一并核对。
 
-- [ ] **T86 · 05 接入（运行留痕 + 动态模板下拉）**
+- [x] **T86 · 05 接入（运行留痕 + 动态模板下拉）**（2026-11-18 完成，后端部分）
   - 内容：
     - `app/incremental/service.py`：`create_analysis` 与 `run_second_pass`
       在跑模型前后记录 `t0` 与调用次数，跑完写一条 `llm_run_logs`
@@ -158,7 +158,7 @@
       表中**不出现** token 金额与 Prompt 正文；
     - `git diff --stat` 核对 `app/incremental/` 只改了日志接入处；
     - 后端全量 **≥ 626 passed**（串行，exit 0）。
-  - 前台：本期无新增交互。
+  - 前台：本期无新增交互（**05 模板下拉动态化在 T87**，本任务只做后端留痕）。
 
 - [ ] **T87 · 前端系统设置页 + 收尾**
   - 内容：
@@ -200,7 +200,7 @@
 
 | 项 | 期望 | 实际 |
 |---|---|---|
-| 后端全量 pytest | ≥ 626 passed（新增约 25–35 条，另加 T84-PDF 的用例） | **732 passed**（串行，exit 0） |
+| 后端全量 pytest | ≥ 626 passed（新增约 25–35 条，另加 T84-PDF 的用例） | **812 passed**（串行，exit 0） |
 | 前端 `npm run build` | 通过 | 通过 |
 | e2e 全量 | 36 + 新增 2~3 条，全绿 | **37 passed**（零回归） |
 | `scripts/dev_check.py --expect-db e2e` | 通过 | 通过 |
@@ -216,8 +216,8 @@
 |---|---|---|---|---|---|
 | T84-PDF | **10 passed** | **636 passed**（串行，exit 0） | 通过 | **37 passed**（新增 1 条） | `.screenshots/T84PDF/` |
 | T84 | **96 passed**（新增） | **732 passed**（串行，exit 0） | 通过 | **37 passed**（零回归） | —（本期无页面） |
-| T85 | （待填） | （待填） | — | — | — |
-| T86 | （待填） | （待填） | — | — | — |
+| T85 | **66 passed**（新增） | **798 passed**（串行，exit 0） | 通过 | **37 passed**（零回归） | —（本期无页面） |
+| T86 | **11 passed**（新增） | **812 passed**（串行，exit 0） | 通过 | **37 passed**（零回归） | —（本期无页面） |
 | T87 | （待填） | （待填） | 通过 | （待填） | `.screenshots/T87/` |
 
 ## 实现要点（待补）
@@ -299,4 +299,44 @@
     全部用 `httpx.MockTransport`，**零真实 socket**。
 - （待 T85 后补：默认互斥的实现顺序、连通性失败仍返 200 的理由）
 - （待 T86 后补：运行留痕接入点、调用次数计数口径）
+- **T85**（已完成，2026-11-18）：
+  - **默认互斥严格「先清后置」**（T84 排的雷）：`_clear_other_defaults()`
+    **逐行改** `is_default`（不用批量 `UPDATE`）——
+    批量更新绕过 ORM 脏检查，内存里的对象留着旧 `is_default`，
+    后面 flush 可能把刚清掉的老默认行又立回来；
+    flush 之后再把目标行置 1。
+  - **响应里只有掩码**：`api_key_masked` 形如 `sk-****1234`，
+    **没有 `api_key`、没有 `api_key_ciphertext`**。
+    掩码靠「解密 → `mask()`」还原前缀；主密钥换掉时退化成 `****{last4}`
+    ——宁可少给几个字符，也不让整个列表挂掉。
+  - **连通性失败仍返 200 的理由**：它不是业务异常，是
+    「这个配置连不通」的正常反馈，前端要在**表单里内联展示**错误。
+    抛 502 的话前端只能弹全局提示，用户填的表单内容会丢。
+    成功与失败**都**写一条 `llm_run_logs(task_type='provider_test')`。
+  - **失败消息只取 `LLMCallFailed.message`**：其它异常只取**类型名**，
+    不取 `str(exc)`——原始异常里可能带 URL、请求头等敏感片段。
+  - **校验一律在服务层做**：pydantic 校验失败会变成 422，
+    而 spec 要求 400 `LLM_PROVIDER_INVALID` / `PROMPT_TEMPLATE_INVALID`
+    （与 01–05 的既有口径一致）。
+  - **模板版本自增只看正文**：`system_prompt` / `user_prompt` 变了才
+    `version_no += 1`；只改 `description` / `status` **不**升版本
+    （升了「模板版本」就失去「内容变了」的标记意义）。
+    `task_type` **不在入参里**——改了等于换了个模板的身份，历史分析对不上。
+  - **连通性测试的 transport 走依赖注入**（`provider_transport`）：
+    生产是 `None`（真实网络），测试注入 `httpx.MockTransport`，
+    **零真实 socket**。
+- **T86**（已完成，2026-11-18，后端部分）：
+  - **运行留痕接入点**：`app/incremental/service.py` 的
+    `create_analysis` 与 `run_second_pass`，各在跑模型**前**记
+    `t0` 与调用基线，跑完（或失败）写一条 `llm_run_logs`。
+    **纯增量 +90 / -0，判定逻辑零改动**。
+  - **调用次数计数口径**：`provider.calls` 是**累计**的
+    （Mock 与真实 Provider 同契约），所以**跑前记基线、跑完相减**——
+    直接取 `len(calls)` 会把历史调用也算进来。
+    用例 `test_ac_112_call_count_is_per_task_not_cumulative` 固定这条。
+  - **留痕记的是「配置身份」不是「供应商类型」**：
+    `OpenAICompatProvider` 加了 `provider_name` / `provider_id` 快照，
+    所以留痕里是「DeepSeek 生产」而不是「openai_compat」。
+  - **留痕表里根本没有 Prompt / token 列**——不是靠代码自觉，是表结构保证。
+  - **写日志不写审计**（日志不是业务写操作）。
 - （待 T87 后补：前台核对暴露的真实缺陷、L1/L2 联调实测结果）

@@ -11,6 +11,8 @@ from app.common.errors import install_error_handlers
 from app.documents.router import router as documents_router
 from app.incremental.links_router import router as incremental_links_router
 from app.incremental.router import router as incremental_router
+from app.llm_admin.router import admin_router as llm_admin_router
+from app.llm_admin.router import templates_router as prompt_templates_router
 from app.projects.router import router as projects_router
 from app.users.router import router as users_router
 
@@ -26,6 +28,8 @@ app.include_router(users_router)
 app.include_router(baselines_router)
 app.include_router(incremental_router)
 app.include_router(incremental_links_router)
+app.include_router(llm_admin_router)
+app.include_router(prompt_templates_router)
 
 
 @app.get("/health")

@@ -896,6 +896,68 @@ def _chapter_link_create(client: TestClient, db: Session, monkeypatch) -> None:
     assert response.status_code == 201, response.text
 
 
+# ------------------------------------------------- 06 大模型配置与模板
+
+
+def _llm_provider_create(client: TestClient, db: Session, monkeypatch) -> None:
+    """06 期：新建一条大模型配置。"""
+    admin = _user(db, global_role="system_admin")
+    response = client.post(
+        "/api/admin/llm-providers",
+        json={
+            "name": "审计配置",
+            "base_url": "https://api.deepseek.com/v1",
+            "api_key": "sk-audit-1234",
+            "model": "deepseek-chat",
+            "timeout_seconds": 60,
+        },
+        headers=_headers(client, admin),
+    )
+    assert response.status_code == 201, response.text
+
+
+def _llm_provider_update(client: TestClient, db: Session, monkeypatch) -> None:
+    """06 期：更新一条大模型配置。"""
+    admin = _user(db, global_role="system_admin")
+    headers = _headers(client, admin)
+    created = client.post(
+        "/api/admin/llm-providers",
+        json={
+            "name": "待改配置",
+            "base_url": "https://api.deepseek.com/v1",
+            "api_key": "sk-audit-1234",
+            "model": "deepseek-chat",
+        },
+        headers=headers,
+    )
+    assert created.status_code == 201, created.text
+    provider_id = created.json()["id"]
+    response = client.put(
+        f"/api/admin/llm-providers/{provider_id}",
+        json={"model": "deepseek-reasoner"},
+        headers=headers,
+    )
+    assert response.status_code == 200, response.text
+
+
+def _prompt_template_update(client: TestClient, db: Session, monkeypatch) -> None:
+    """06 期：编辑一条提示词模板。"""
+    admin = _user(db, global_role="system_admin")
+    template = db.scalar(
+        select(PromptTemplate).where(
+            PromptTemplate.task_type == "incremental",
+            PromptTemplate.name == "增量分析·第一遍·章节局部",
+        )
+    )
+    assert template is not None
+    response = client.put(
+        f"/api/admin/prompt-templates/{template.id}",
+        json={"description": "审计覆盖改的描述"},
+        headers=_headers(client, admin),
+    )
+    assert response.status_code == 200, response.text
+
+
 SCENARIOS = {
     "register.submit": _register,
     "login.success": _login_success,
@@ -946,6 +1008,9 @@ SCENARIOS = {
     "incremental.conflict.resolve": _incremental_conflict_resolve,
     "incremental.apply.run": _incremental_apply_run,
     "document.chapter_link.create": _chapter_link_create,
+    "llm.provider.create": _llm_provider_create,
+    "llm.provider.update": _llm_provider_update,
+    "prompt_template.update": _prompt_template_update,
 }
 
 

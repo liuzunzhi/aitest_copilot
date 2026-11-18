@@ -22,6 +22,7 @@
 遵循「改数据 → flush → write_audit → commit」，`write_audit` 内部不 commit。
 """
 
+import time
 from datetime import datetime, timezone
 
 from sqlalchemy import delete, func, select
@@ -56,6 +57,7 @@ from app.common.errors import (
 from app.incremental import apply as apply_engine, engine, links, second_pass
 from app.incremental.engine import ChapterResult, PassResult
 from app.incremental.schemas import AnalysisCreate, ConflictResolve
+from app.llm import run_log
 from app.llm.provider import LLMProvider
 from app.models.baseline import (
     BaselineFeaturePoint,
@@ -316,6 +318,11 @@ def create_analysis(
         conclusions.extend(rows)
         discarded.extend(result.discarded)
 
+    # 运行留痕（06 期 T86）：跑前记调用基线，跑完相减算本次调用了几次。
+    # `provider.calls` 是累计的，直接取 len 会把历史调用也算进来。
+    calls_before = run_log.call_count(provider)
+    started_at = time.monotonic()
+
     try:
         result: PassResult = engine.run_first_pass(
             session,
@@ -334,6 +341,20 @@ def create_analysis(
             discarded=discarded,
             extra=exc.extra,
         )
+        run_log.record_run(
+            session,
+            task_type="incremental_first",
+            provider=provider,
+            calls=run_log.call_count(provider) - calls_before,
+            started_at=started_at,
+            status="failed",
+            error_code=exc.code,
+            error_message=exc.message,
+            project_id=project_id,
+            analysis_id=analysis.id,
+            template_id=template.id,
+            template_version=template.version_no,
+        )
         session.commit()
         raise
     except Exception as exc:  # 内部异常同样立刻失败，不让前端干等
@@ -346,6 +367,20 @@ def create_analysis(
             discarded=discarded,
             extra={},
         )
+        run_log.record_run(
+            session,
+            task_type="incremental_first",
+            provider=provider,
+            calls=run_log.call_count(provider) - calls_before,
+            started_at=started_at,
+            status="failed",
+            error_code=LLMCallFailed.code,
+            error_message=f"分析执行失败：{exc}",
+            project_id=project_id,
+            analysis_id=analysis.id,
+            template_id=template.id,
+            template_version=template.version_no,
+        )
         session.commit()
         raise LLMCallFailed("分析执行失败") from exc
 
@@ -355,6 +390,18 @@ def create_analysis(
         chapter_count=result.chapter_count,
         conclusions=conclusions,
         discarded=discarded,
+    )
+    run_log.record_run(
+        session,
+        task_type="incremental_first",
+        provider=provider,
+        calls=run_log.call_count(provider) - calls_before,
+        started_at=started_at,
+        status="succeeded",
+        project_id=project_id,
+        analysis_id=analysis.id,
+        template_id=template.id,
+        template_version=template.version_no,
     )
     session.flush()
     session.commit()
@@ -665,6 +712,9 @@ def run_second_pass(
     session.flush()
 
     link_count = 0
+    # 运行留痕（06 期 T86）：第二遍单独记一条 `incremental_second`
+    calls_before = run_log.call_count(provider)
+    started_at = time.monotonic()
     try:
         link_count = _ensure_rule_links(session, analysis=analysis, actor=actor)
         _clear_second_pass_rows(session, analysis.id)
@@ -696,6 +746,20 @@ def run_second_pass(
             analysis.second_pass_stats["failed_target_type"] = target_type
         if target_id is not None:
             analysis.second_pass_stats["failed_target_id"] = target_id
+        run_log.record_run(
+            session,
+            task_type="incremental_second",
+            provider=provider,
+            calls=run_log.call_count(provider) - calls_before,
+            started_at=started_at,
+            status="failed",
+            error_code=exc.code,
+            error_message=exc.message,
+            project_id=project_id,
+            analysis_id=analysis.id,
+            template_id=template.id,
+            template_version=template.version_no,
+        )
         session.commit()
         raise
     except Exception as exc:  # 内部异常同样立刻失败，不让前端干等
@@ -703,6 +767,20 @@ def run_second_pass(
         analysis.second_pass_error_code = LLMCallFailed.code
         analysis.second_pass_error_message = f"第二遍执行失败：{exc}"[:500]
         analysis.second_pass_finished_at = _now()
+        run_log.record_run(
+            session,
+            task_type="incremental_second",
+            provider=provider,
+            calls=run_log.call_count(provider) - calls_before,
+            started_at=started_at,
+            status="failed",
+            error_code=LLMCallFailed.code,
+            error_message=f"第二遍执行失败：{exc}",
+            project_id=project_id,
+            analysis_id=analysis.id,
+            template_id=template.id,
+            template_version=template.version_no,
+        )
         session.commit()
         raise LLMCallFailed("第二遍执行失败") from exc
 
@@ -713,6 +791,18 @@ def run_second_pass(
         link_count=link_count,
         result=result,
         provider_name=provider.name,
+    )
+    run_log.record_run(
+        session,
+        task_type="incremental_second",
+        provider=provider,
+        calls=run_log.call_count(provider) - calls_before,
+        started_at=started_at,
+        status="succeeded",
+        project_id=project_id,
+        analysis_id=analysis.id,
+        template_id=template.id,
+        template_version=template.version_no,
     )
     session.flush()
 

@@ -9,6 +9,9 @@ from sqlalchemy.orm import Session
 
 from app.common.config import get_settings
 from app.llm.crypto import encrypt
+from app.llm.mock import MockProvider
+from app.llm.provider import get_provider
+from app.main import app as fastapi_app
 from app.models.llm import LLMProviderConfig
 
 # 假的 API Key——测试里出现它是安全的（不会真发出去），
@@ -24,6 +27,21 @@ def _reset_settings_cache():
     """
     yield
     get_settings.cache_clear()
+
+
+@pytest.fixture
+def provider() -> MockProvider:
+    """测试专用 Mock 供应商。
+
+    与 `tests/incremental/conftest.py` 同款：把 `get_provider` 依赖
+    换成可编程的 Mock，让用例能控制模型返回。
+    """
+    mock = MockProvider()
+    fastapi_app.dependency_overrides[get_provider] = lambda: mock
+    try:
+        yield mock
+    finally:
+        fastapi_app.dependency_overrides.pop(get_provider, None)
 
 
 @pytest.fixture

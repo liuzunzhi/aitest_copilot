@@ -41,12 +41,17 @@ class OpenAICompatProvider:
         model: str,
         timeout_seconds: int = 60,
         transport: httpx.BaseTransport | None = None,
+        provider_name: str | None = None,
+        provider_id: int | None = None,
     ) -> None:
         self.base_url = base_url.rstrip("/")
         self.api_key = api_key
         self.model = model
         self.timeout_seconds = timeout_seconds
         self._transport = transport
+        # 配置身份快照：运行留痕要记「用的哪条配置」，而不是「用的哪个类型」
+        self.provider_name = provider_name or self.name
+        self.provider_id = provider_id
         # 与 MockProvider 同契约：调用次数可数，便于写运行留痕
         self.calls: list[LLMRequest] = []
 
@@ -70,6 +75,8 @@ class OpenAICompatProvider:
             model=config.model,
             timeout_seconds=config.timeout_seconds,
             transport=transport,
+            provider_name=getattr(config, "name", None),
+            provider_id=getattr(config, "id", None),
         )
 
     def chat(self, req: LLMRequest) -> LLMResponse:
