@@ -5,12 +5,14 @@ import type { ColumnsType } from 'antd/es/table'
 import {
   createIncrementalAnalysis,
   fetchIncrementalAnalysis,
+  listAvailablePromptTemplates,
   listBaselineRevisions,
   listDocuments,
   listIncrementalAnalyses,
   listIncrementalConclusions,
 } from '../api'
 import type {
+  AvailablePromptTemplate,
   BaselineRevision,
   DocumentItem,
   IncrementalAnalysis,
@@ -19,7 +21,10 @@ import type {
 import { errorMessage } from '../api/client'
 import { formatSnapshotVersion, isValidationError } from './baselineShared'
 import ProjectIncrementalDrawer from './ProjectIncrementalDrawer'
-import { DEFAULT_TEMPLATE_ID, GRANULARITY_LABEL, TEMPLATE_LABEL, statusTag } from './incrementalMeta'
+import { GRANULARITY_LABEL, statusTag } from './incrementalMeta'
+
+/** 第二遍模板与第一遍同属 `task_type='incremental'`，靠名字前缀区分，不能进第一遍下拉。 */
+const SECOND_PASS_NAME_KEYWORD = '第二遍'
 
 interface Props {
   projectId: number
@@ -30,6 +35,7 @@ interface Props {
 export default function ProjectIncrementalTab({ projectId, canWrite }: Props) {
   const { message } = AntdApp.useApp()
   const [form] = Form.useForm<{
+    template_id: number
     baseline_revision_id: number
     document_version_id: number
   }>()
@@ -37,6 +43,7 @@ export default function ProjectIncrementalTab({ projectId, canWrite }: Props) {
   const [analyses, setAnalyses] = useState<IncrementalAnalysis[]>([])
   const [revisions, setRevisions] = useState<BaselineRevision[]>([])
   const [documents, setDocuments] = useState<DocumentItem[]>([])
+  const [templates, setTemplates] = useState<AvailablePromptTemplate[]>([])
   const [loading, setLoading] = useState(false)
   const [creating, setCreating] = useState(false)
 
@@ -48,20 +55,30 @@ export default function ProjectIncrementalTab({ projectId, canWrite }: Props) {
   const reload = useCallback(async () => {
     setLoading(true)
     try {
-      const [analysisPage, revisionPage, documentList] = await Promise.all([
+      const [analysisPage, revisionPage, documentList, templateList] = await Promise.all([
         listIncrementalAnalyses(projectId, { page_size: 100 }),
         listBaselineRevisions(projectId, { status: 'approved', page_size: 200 }),
         listDocuments(projectId),
+        listAvailablePromptTemplates('incremental'),
       ])
       setAnalyses(analysisPage.items)
       setRevisions(revisionPage.items)
       setDocuments(documentList)
+      const firstPass = templateList.filter(
+        (item) => !item.name.includes(SECOND_PASS_NAME_KEYWORD),
+      )
+      setTemplates(firstPass)
+      // 首次加载时默认选中第一个可用模板；已被停用的旧选择不保留
+      const current = form.getFieldValue('template_id') as number | undefined
+      if (firstPass.length && !firstPass.some((item) => item.id === current)) {
+        form.setFieldValue('template_id', firstPass[0].id)
+      }
     } catch (error) {
       message.error(errorMessage(error))
     } finally {
       setLoading(false)
     }
-  }, [projectId, message])
+  }, [projectId, message, form])
 
   useEffect(() => {
     void reload()
@@ -95,7 +112,7 @@ export default function ProjectIncrementalTab({ projectId, canWrite }: Props) {
       const values = await form.validateFields()
       setCreating(true)
       const analysis = await createIncrementalAnalysis(projectId, {
-        template_id: DEFAULT_TEMPLATE_ID,
+        template_id: values.template_id,
         baseline_revision_id: values.baseline_revision_id,
         document_version_id: values.document_version_id,
         split_granularity: 'chapter',
@@ -215,10 +232,7 @@ export default function ProjectIncrementalTab({ projectId, canWrite }: Props) {
           <Form
             form={form}
             layout="inline"
-            initialValues={{
-              template_id: DEFAULT_TEMPLATE_ID,
-              split_granularity: 'chapter',
-            }}
+            initialValues={{ split_granularity: 'chapter' }}
             onFinish={submitAnalysis}
           >
             <Form.Item
@@ -249,13 +263,20 @@ export default function ProjectIncrementalTab({ projectId, canWrite }: Props) {
                 data-testid="incremental-version-select"
               />
             </Form.Item>
-            <Form.Item label="模板">
-              {/* 本期模板只读（spec §2.2），没有模板管理入口 */}
+            <Form.Item
+              name="template_id"
+              label="模板"
+              rules={[{ required: true, message: '请选择提示词模板' }]}
+            >
+              {/* 模板来自「系统设置 → 提示词模板」，只列启用的第一遍模板 */}
               <Select
-                style={{ width: 220 }}
-                value={DEFAULT_TEMPLATE_ID}
-                disabled
-                options={[{ value: DEFAULT_TEMPLATE_ID, label: TEMPLATE_LABEL }]}
+                style={{ width: 240 }}
+                placeholder={templates.length ? '选择提示词模板' : '暂无可用模板'}
+                disabled={templates.length === 0}
+                options={templates.map((item) => ({
+                  value: item.id,
+                  label: `${item.name} · v${item.version_no}`,
+                }))}
                 data-testid="incremental-template-select"
               />
             </Form.Item>
@@ -273,12 +294,18 @@ export default function ProjectIncrementalTab({ projectId, canWrite }: Props) {
                 type="primary"
                 htmlType="submit"
                 loading={creating}
+                disabled={templates.length === 0}
                 data-testid="incremental-create-btn"
               >
                 发起分析
               </Button>
             </Form.Item>
           </Form>
+          {templates.length === 0 ? (
+            <Typography.Text type="secondary" style={{ marginTop: 8, display: 'block' }}>
+              请先在系统设置中启用提示词模板，再发起分析。
+            </Typography.Text>
+          ) : null}
           {revisionOptions.length === 0 || versionOptions.length === 0 ? (
             <Typography.Text type="secondary" style={{ marginTop: 8, display: 'block' }}>
               发起分析需要一份审核通过的基线快照和一个生效的文档版本：

@@ -36,6 +36,10 @@ export default function AppLayout() {
         key: '/admin/users',
         label: <Link to="/admin/users">用户管理</Link>,
       },
+      {
+        key: '/admin/settings',
+        label: <Link to="/admin/settings">系统设置</Link>,
+      },
     )
   }
 

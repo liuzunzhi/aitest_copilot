@@ -412,6 +412,15 @@ def main() -> int:
         fail(".env 里没有 DB_DSN")
         return 1
 
+    # 06 期新增必填：大模型 API Key 的加密主密钥（缺失时后端启动即失败）
+    if not env.get("LLM_SECRET_KEY", "").strip():
+        fail(
+            "LLM_SECRET_KEY 缺失：请在 .env 补一行 LLM_SECRET_KEY=<随机长字符串>"
+            "（只加密本平台的供应商密钥，不是供应商 API Key）"
+        )
+    else:
+        ok("LLM_SECRET_KEY 已配置")
+
     head = migration_head()
     if head is None:
         fail("算不出 alembic head（迁移图有多个 head 或解析失败）")

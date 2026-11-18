@@ -1136,3 +1136,158 @@ export async function listAppliedLabels(
   )
   return data
 }
+
+/* -------------------------------------- 系统设置：大模型配置（06） */
+
+export type LlmProviderStatus = 'active' | 'disabled'
+
+export interface LlmProvider {
+  id: number
+  name: string
+  provider_type: string
+  base_url: string
+  model: string
+  /** 只有掩码（形如 `sk-****1234`），后端不返回明文也不返回密文。 */
+  api_key_masked: string
+  timeout_seconds: number
+  status: LlmProviderStatus
+  is_default: boolean
+  last_test_status: 'succeeded' | 'failed' | null
+  last_test_at: string | null
+  last_test_error: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface LlmProviderPayload {
+  name: string
+  base_url: string
+  /** 新建必填；编辑时留空表示「不修改现有 Key」。 */
+  api_key?: string
+  model: string
+  timeout_seconds?: number
+  status?: LlmProviderStatus
+  is_default?: boolean
+}
+
+export interface LlmProviderTestResult {
+  ok: boolean
+  latency_ms: number
+  model: string | null
+  message: string
+}
+
+export async function listLlmProviders(): Promise<LlmProvider[]> {
+  const { data } = await client.get<LlmProvider[]>('/admin/llm-providers')
+  return data
+}
+
+export async function createLlmProvider(
+  payload: LlmProviderPayload,
+): Promise<LlmProvider> {
+  const { data } = await client.post<LlmProvider>('/admin/llm-providers', payload)
+  return data
+}
+
+export async function updateLlmProvider(
+  providerId: number,
+  payload: Partial<LlmProviderPayload>,
+): Promise<LlmProvider> {
+  const { data } = await client.put<LlmProvider>(
+    `/admin/llm-providers/${providerId}`,
+    payload,
+  )
+  return data
+}
+
+/** 连通性测试：失败也返回 200 + `ok=false`，不是异常。 */
+export async function testLlmProvider(
+  providerId: number,
+): Promise<LlmProviderTestResult> {
+  const { data } = await client.post<LlmProviderTestResult>(
+    `/admin/llm-providers/${providerId}/test`,
+  )
+  return data
+}
+
+/* -------------------------------------- 系统设置：提示词模板（06） */
+
+/** 模板列表项：不含 Prompt 正文。 */
+export interface PromptTemplateBrief {
+  id: number
+  name: string
+  task_type: string
+  description: string | null
+  version_no: number
+  status: 'active' | 'disabled'
+  updated_at: string
+}
+
+/** 模板详情：列表项 + 完整正文。 */
+export interface PromptTemplateDetail extends PromptTemplateBrief {
+  system_prompt: string
+  user_prompt: string
+  created_at: string
+}
+
+export interface PromptTemplateUpdatePayload {
+  name?: string
+  description?: string
+  system_prompt?: string
+  user_prompt?: string
+  status?: 'active' | 'disabled'
+}
+
+/** 只读模板项：普通成员可见的元信息，没有正文。 */
+export interface AvailablePromptTemplate {
+  id: number
+  name: string
+  task_type: string
+  version_no: number
+  description: string | null
+}
+
+export async function listPromptTemplates(params?: {
+  task_type?: string
+  status?: string
+  page?: number
+  page_size?: number
+}): Promise<Page<PromptTemplateBrief>> {
+  const { data } = await client.get<Page<PromptTemplateBrief>>(
+    '/admin/prompt-templates',
+    { params },
+  )
+  return data
+}
+
+export async function fetchPromptTemplate(
+  templateId: number,
+): Promise<PromptTemplateDetail> {
+  const { data } = await client.get<PromptTemplateDetail>(
+    `/admin/prompt-templates/${templateId}`,
+  )
+  return data
+}
+
+/** 编辑模板。**只有正文变化时后端才会把版本号 +1。** */
+export async function updatePromptTemplate(
+  templateId: number,
+  payload: PromptTemplateUpdatePayload,
+): Promise<PromptTemplateDetail> {
+  const { data } = await client.put<PromptTemplateDetail>(
+    `/admin/prompt-templates/${templateId}`,
+    payload,
+  )
+  return data
+}
+
+/** 可用模板列表（登录即可）：只返回 active，且不含正文。 */
+export async function listAvailablePromptTemplates(
+  taskType?: string,
+): Promise<AvailablePromptTemplate[]> {
+  const { data } = await client.get<{ items: AvailablePromptTemplate[] }>(
+    '/prompt-templates',
+    { params: taskType ? { task_type: taskType } : undefined },
+  )
+  return data.items
+}

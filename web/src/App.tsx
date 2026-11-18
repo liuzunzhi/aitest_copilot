@@ -3,6 +3,7 @@ import { Navigate, Route, Routes } from 'react-router-dom'
 import { RequireAuth } from './auth/RequireAuth'
 import AppLayout from './layout/AppLayout'
 import AdminApplicationsPage from './pages/AdminApplicationsPage'
+import AdminSettingsPage from './pages/AdminSettingsPage'
 import AdminUsersPage from './pages/AdminUsersPage'
 import AvailableProjectsPage from './pages/AvailableProjectsPage'
 import LoginPage from './pages/LoginPage'
@@ -23,6 +24,7 @@ export default function App() {
           <Route path="/applications/mine" element={<MyApplicationsPage />} />
           <Route path="/admin/applications" element={<AdminApplicationsPage />} />
           <Route path="/admin/users" element={<AdminUsersPage />} />
+          <Route path="/admin/settings" element={<AdminSettingsPage />} />
         </Route>
       </Route>
       <Route path="*" element={<Navigate to="/projects" replace />} />

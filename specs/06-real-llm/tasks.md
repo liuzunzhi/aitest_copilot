@@ -160,7 +160,7 @@
     - 后端全量 **≥ 626 passed**（串行，exit 0）。
   - 前台：本期无新增交互（**05 模板下拉动态化在 T87**，本任务只做后端留痕）。
 
-- [ ] **T87 · 前端系统设置页 + 收尾**
+- [x] **T87 · 前端系统设置页 + 收尾**（2026-11-18 完成；**L2 真实联调待人工执行**）
   - 内容：
     - `web/src/pages/AdminSettingsPage.tsx`（Tab 骨架）+ `web/src/pages/settings/LlmProviderPanel.tsx`
       + `web/src/pages/settings/PromptTemplatePanel.tsx`。
@@ -182,7 +182,7 @@
       用真实 DeepSeek 配置（Key 存 `llm_providers` 表，**不写 `.env`**）
       + 真实 `.pdf` / `.docx` 跑完整链路，结果记入本文件验证记录。
     - 文档回填：`PROGRESS.md`（迁移 head `0017`、依赖变更、主密钥配置方式、计数）、
-      `specs/验证约定.md`（§5.7 第六期前台核对点 + 变更记录）、本文件验证记录。
+      `specs/验证约定.md`（§5.8 第六期前台核对点 + 变更记录）、本文件验证记录。
   - 产出：AC-116（前端部分）/ AC-117 / AC-118 / **AC-121** 可断言。
   - 验证：
     - `npm run build` 通过；
@@ -195,19 +195,31 @@
     - `run_e2e.py` 内联的 `dev_check --expect-db e2e` 通过；
     - 两个库迁移 head 均在 `0017`；
     - 断网复核：清空 `llm_providers` 后全量 pytest 与 e2e 仍全绿（AC-107 / AC-117）。
+  - **实现说明**（2026-11-18）：
+    - **L1 只断言「实际调用次数」**：引擎只把**有正文**的章节送模型，父章节只做归组，
+      因此 `conclusion_count` 不等于章节总数。以 `provider.calls` 为口径，
+      同时校验 `stats.conclusion_count == len(provider.calls)` 与留痕 `call_count` 一致。
+    - **05 模板下拉要滤掉第二遍模板**：第二遍与第一遍同属 `task_type='incremental'`，
+      靠名字前缀区分。不滤会把「第二遍·全局裁决」模板选给第一遍，Prompt 格式不兼容。
+    - **连通性失败在前端是「warning」不是「error」**：后端返回 200 + `ok=false`，
+      页面按业务结果展示失败原因；只有真异常（权限、配置不存在）才走 `message.error`。
+    - **e2e 里 antd Select 首点可能被重渲染吞掉**：切 Tab 后立即点下拉，第一次点击
+      只拿到焦点。用例改成「点一次 → 等 600ms → 没展开再点一次」，避免偶发失败。
+    - **e2e 造数清理**：大模型配置按 `e2e-llm-` 前缀直删（连带 `llm_run_logs`）；
+      模板正文在 `finally` 里还原，避免 e2e 库越跑越脏（版本号会再 +1，内容不变）。
 
 ## 收尾（随 T87 完成）
 
 | 项 | 期望 | 实际 |
 |---|---|---|
-| 后端全量 pytest | ≥ 626 passed（新增约 25–35 条，另加 T84-PDF 的用例） | **812 passed**（串行，exit 0） |
+| 后端全量 pytest | ≥ 626 passed（新增约 25–35 条，另加 T84-PDF 的用例） | **814 passed**（串行，exit 0） |
 | 前端 `npm run build` | 通过 | 通过 |
-| e2e 全量 | 36 + 新增 2~3 条，全绿 | **37 passed**（零回归） |
+| e2e 全量 | 36 + 新增 2~3 条，全绿 | **39 passed**（零回归） |
 | `scripts/dev_check.py --expect-db e2e` | 通过 | 通过 |
 | 断网可跑 | 无默认配置时全量 pytest 与 e2e 均绿 | 通过（`llm_providers` 空表，两库均 0 行） |
 | 迁移 | `0016 → 0017 → 0016` 往返，两个库 head 在 `0017` | 通过（往返干净） |
-| **L1 端到端** | 真实 `.pdf` / `.docx` 走完整链路，零 socket | 待 T87 |
-| **L2 真实联调** | 真实 DeepSeek + 真实文档，结论落库 | 待 T87 |
+| **L1 端到端** | 真实 `.pdf` / `.docx` 走完整链路，零 socket | **通过**（2 条：pdf / docx） |
+| **L2 真实联调** | 真实 DeepSeek + 真实文档，结论落库 | **待人工执行**（需真实 Key，按红线只走系统设置页，不写 `.env`） |
 | 红线 | 未做 Skill、未做计费、未碰执行、Key 无明文、未新建/删除模板、未改 05 判定逻辑 | 全部遵守 |
 
 ## 验证记录

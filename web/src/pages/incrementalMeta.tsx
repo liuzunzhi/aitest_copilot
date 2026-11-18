@@ -2,8 +2,7 @@ import { Tag } from 'antd'
 
 import type { IncrementalAnalysis } from '../api'
 
-/** 本期后端不提供模板列表接口（spec §2.2：不做模板 CRUD）。 */
-export const DEFAULT_TEMPLATE_ID = 1
+/** 模板下拉已改为动态拉取（T87），这里只保留历史记录缺名字时的兜底文案。 */
 export const TEMPLATE_LABEL = '增量分析·第一遍·章节局部'
 export const GRANULARITY_LABEL = '按章节（chapter）'
 

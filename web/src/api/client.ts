@@ -102,13 +102,26 @@ const CODE_TEXT: Record<string, string> = {
   APPLY_NOT_READY: '第二遍尚未成功，不能应用产出',
   APPLY_CONFLICTS_PENDING: '仍有待裁决的冲突，请先完成裁决再应用产出',
   APPLY_NO_LABELABLE_TARGET: '没有可落标签的变更 / 受影响目标',
+  /* 系统设置：大模型与提示词模板（06） */
+  LLM_PROVIDER_NOT_FOUND: '大模型配置不存在',
+  LLM_PROVIDER_NAME_TAKEN: '配置名已存在',
+  LLM_PROVIDER_INVALID: '大模型配置不合法',
+  LLM_CONFIG_INVALID: 'API Key 解密失败，请重新填写密钥',
+  PROMPT_TEMPLATE_NOT_FOUND: '提示词模板不存在',
+  PROMPT_TEMPLATE_INVALID: '提示词模板不合法',
+  PROMPT_TEMPLATE_NAME_TAKEN: '同一任务类型下模板名已存在',
 }
 
 /**
  * 这些错误码以后端返回的 message 为准——静态文案说不出「被什么引用」。
  * 快照被引用时后端会区分「标签引用」与「增量分析引用」，用户要按提示去处理。
  */
-const BACKEND_MESSAGE_CODES = new Set(['SNAPSHOT_REFERENCED'])
+const BACKEND_MESSAGE_CODES = new Set([
+  'SNAPSHOT_REFERENCED',
+  // 校验类错误码的静态文案说不出「超时必须在 1~300 秒之间」这类具体原因
+  'LLM_PROVIDER_INVALID',
+  'PROMPT_TEMPLATE_INVALID',
+])
 
 export function errorMessage(error: unknown): string {
   if (axios.isAxiosError(error)) {
