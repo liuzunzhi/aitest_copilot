@@ -23,8 +23,8 @@ class RegisterRequest(BaseModel):
     password: str
     email: str | None = Field(default=None, max_length=255)
     phone: str | None = Field(default=None, max_length=32)
-    captcha: str | None = None
-    captcha_id: str | None = None
+    # 图形验证码已于 2026-11-18 移除（内部测试环境，注册不对外开放）。
+    # 对外发布前需补回 captcha / captcha_id 两个字段与服务端校验。
 
 
 class RegisterResponse(BaseModel):
@@ -163,7 +163,5 @@ def register(
         password=payload.password,
         email=payload.email,
         phone=payload.phone,
-        captcha_id=payload.captcha_id,
-        captcha=payload.captcha,
     )
     return RegisterResponse(status=user.status, user_id=user.id)

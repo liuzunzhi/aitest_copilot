@@ -1,10 +1,13 @@
-"""注册接口（T14，AC-08 ~ AC-11）。"""
+"""注册接口（T14，AC-08 ~ AC-10）。
+
+**AC-11 图形验证码已于 2026-11-18 移除**（内部测试环境，注册不对外开放）。
+注册不再需要验证码；对外发布前需补回，见 `specs/01-auth/tasks.md` 待办。
+"""
 
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
-from app.common.captcha import create_captcha
 from app.models.system import AuditLog
 from app.models.user import User
 
@@ -12,15 +15,11 @@ REGISTER = "/api/auth/register"
 
 
 def _payload(**overrides) -> dict:
-    """每次调用都新拿一个验证码——验证码一次校验即作废。"""
-    captcha = create_captcha()
     data = {
         "username": "new-user",
         "password": "Passw0rd",
         "email": "new@example.com",
         "phone": "13800000000",
-        "captcha": captcha.code,
-        "captcha_id": captcha.id,
     }
     data.update(overrides)
     return data
@@ -50,9 +49,31 @@ def test_ac_08_register_success(client: TestClient, db: Session):
     assert user.password_hash != "Passw0rd"
     assert user.password_hash.startswith("$2b$")
 
-    audit = db.query(AuditLog).filter_by(action="register.submit").one()
-    assert audit.actor_id == user.id
+    # 按自己的用户过滤——开发库里可能有别的注册记录，不能全表查
+    audit = (
+        db.query(AuditLog)
+        .filter_by(action="register.submit", actor_id=user.id)
+        .one()
+    )
     assert audit.target_id == str(user.id)
+
+
+def test_ac_08_register_without_captcha(client: TestClient, db: Session):
+    """2026-11-18：注册不再要求图形验证码，不传 captcha 也直接成功。"""
+    response = client.post(REGISTER, json=_payload(username="no-captcha-user"))
+
+    assert response.status_code == 201, response.text
+    assert db.query(User).filter_by(username="no-captcha-user").count() == 1
+
+
+def test_ac_08_register_ignores_extra_captcha_fields(client: TestClient, db: Session):
+    """老客户端若仍带 captcha 字段，不应因此失败。"""
+    response = client.post(
+        REGISTER,
+        json=_payload(username="legacy-captcha-user", captcha="ZZZZ", captcha_id="x"),
+    )
+
+    assert response.status_code == 201, response.text
 
 
 def test_ac_09_username_taken(client: TestClient, db: Session):
@@ -97,38 +118,3 @@ def test_ac_10_weak_password(client: TestClient, password):
 
     assert response.status_code == 400
     assert response.json()["code"] == "WEAK_PASSWORD"
-
-
-def test_ac_11_captcha_required(client: TestClient):
-    response = client.post(REGISTER, json=_payload(captcha=None, captcha_id=None))
-
-    assert response.status_code == 400
-    assert response.json()["code"] == "CAPTCHA_REQUIRED"
-
-
-def test_ac_11_captcha_invalid(client: TestClient):
-    payload = _payload()
-    payload["captcha"] = "ZZZZ"
-
-    response = client.post(REGISTER, json=payload)
-
-    assert response.status_code == 400
-    assert response.json()["code"] == "CAPTCHA_INVALID"
-
-
-def test_ac_11_captcha_expired_or_unknown(client: TestClient):
-    response = client.post(REGISTER, json=_payload(captcha_id="unknown-captcha"))
-
-    assert response.status_code == 400
-    assert response.json()["code"] == "CAPTCHA_INVALID"
-
-
-def test_ac_11_captcha_single_use(client: TestClient):
-    """同一个验证码不能注册两个账号。"""
-    payload = _payload()
-
-    assert client.post(REGISTER, json=payload).status_code == 201
-
-    reused = client.post(REGISTER, json={**payload, "username": "second-user"})
-    assert reused.status_code == 400
-    assert reused.json()["code"] == "CAPTCHA_INVALID"

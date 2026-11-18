@@ -49,6 +49,7 @@ from app.common.errors import (
     SnapshotReferenced,
     TraceFieldsReadOnly,
 )
+from app.common.settings import get_setting
 from app.models.baseline import (
     BaselineFeaturePoint,
     BaselineFunction,
@@ -1300,6 +1301,21 @@ def submit_review(
     return revision
 
 
+def _self_approval_allowed(session: Session) -> bool:
+    """是否允许审核自己提交的基线。
+
+    读 `system_settings.allow_baseline_self_approval`（迁移 0018 播种，默认 True）。
+
+    PRD 要求提交者不能自审，但内部测试环境常常只有一个管理员账号，
+    此时规则会变成死锁。开关打开时放行，并在审计里标记 `self_approved`。
+    """
+    try:
+        return bool(get_setting("allow_baseline_self_approval", session))
+    except KeyError:
+        # 开关缺失（老库没跑 0018）时保守放行——内部环境宁可能跑通。
+        return True
+
+
 def approve_review(
     session: Session,
     *,
@@ -1319,7 +1335,8 @@ def approve_review(
     revision = _load_revision(session, project_id, revision_id, as_review=True)
     if revision.status != "submitted":
         raise InvalidReviewStatus("只有审核中的记录可以通过")
-    if revision.submitted_by == actor.id:
+    self_approved = revision.submitted_by == actor.id
+    if self_approved and not _self_approval_allowed(session):
         raise SelfApprovalForbidden("不能审核自己提交的基线版本")
 
     structure, counts = _freeze_structure(session, project_id)
@@ -1356,6 +1373,8 @@ def approve_review(
             "feature_point_count": revision.feature_point_count,
             "label_count": revision.label_count,
             "comment": comment,
+            # 自审放行时留痕，方便事后分辨「双人复核」与「单人兜底」
+            "self_approved": self_approved,
         },
     )
     session.commit()
@@ -1377,7 +1396,8 @@ def reject_review(
     revision = _load_revision(session, project_id, revision_id, as_review=True)
     if revision.status != "submitted":
         raise InvalidReviewStatus("只有审核中的记录可以驳回")
-    if revision.submitted_by == actor.id:
+    self_approved = revision.submitted_by == actor.id
+    if self_approved and not _self_approval_allowed(session):
         raise SelfApprovalForbidden("不能审核自己提交的基线版本")
     if not (comment or "").strip():
         raise ReviewCommentRequired("驳回必须填写意见")
@@ -1397,7 +1417,11 @@ def reject_review(
         target_type="baseline_revision",
         target_id=revision.id,
         before_data={"status": "submitted"},
-        after_data={"status": "rejected", "comment": comment},
+        after_data={
+            "status": "rejected",
+            "comment": comment,
+            "self_approved": self_approved,
+        },
         reason=comment,
     )
     session.commit()

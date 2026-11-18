@@ -200,7 +200,10 @@ def test_ac_36_add_member(client: TestClient, db: Session) -> None:
     assert db.get(ProjectMember, (project.id, target.id)).role == "member"
 
     audit = db.execute(
-        select(AuditLog).where(AuditLog.action == "project.member.add")
+        select(AuditLog).where(
+            AuditLog.action == "project.member.add",
+            AuditLog.project_id == project.id,
+        )
     ).scalar_one()
     assert audit.actor_id == admin.id
     assert audit.target_type == "project_member"
@@ -391,7 +394,10 @@ def test_ac_37_update_role(client: TestClient, db: Session) -> None:
     assert db.get(ProjectMember, (project.id, target.id)).role == "guest"
 
     audit = db.execute(
-        select(AuditLog).where(AuditLog.action == "project.member.role")
+        select(AuditLog).where(
+            AuditLog.action == "project.member.role",
+            AuditLog.project_id == project.id,
+        )
     ).scalar_one()
     assert audit.before_data == {"role": "member"}
     assert audit.after_data == {"role": "guest"}

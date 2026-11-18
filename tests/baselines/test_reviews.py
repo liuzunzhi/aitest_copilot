@@ -1,7 +1,14 @@
-"""审核与快照用例：AC-69 审核流程、AC-70 快照不可变与版本递增。"""
+"""审核与快照用例：AC-69 审核流程、AC-70 快照不可变与版本递增。
+
+2026-11-18 起，自审由 `system_settings.allow_baseline_self_approval` 控制
+（迁移 0018，默认 True = 内部单人环境放行）。开关关闭时仍是 403。
+"""
 
 from fastapi.testclient import TestClient
+from sqlalchemy.orm import Session
 
+from app.common.settings import get_setting, set_setting
+from app.models.system import AuditLog
 from tests.baselines.helpers import (
     BASE,
     build_structure,
@@ -81,8 +88,9 @@ def test_ac_69_reject_requires_comment(client: TestClient, project, headers, rev
     assert detail["version_no"] is None
 
 
-def test_ac_69_self_approval_forbidden(client: TestClient, project, headers):
-    """提交者本人审核 → 403 SELF_APPROVAL_FORBIDDEN。"""
+def test_ac_69_self_approval_forbidden(client: TestClient, db: Session, project, headers):
+    """提交者本人审核 → 403 SELF_APPROVAL_FORBIDDEN（开关关闭时）。"""
+    set_setting(db, "allow_baseline_self_approval", False)
     build_structure(client, headers, project.id)
     submitted = submit_review(client, headers, project.id)
 
@@ -93,6 +101,60 @@ def test_ac_69_self_approval_forbidden(client: TestClient, project, headers):
     )
     assert response.status_code == 403
     assert response.json()["code"] == "SELF_APPROVAL_FORBIDDEN"
+
+
+def test_ac_69_self_approval_allowed_when_switch_on(
+    client: TestClient, db: Session, project, headers
+):
+    """开关打开（内部单人环境默认）：提交者本人审核 → 通过。
+
+    PRD 要求双人复核，但内部环境常常只有一个管理员账号，
+    规则会变成死锁。开关默认 True（迁移 0018 播种）。
+    """
+    set_setting(db, "allow_baseline_self_approval", True)
+    build_structure(client, headers, project.id)
+    submitted = submit_review(client, headers, project.id)
+
+    response = client.post(
+        REVIEWS.format(project_id=project.id) + f"/{submitted['id']}/approve",
+        json={"comment": "单人环境自审放行"},
+        headers=headers,
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["status"] == "approved"
+    assert body["version_no"] == 0
+    assert body["module_count"] == 1
+
+    # 审计里标记 self_approved，事后能分辨「双人复核」与「单人兜底」
+    audit = (
+        db.query(AuditLog)
+        .filter_by(action="baseline.revision.approve", target_id=str(submitted["id"]))
+        .one()
+    )
+    assert audit.after_data["self_approved"] is True
+
+
+def test_ac_69_self_approval_switch_defaults_to_true(db: Session):
+    """迁移 0018 播种的默认值是 True——内部环境开箱即用。"""
+    assert get_setting("allow_baseline_self_approval", db) is True
+
+
+def test_ac_69_self_reject_allowed_when_switch_on(
+    client: TestClient, db: Session, project, headers
+):
+    """开关打开时，自审驳回也放行（否则「只能提交、不能处理」仍是死路）。"""
+    set_setting(db, "allow_baseline_self_approval", True)
+    build_structure(client, headers, project.id)
+    submitted = submit_review(client, headers, project.id)
+
+    response = client.post(
+        REVIEWS.format(project_id=project.id) + f"/{submitted['id']}/reject",
+        json={"comment": "结构还没建全"},
+        headers=headers,
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["status"] == "rejected"
 
 
 def test_ac_69_duplicate_review(client: TestClient, project, headers, reviewer_headers):

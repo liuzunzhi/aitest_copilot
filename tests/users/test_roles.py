@@ -61,7 +61,10 @@ def test_ac_45_promote_writes_audit(client: TestClient, db: Session, admin: User
     db.expire_all()
     assert db.get(User, target.id).global_role == "system_admin"
     audit = db.execute(
-        select(AuditLog).where(AuditLog.action == "user.role.change")
+        select(AuditLog).where(
+            AuditLog.action == "user.role.change",
+            AuditLog.target_id == str(target.id),
+        )
     ).scalar_one()
     assert audit.actor_id == admin.id
     assert audit.target_id == str(target.id)
@@ -83,7 +86,10 @@ def test_ac_45_demote(client: TestClient, db: Session, admin: User):
 
     db.expire_all()
     audit = db.execute(
-        select(AuditLog).where(AuditLog.action == "user.role.change")
+        select(AuditLog).where(
+            AuditLog.action == "user.role.change",
+            AuditLog.target_id == str(target.id),
+        )
     ).scalar_one()
     assert audit.before_data == {"global_role": "system_admin"}
     assert audit.after_data == {"global_role": "user"}
@@ -159,7 +165,10 @@ def test_ac_45_same_role_does_not_write_audit(
     assert response.status_code == 200
     assert (
         db.execute(
-            select(AuditLog).where(AuditLog.action == "user.role.change")
+            select(AuditLog).where(
+                AuditLog.action == "user.role.change",
+                AuditLog.actor_id == admin.id,
+            )
         ).first()
         is None
     )

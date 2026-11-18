@@ -13,7 +13,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.common import clock as clock_module
-from app.common.captcha import create_captcha, get_redis
+from app.common.captcha import get_redis
 from app.common.clock import FixedClock
 from app.common.config import get_settings
 from app.common.security import hash_password
@@ -124,7 +124,6 @@ def _lock_user(client: TestClient, user: User) -> None:
 
 
 def _register(client: TestClient, db: Session, monkeypatch) -> None:
-    captcha = create_captcha()
     suffix = uuid.uuid4().hex[:8]
     response = client.post(
         REGISTER,
@@ -133,8 +132,6 @@ def _register(client: TestClient, db: Session, monkeypatch) -> None:
             "password": PASSWORD,
             "email": f"cov-new-{suffix}@example.com",
             "phone": None,
-            "captcha": captcha.code,
-            "captcha_id": captcha.id,
         },
     )
     assert response.status_code == 201, response.text

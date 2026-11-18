@@ -142,7 +142,7 @@ def test_pending_unique(db: Session):
 
 
 def test_seed_settings(db: Session):
-    """种子迁移写入 6 个默认配置（T08）。
+    """种子迁移写入默认配置（T08；0018 起多一项自审开关）。
 
     断言 JSON 标量的类型：`28800` 必须是数字而非字符串 "28800"，
     否则后续 `get_setting` 里的数值比较与运算会出错。
@@ -156,6 +156,7 @@ def test_seed_settings(db: Session):
         "max_login_failures",
         "lock_duration_minutes",
         "apply_cooldown_hours",
+        "allow_baseline_self_approval",
     }
     assert settings["token_ttl_seconds"] == 28800
     assert settings["remember_ttl_seconds"] == 2592000
@@ -163,3 +164,5 @@ def test_seed_settings(db: Session):
     assert settings["lock_duration_minutes"] == 30
     assert settings["apply_cooldown_hours"] == 24
     assert settings["enable_project_apply"] is True
+    # 内部测试环境：单人管理员自审放行（迁移 0018 播种）
+    assert settings["allow_baseline_self_approval"] is True

@@ -182,6 +182,54 @@
 
 ---
 
+## 待办（对外发布前必须补回）
+
+### TOD-01 · 注册的图形验证码（AC-11）—— 2026-11-18 用户裁决移除
+
+**背景**：本项目是**内部测试环境**，注册入口不对外开放。图形验证码需要
+Redis + 验证码生成接口 + 前端渲染，徒增操作成本，用户裁决**直接移除**。
+
+**已做的改动**：
+
+- `app/auth/service.py::register` 去掉 `captcha_id` / `captcha` 参数与
+  `_ensure_captcha` 校验；删掉 `_ensure_captcha` 函数；
+- `app/auth/router.py::RegisterRequest` 删掉 `captcha` / `captcha_id` 字段；
+- `app/common/errors.py` 删掉 `CaptchaRequired` / `CaptchaInvalid`；
+- `app/common/captcha.py` 删掉 `create_captcha` / `verify_captcha` /
+  `Captcha` / `CAPTCHA_TTL_SECONDS` / `CAPTCHA_LENGTH` / `CAPTCHA_ALPHABET`
+  （**密码重置验证码整套保留**，那是 AC-12，不在本次范围）；
+- `tests/auth/test_register.py` 删掉 4 条验证码用例，补 2 条「不带验证码也能注册」；
+- `tests/common/test_captcha.py` 删掉 5 条图形验证码用例，只留重置验证码。
+
+**对外发布前要补回**（缺一不可）：
+
+1. `app/common/captcha.py` 恢复 `create_captcha` / `verify_captcha`；
+2. **新增验证码生成接口** —— `create_captcha()` 目前**没有任何路由暴露**
+   （这是原有遗漏，不是本次删除造成的），注册页根本拿不到验证码；
+3. `app/auth/router.py::RegisterRequest` 加回 `captcha` / `captcha_id`；
+4. `app/auth/service.py::register` 加回校验，错误码 `CAPTCHA_REQUIRED` /
+   `CAPTCHA_INVALID`；
+5. `app/common/errors.py` 加回两个错误类；
+6. 前端补注册页与验证码图片渲染；
+7. 恢复 `tests/auth/test_register.py` 的验证码用例与 `tests/common/test_captcha.py`
+   的图形验证码用例。
+
+**AC 口径变更**：AC-11 在本环境**不生效**。spec.md 的 AC-11 描述保留原文
+（那是对外发布后的目标态），但当前实现不再校验。
+
+### TOD-02 · 基线审核「分点审核」与「从文档推导」
+
+- **分点审核**：当前审核是「整包通过 / 整包驳回」。真实业务需要审核人看到
+  模块 / 功能 / 功能点清单，勾选部分通过、局部驳回。
+  需要新表（`baseline_review_items`）+ 新接口 + 新前端。
+  **待定业务语义**：「部分通过」的条目算不算进基线？
+- **从文档推导基线**：spec §2 明确「本期不做（依赖 LLM，见 05）」。
+  06 期 LLM 已通，技术上可行，但从未实现。
+  数据模型的 `source_type='document_derived'` 与 `source_document_id` 等
+  追溯字段**已预留**。
+
+---
+
 ## AC 覆盖索引
 
 | AC | 任务 | AC | 任务 |
@@ -196,7 +244,7 @@
 | 08 注册即激活 | T14 | 23 审批权限边界 | T23 |
 | 09 唯一性 | T14 | 24 归档关闭申请 | T24 |
 | 10 密码强度 | T14 | 25 全链路审计 | T26 |
-| 11 验证码 | T14 | 26 项目列表过滤 | T19 |
+| 11 验证码 | T14（**已移除，见 TOD-01**） | 26 项目列表过滤 | T19 |
 | 12 密码找回 | T17 | 27 非成员 403 | T19 |
 | 13 提交申请 | T20 | 28 无项目引导 | T19 + T27 |
 | 14 理由必填 | T20 | 29 可申请列表 | T19 |

@@ -63,6 +63,36 @@
 > **05 仍是纯增量改动**——`app/incremental/service.py` 只多了写日志的调用，
 > 判定逻辑与业务语义一个字节没动（`git diff` 实测 +90 / -0）。
 
+### T87 之后的两项内部环境适配（2026-11-18）
+
+> 用户裁决：这是**内部测试环境**，单人管理员是常态。两处调整让 L2 联调能跑通。
+
+1. **注册去掉图形验证码**（AC-11 在本环境不生效）。
+   `app/common/captcha.py` 只保留**密码重置验证码**（AC-12）；
+   `CaptchaRequired` / `CaptchaInvalid` 错误类一并删除。
+   对外发布前要补回的完整清单见 `specs/01-auth/tasks.md` 的 **TOD-01**。
+2. **基线审核允许自审**（迁移 `0018` 播种 `allow_baseline_self_approval=True`）。
+   原来的「提交者不能审自己的提交」在只有一个管理员账号时是**死锁**。
+   开关打开时 `approve_review` / `reject_review` 都放行，
+   审计 `after_data.self_approved` 留痕；对外发布前改回 False。
+   详见 `specs/04-baseline/tasks.md` 的「04 补记」。
+3. **测试隔离真实大模型配置**：`tests/conftest.py` 新增 autouse 夹具，
+   用例期间摘掉 `llm_providers` 的默认配置行。
+   之前开发库里配了真 MiniMax 后，测试会**真的发网络请求**——
+   既违反「任何测试不允许产生真实 socket」，又不确定。
+4. **修 9 处「全表查审计」的脆弱断言**：审计查询改成按
+   `actor_id` / `project_id` / `target_id` 过滤。
+   开发库有了真实数据（手工建的项目、改角色留下的审计）后，
+   全表比对必然失败——`git stash` 验证过这些失败在改动前就存在。
+
+### 04 待办（用户 2026-11-18 提出，已登记）
+
+- **TOD-03 分点审核**：整包审核 → 逐项勾选通过 / 局部驳回。
+  需要新表 `baseline_review_items` + 新接口 + 新前端。
+  **业务语义待裁决**：「部分通过」的条目算不算进基线？
+- **TOD-04 从文档推导基线**：spec §2 明确本期不做，06 期 LLM 已通，
+  技术上可行但从未实现。跨 03 + 04，建议单独立项。
+
 ### T87 已完成（前端系统设置页 + 05 动态模板 + L1 端到端）
 
 > 范围：`AdminSettingsPage`（大模型配置 / 提示词模板两个 Tab）、`/admin/settings`
@@ -112,12 +142,12 @@
 
 | 项 | 值 |
 |---|---|
-| 后端全量 pytest | **814 passed**（串行；T87 收尾复核，基线 732 + T85/T86 80 + L1 2） |
+| 后端全量 pytest | **811 passed**（串行；T87 后 + 0018 免审核开关 + 验证码移除） |
 | e2e | **39 passed**（含增量分析第一期 2 条 + 第二期 3 条 + 第三期 2 条 + PDF 1 条 + 系统设置 2 条），一条命令 `.\.venv\Scripts\python.exe scripts\run_e2e.py`（8001/5174 + `aitest_copilot_e2e`） |
 | 前端构建 | `npm run build`（`web/` 目录，端口 5173，代理到 8000） |
 | 开跑前自检 | `.\.venv\Scripts\python.exe scripts\dev_check.py`（跑 e2e 时加 `--expect-db e2e`） |
 | 账号 | `admin` / `Admin12345` |
-| 迁移 head | **`0017`**（06 期 T84 建；T84-PDF 不动迁移） |
+| 迁移 head | **`0018`**（06 期 T84 建 `0017`；2026-11-18 补 `0018` 免审核开关） |
 | 截图目录 | 仓库根 `.screenshots/`（`E2E_SCREENSHOT_DIR` 可覆盖） |
 | 运行时依赖 | `pdfplumber>=0.11`（T84-PDF 新增）；**`cryptography>=43`（T84 新增）、`httpx>=0.28`（T84 从 dev 移入）** |
 | 环境变量 | **新增必填 `LLM_SECRET_KEY`**（已写入本地 `.env`，随机生成，不入库；`.env.example` 有说明） |

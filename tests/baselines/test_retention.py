@@ -113,7 +113,10 @@ def test_ac_72_delete_unreferenced(client: TestClient, project, headers, reviewe
     assert response.json()["deleted"] is True
 
     logs = db.scalars(
-        select(AuditLog).where(AuditLog.action == "baseline.snapshot.delete")
+        select(AuditLog).where(
+            AuditLog.action == "baseline.snapshot.delete",
+            AuditLog.target_id == str(snapshot["id"]),
+        )
     ).all()
     assert len(logs) == 1
     assert logs[0].project_id == project.id

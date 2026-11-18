@@ -22,16 +22,6 @@ class AppError(Exception):
         super().__init__(self.message)
 
 
-class CaptchaRequired(AppError):
-    status_code = 400
-    code = "CAPTCHA_REQUIRED"
-
-
-class CaptchaInvalid(AppError):
-    status_code = 400
-    code = "CAPTCHA_INVALID"
-
-
 class WeakPassword(AppError):
     status_code = 400
     code = "WEAK_PASSWORD"
@@ -701,8 +691,6 @@ __all__ = [
     "ApplicationNotPending",
     "ApplyCooldown",
     "ApplyDisabled",
-    "CaptchaInvalid",
-    "CaptchaRequired",
     "BaselineRevisionRequired",
     "CannotChangeOwnRole",
     "CannotRemoveSelf",

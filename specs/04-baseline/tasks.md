@@ -139,8 +139,89 @@
   - 验证：`pytest -k ac_04_cleanup` 11 passed；全量 484 passed；e2e 29 passed；
     `npm run build` 通过。
 
-## T67 验证记录（2026-11-17）
+## 04 补记 · 单人环境免审核（2026-11-18）
 
+### 新增配置项 `allow_baseline_self_approval`（迁移 0018）
+
+**背景**：PRD 要求「提交者不能审核自己的提交」（AC-69）。但本项目是**内部
+测试环境**，系统里常常只有**一个**管理员账号（`admin`），此时：
+
+```
+admin 提交 → 只有 admin 能审 → admin 不能审自己 → 永久死锁
+```
+
+2026-11-18 用户裁决：加**开关**而不是改规则。
+
+| 项 | 值 |
+|---|---|
+| 配置键 | `system_settings.allow_baseline_self_approval` |
+| 默认值 | **True**（内部环境开箱即用） |
+| 迁移 | `0018_allow_self_approval.py`（`down_revision="0017"`） |
+| 生效范围 | `approve_review` 与 `reject_review` 两条路径 |
+| 审计留痕 | `after_data.self_approved = true/false` |
+
+**为什么两条路径都改**：只放开「通过」的话，「只能提交、不能驳回」仍是死路
+——提交错了也撤不回来。
+
+**为什么开关缺失时默认放行**（`_self_approval_allowed` 的 `except KeyError`）：
+老库没跑 0018 时不至于 500，内部环境宁可能跑通。
+
+**对外发布前**必须把默认值改回 False（或用 `set_setting` 关掉），
+恢复 PRD 的双人复核语义。
+
+### 实现要点
+
+- 开关读 `system_settings`，走 `get_setting`（进程内缓存 60s）；
+  改配置后最多 60s 生效，需要立即生效时用 `set_setting`（它会失效缓存）。
+- `SelfApprovalForbidden` 错误码与 403 语义**完全保留**，只是触发条件变了。
+
+### 验证
+
+- `tests/baselines/test_reviews.py`：
+  - `test_ac_69_self_approval_forbidden` —— 开关**关闭**时仍 403；
+  - `test_ac_69_self_approval_allowed_when_switch_on` —— 开关**打开**时通过，
+    且审计 `self_approved=True`；
+  - `test_ac_69_self_reject_allowed_when_switch_on` —— 自审驳回也放行；
+  - `test_ac_69_self_approval_switch_defaults_to_true` —— 默认值断言。
+- 后端全量 **811 passed**（串行）。
+
+## 04 待办 · 分点审核与从文档推导（2026-11-18 用户提出）
+
+### TOD-03 · 分点审核（局部通过 / 局部驳回）
+
+**现状**：审核是**整包**语义——一次提交 → 整体通过 / 整体驳回 → 冻结整棵结构。
+
+**用户诉求**：管理员要能看到包裹里具体的模块 / 功能 / 功能点，
+**勾选部分通过、局部驳回**。
+
+**需要的改动**（跨数据模型 / 接口 / 前端，不是改前端就行）：
+
+1. 新表 `baseline_review_items`：`revision_id` + `entity_type`
+   （module / function / feature_point）+ `entity_id` + `decision`
+   （approved / rejected）+ `comment`；
+2. 审核接口要收「逐项决策」载荷，冻结时**只冻结通过的条目**；
+3. 前端审核界面从「通过 / 驳回」两个按钮改成**带勾选框的三级树**
+   + 批量通过 / 批量驳回；
+4. 快照语义从「整包冻结」变成「子集冻结」。
+
+**待定业务语义**（做之前必须先定）：「部分通过」的条目到底算不算进基线？
+若算，05 的增量分析读的是**当前结构表**（`app/incremental/context.py`
+的 `baseline_index`），不是快照——那么「部分通过」要生效，得改的是
+**结构表**而不是快照，与「快照不可变」的原则冲突。这个语义要先裁决。
+
+### TOD-04 · 从文档推导基线
+
+spec §2 明确「文档推导、基线反推本期不做（依赖 LLM，见 05）」。
+06 期 LLM 已通（迁移 0017 + `OpenAICompatProvider`），技术上可行，
+但**从未实现**。
+
+数据模型已预留追溯字段：`source_type='document_derived'`、
+`source_document_id` / `source_version_id` / `source_chapter_id` /
+`source_method` / `source_analysis_id`。
+
+跨 03 + 04 两个模块，建议单独立项。
+
+## T67 验证记录（2026-11-17）
 | 项 | 结果 |
 |---|---|
 | `pytest -k ac_04_cleanup` | 11 passed（502 deselected） |

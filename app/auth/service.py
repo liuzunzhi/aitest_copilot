@@ -16,15 +16,12 @@ from app.common.audit import write_audit
 from app.common.captcha import (
     RateLimited as CaptchaRateLimited,
     send_reset_code as issue_reset_code,
-    verify_captcha,
     verify_reset_code,
 )
 from app.common.clock import utcnow_naive
 from app.common.errors import (
     AccountDisabled,
     AccountLocked,
-    CaptchaInvalid,
-    CaptchaRequired,
     ContactTaken,
     InvalidCredentials,
     InvalidResetCode,
@@ -55,16 +52,16 @@ def register(
     password: str,
     email: str | None,
     phone: str | None,
-    captcha_id: str | None,
-    captcha: str | None,
 ) -> User:
     """注册即激活（AC-08）。
 
-    顺序：密码强度 → 验证码 → 落库。
-    强度先查，避免用户改完密码还得重新拿验证码。
+    顺序：密码强度 → 落库。
+
+    **不再校验图形验证码**（2026-11-18 用户裁决）：本项目是内部测试环境，
+    注册入口不对外开放，图形验证码徒增操作成本。
+    对外发布前需要补回，见 `specs/01-auth/tasks.md` 的待办记录。
     """
     ensure_password_strength(password)
-    _ensure_captcha(captcha_id, captcha)
 
     user = User(
         username=username,
@@ -347,14 +344,6 @@ def ensure_password_strength(password: str) -> None:
     has_digit = any(char.isascii() and char.isdigit() for char in password)
     if len(password) < MIN_PASSWORD_LENGTH or not has_letter or not has_digit:
         raise WeakPassword("密码至少 8 位，且需同时包含字母和数字")
-
-
-def _ensure_captcha(captcha_id: str | None, captcha: str | None) -> None:
-    """AC-11：缺失与错误分开报，便于前端区分刷新还是提示。"""
-    if not captcha_id or not captcha:
-        raise CaptchaRequired("图形验证码必填")
-    if not verify_captcha(captcha_id, captcha):
-        raise CaptchaInvalid("图形验证码错误或已过期")
 
 
 def _duplicate_error(exc: IntegrityError) -> Exception:

@@ -104,7 +104,11 @@ def test_list_requires_login(client: TestClient):
 
 
 def test_available_returns_all_unjoined_projects(client: TestClient, db: Session):
-    """AC-29：返回全部未加入的项目，不返回已加入的。"""
+    """AC-29：返回全部未加入的项目，不返回已加入的。
+
+    只断言**本用例造出来的**项目：开发库里可能有管理员手工建的项目，
+    全表比对会因那些数据而失败。
+    """
     user = _user(db)
     joined = _project(db)
     second = _project(db)
@@ -114,25 +118,36 @@ def test_available_returns_all_unjoined_projects(client: TestClient, db: Session
     response = client.get(AVAILABLE, headers=_auth(client, user))
 
     assert response.status_code == 200
-    assert [item["id"] for item in response.json()] == [second.id, third.id]
-    assert joined.id not in [item["id"] for item in response.json()]
+    ids = [item["id"] for item in response.json()]
+    assert second.id in ids
+    assert third.id in ids
+    assert joined.id not in ids
 
 
 def test_available_excludes_archived(client: TestClient, db: Session):
     """归档项目无法再加入，不出现在可申请列表里。"""
     user = _user(db)
     active = _project(db)
-    _project(db, status="archived")
+    archived = _project(db, status="archived")
 
     response = client.get(AVAILABLE, headers=_auth(client, user))
 
-    assert [item["id"] for item in response.json()] == [active.id]
+    ids = [item["id"] for item in response.json()]
+    assert active.id in ids
+    assert archived.id not in ids
 
 
 def test_available_empty_state(client: TestClient, db: Session):
-    """AC-30 的后端部分：没有可申请项目时返回空数组。"""
+    """AC-30 的后端部分：没有可申请项目时返回空数组。
+
+    把当前所有生效项目都加入该用户 → 可申请列表必然为空。
+    这样断言不依赖开发库里有没有别的手工项目。
+    """
     user = _user(db)
-    _join(db, _project(db), user)
+    for project in db.scalars(
+        select(Project).where(Project.status == "active")
+    ).all():
+        _join(db, project, user)
 
     response = client.get(AVAILABLE, headers=_auth(client, user))
 
@@ -148,7 +163,7 @@ def test_available_not_affected_by_apply_switch(client: TestClient, db: Session)
 
     response = client.get(AVAILABLE, headers=_auth(client, user))
 
-    assert [item["id"] for item in response.json()] == [open_project.id]
+    assert open_project.id in [item["id"] for item in response.json()]
 
 
 def test_scoped_repo_rejects_non_member(db: Session):

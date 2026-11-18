@@ -356,11 +356,18 @@ def test_ac_109_invalid_status_returns_400(client: TestClient, db: Session):
 
 def test_ac_113_create_writes_audit_without_secrets(client: TestClient, db: Session):
     """新建 → 写 `llm.provider.create`，审计里没有明文 / 密文。"""
-    headers = _login(client, _admin(db))
+    admin = _admin(db)
+    headers = _login(client, admin)
 
     _create(client, headers)
 
-    log = db.scalar(select(AuditLog).where(AuditLog.action == "llm.provider.create"))
+    # 按操作者过滤——开发库里可能有别的管理员留下的同名审计
+    log = db.scalar(
+        select(AuditLog).where(
+            AuditLog.action == "llm.provider.create",
+            AuditLog.actor_id == admin.id,
+        )
+    )
     assert log is not None
     assert log.target_type == "llm_provider"
     assert log.target_id is not None
@@ -372,7 +379,8 @@ def test_ac_113_create_writes_audit_without_secrets(client: TestClient, db: Sess
 
 def test_ac_113_update_writes_audit_with_before_and_after(client: TestClient, db: Session):
     """更新 → 写 `llm.provider.update`，带 before + after。"""
-    headers = _login(client, _admin(db))
+    admin = _admin(db)
+    headers = _login(client, admin)
     created = _create(client, headers)
 
     client.put(
@@ -381,7 +389,12 @@ def test_ac_113_update_writes_audit_with_before_and_after(client: TestClient, db
         headers=headers,
     )
 
-    log = db.scalar(select(AuditLog).where(AuditLog.action == "llm.provider.update"))
+    log = db.scalar(
+        select(AuditLog).where(
+            AuditLog.action == "llm.provider.update",
+            AuditLog.actor_id == admin.id,
+        )
+    )
     assert log is not None
     assert log.before_data["model"] == "deepseek-chat"
     assert log.after_data["model"] == "deepseek-reasoner"
@@ -392,7 +405,8 @@ def test_ac_113_update_writes_audit_with_before_and_after(client: TestClient, db
 
 def test_ac_113_failed_create_writes_no_audit(client: TestClient, db: Session):
     """校验失败 → 不写审计。"""
-    headers = _login(client, _admin(db))
+    admin = _admin(db)
+    headers = _login(client, admin)
 
     response = client.post(
         PROVIDERS, json=_payload(base_url="ftp://x"), headers=headers
@@ -401,7 +415,10 @@ def test_ac_113_failed_create_writes_no_audit(client: TestClient, db: Session):
     assert response.status_code == 400
     assert (
         db.scalar(
-            select(AuditLog).where(AuditLog.action == "llm.provider.create")
+            select(AuditLog).where(
+                AuditLog.action == "llm.provider.create",
+                AuditLog.actor_id == admin.id,
+            )
         )
         is None
     )
@@ -430,7 +447,10 @@ def test_ac_114_success_returns_200_ok_true(client: TestClient, db: Session):
     assert row.last_test_at is not None
 
     logs = db.scalars(
-        select(LLMRunLog).where(LLMRunLog.task_type == "provider_test")
+        select(LLMRunLog).where(
+            LLMRunLog.task_type == "provider_test",
+            LLMRunLog.provider_name == "DeepSeek 生产",
+        )
     ).all()
     assert len(logs) == 1
     assert logs[0].status == "succeeded"
@@ -462,7 +482,10 @@ def test_ac_114_failure_returns_200_ok_false(client: TestClient, db: Session):
     assert row.last_test_error
 
     logs = db.scalars(
-        select(LLMRunLog).where(LLMRunLog.task_type == "provider_test")
+        select(LLMRunLog).where(
+            LLMRunLog.task_type == "provider_test",
+            LLMRunLog.provider_name == "DeepSeek 生产",
+        )
     ).all()
     assert len(logs) == 1
     assert logs[0].status == "failed"

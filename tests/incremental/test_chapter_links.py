@@ -281,7 +281,10 @@ def test_ac_96_manual_link_writes_audit(client: TestClient, db: Session):
     assert response.status_code == 201, response.text
 
     log = db.scalar(
-        select(AuditLog).where(AuditLog.action == "document.chapter_link.create")
+        select(AuditLog).where(
+            AuditLog.action == "document.chapter_link.create",
+            AuditLog.project_id == project.id,
+        )
     )
     assert log is not None
     assert log.project_id == project.id
