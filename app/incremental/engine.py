@@ -27,7 +27,12 @@ from sqlalchemy.orm import Session
 
 from app.common.config import get_settings
 from app.common.errors import LLMCallFailed, LLMOutputInvalid
-from app.incremental.context import baseline_index, build_system_prompt, build_user_prompt
+from app.incremental.context import (
+    baseline_index,
+    build_system_prompt,
+    build_user_prompt,
+    render_baseline_brief,
+)
 from app.llm.json_utils import parse_llm_json
 from app.llm.provider import LLMProvider
 from app.llm.schemas import LLMRequest
@@ -148,10 +153,16 @@ def _process_chapter(
     index: dict[tuple[str, int], str],
     chapter_count: int,
     max_chars: int,
+    baseline_brief: str = "",
 ) -> ChapterResult:
     """单章节：调模型 → 解析 → 分类。任何不合法立即抛错，不续跑。"""
     system = build_system_prompt(template)
-    prefix_len = len(template.user_prompt) + len(chapter.title) + len("\n\n## 章节：\n")
+    prefix_len = (
+        len(template.user_prompt)
+        + len(baseline_brief)
+        + len(chapter.title)
+        + len("\n\n## 章节：\n")
+    )
     if prefix_len + len(chapter.content) > max_chars:
         logger.warning(
             "章节 %s「%s」Prompt 超过 %s 字符，已截断正文",
@@ -159,7 +170,12 @@ def _process_chapter(
             chapter.title,
             max_chars,
         )
-    user = build_user_prompt(template, chapter, max_chars=max_chars)
+    user = build_user_prompt(
+        template,
+        chapter,
+        max_chars=max_chars,
+        baseline_brief=baseline_brief,
+    )
 
     try:
         response = provider.chat(LLMRequest(system=system, user=user))
@@ -254,6 +270,9 @@ def run_first_pass(
     chapter_count = len(chapters)
     index = baseline_index(session, project_id=analysis.project_id)
     max_chars = get_settings().incremental_max_input_chars
+    # 基线清单：真实模型必须看到可用目标才能给出合法的 target_id。
+    # 整次分析共用一份，渲染一次即可。
+    baseline_brief = render_baseline_brief(index, max_chars=max_chars)
 
     conclusions: list[PendingConclusion] = []
     discarded: list[dict[str, Any]] = []
@@ -269,6 +288,7 @@ def run_first_pass(
             index=index,
             chapter_count=chapter_count,
             max_chars=max_chars,
+            baseline_brief=baseline_brief,
         )
         conclusions.extend(result.conclusions)
         discarded.extend(result.discarded)

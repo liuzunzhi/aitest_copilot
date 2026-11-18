@@ -23,10 +23,25 @@ from tests.incremental import helpers as H
 SECOND_PASS = "/api/projects/{project_id}/incremental/analyses/{analysis_id}/second-pass"
 
 
-def _run_logs(db: Session, task_type: str | None = None) -> list[LLMRunLog]:
+def _run_logs(
+    db: Session,
+    task_type: str | None = None,
+    *,
+    project_id: int | None = None,
+    analysis_id: int | None = None,
+) -> list[LLMRunLog]:
+    """查留痕行。
+
+    **必须按项目 / 分析过滤**：开发库里可能有管理员手工跑的真实分析
+    （L2 联调留下的行），全表查会把那些行算进来。
+    """
     query = select(LLMRunLog)
     if task_type:
         query = query.where(LLMRunLog.task_type == task_type)
+    if project_id is not None:
+        query = query.where(LLMRunLog.project_id == project_id)
+    if analysis_id is not None:
+        query = query.where(LLMRunLog.analysis_id == analysis_id)
     return list(db.scalars(query.order_by(LLMRunLog.id)).all())
 
 
@@ -55,7 +70,7 @@ def test_ac_112_first_pass_writes_run_log(client: TestClient, db: Session, provi
     response = _first_pass(client, db, provider, chain)
 
     assert response.status_code == 201, response.text
-    logs = _run_logs(db, "incremental_first")
+    logs = _run_logs(db, "incremental_first", project_id=chain["project"].id)
     assert len(logs) == 1
     log = logs[0]
     assert log.status == "succeeded"
@@ -75,7 +90,7 @@ def test_ac_112_first_pass_records_provider_identity(
 
     _first_pass(client, db, provider, chain)
 
-    log = _run_logs(db, "incremental_first")[0]
+    log = _run_logs(db, "incremental_first", project_id=chain["project"].id)[0]
     assert log.provider_name == "mock"
     assert log.model == "mock"
 
@@ -93,7 +108,7 @@ def test_ac_112_call_count_is_per_task_not_cumulative(
     _first_pass(client, db, provider, chain)
     _first_pass(client, db, provider, chain)
 
-    logs = _run_logs(db, "incremental_first")
+    logs = _run_logs(db, "incremental_first", project_id=chain["project"].id)
     assert len(logs) == 2
     assert [log.call_count for log in logs] == [1, 1]
 
@@ -117,7 +132,7 @@ def test_ac_112_first_pass_failure_writes_failed_log(
     )
 
     assert response.status_code == 502
-    logs = _run_logs(db, "incremental_first")
+    logs = _run_logs(db, "incremental_first", project_id=chain["project"].id)
     assert len(logs) == 1
     assert logs[0].status == "failed"
     assert logs[0].error_code == "LLM_OUTPUT_INVALID"
@@ -153,7 +168,7 @@ def test_ac_112_provider_call_failure_writes_llm_call_failed(
     )
 
     assert response.status_code == 502
-    logs = _run_logs(db, "incremental_first")
+    logs = _run_logs(db, "incremental_first", project_id=chain["project"].id)
     assert len(logs) == 1
     assert logs[0].status == "failed"
     assert logs[0].error_code == "LLM_CALL_FAILED"
@@ -201,7 +216,7 @@ def test_ac_112_second_pass_writes_run_log(
     )
 
     assert response.status_code == 200, response.text
-    logs = _run_logs(db, "incremental_second")
+    logs = _run_logs(db, "incremental_second", project_id=chain["project"].id)
     assert len(logs) == 1
     log = logs[0]
     assert log.status == "succeeded"
@@ -227,7 +242,7 @@ def test_ac_112_second_pass_failure_writes_failed_log(
     )
 
     assert response.status_code == 502
-    logs = _run_logs(db, "incremental_second")
+    logs = _run_logs(db, "incremental_second", project_id=chain["project"].id)
     assert len(logs) == 1
     assert logs[0].status == "failed"
     assert logs[0].error_code == "LLM_OUTPUT_INVALID"
@@ -265,8 +280,8 @@ def test_ac_112_first_and_second_pass_write_separate_logs(
     )
     assert response.status_code == 200, response.text
 
-    assert len(_run_logs(db, "incremental_first")) == 1
-    assert len(_run_logs(db, "incremental_second")) == 1
+    assert len(_run_logs(db, "incremental_first", project_id=chain["project"].id)) == 1
+    assert len(_run_logs(db, "incremental_second", project_id=chain["project"].id)) == 1
 
 
 # ------------------------------------------------------------ 明文边界
@@ -280,7 +295,7 @@ def test_ac_112_run_log_has_no_prompt_body_or_tokens(
 
     _first_pass(client, db, provider, chain)
 
-    log = _run_logs(db, "incremental_first")[0]
+    log = _run_logs(db, "incremental_first", project_id=chain["project"].id)[0]
     blob = f"{log.error_message} {log.error_code} {log.provider_name} {log.model}"
     # Prompt 正文（模板里的独特标记）
     assert "[INCREMENTAL_SYSTEM]" not in blob

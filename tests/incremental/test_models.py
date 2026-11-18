@@ -136,14 +136,22 @@ def _conclusion(
 
 
 def test_ac_78_seed_template_exists(db: Session):
-    """迁移播种的 incremental 模板存在，两个 Prompt 的前缀可识别。"""
+    """迁移播种的 incremental 模板存在，两个 Prompt 的前缀可识别。
+
+    版本号是 2：迁移 0019 修正了第一遍模板的 system prompt
+    （原示例写死 `"target_id": 1`，真实模型照抄，结论全被当越界丢弃），
+    正文变了 → 版本 +1。
+    """
     template = _template(db)
 
     assert template.task_type == "incremental"
     assert template.status == "active"
-    assert template.version_no == 1
+    assert template.version_no == 2
     assert template.system_prompt.startswith("[INCREMENTAL_SYSTEM]")
     assert template.user_prompt.startswith("[INCREMENTAL_USER]")
+    # 0019 起模板必须说清 target_id 从哪来
+    assert "可对照的基线目标" in template.system_prompt
+    assert '"target_id": 1,' not in template.system_prompt
 
 
 def test_analysis_tables_roundtrip(db: Session):

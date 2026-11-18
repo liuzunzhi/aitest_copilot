@@ -131,6 +131,10 @@
   - T69：`user` 固定为 `模板 user_prompt + "\n\n## 章节：标题\n正文"`，超
     `INCREMENTAL_MAX_INPUT_CHARS`（默认 8000）只截断正文、前缀与标题保留，
     因此 AC-78 的「以模板 user_prompt 开头」恒成立。
+    > **2026-11-18 更新（06 期 L2 真实联调）**：`user` 现在多一段
+    > `## 可对照的基线目标`（基线功能 / 功能点清单），位置在模板正文与
+    > 章节标题之间。AC-78 的「以模板 user_prompt 开头」依然成立。
+    > 详见 `specs/06-real-llm/tasks.md` 的「L2 真实联调发现」。
   - T69：丢弃结论只进 `analyses.stats.discarded`，不落 `incremental_conclusions`；
     越界优先于 `new` 判定，`dropped_new_count` 由 discarded 里
     `INCREMENTAL_LABEL_NEW_DROPPED` 的条数推导，避免两份计数漂移。
