@@ -38,11 +38,14 @@ from app.common.errors import (
     DuplicateFunctionName,
     DuplicateLabel,
     DuplicateModuleName,
+    EmptyReviewApproval,
     FeaturePointNotFound,
     FunctionNotFound,
     InvalidClearReason,
     InvalidLabelType,
     InvalidMigrateTarget,
+    InvalidReviewDecision,
+    InvalidReviewItem,
     InvalidReviewStatus,
     LabelAlreadyCleared,
     LabelNotFound,
@@ -55,6 +58,8 @@ from app.common.errors import (
     ProjectNotFound,
     PromptTemplateInvalid,
     ReviewCommentRequired,
+    ReviewItemCommentRequired,
+    ReviewItemNotFound,
     ReviewNotFound,
     SelfApprovalForbidden,
     SnapshotNotFound,
@@ -72,6 +77,7 @@ from app.models.baseline import (
     BaselineRevision,
 )
 from app.models.baseline_derive import BaselineDerive, BaselineDeriveCandidate
+from app.models.baseline_review import BaselineReviewItem, BaselineReviewRound
 from app.models.document import Document, DocumentVersion
 from app.models.incremental import PromptTemplate
 from app.models.project import Project, ProjectMember
@@ -1304,6 +1310,28 @@ def submit_review(
     session.add(revision)
     session.flush()
 
+    # 分点审核：每次提交开一轮，逐项决策挂在轮次上（AC-132）。
+    # 轮次号是**项目级**单调递增的（AC-134 要求重提后是第 2 轮），
+    # 而不是按 revision 从 1 重数——旧轮次的决策要能按轮次追溯。
+    next_round_no = (
+        session.scalar(
+            select(func.max(BaselineReviewRound.round_no)).where(
+                BaselineReviewRound.project_id == project_id
+            )
+        )
+        or 0
+    ) + 1
+    review_round = BaselineReviewRound(
+        project_id=project_id,
+        revision_id=revision.id,
+        round_no=next_round_no,
+        status="pending",
+        submitted_by=actor.id,
+        submitted_at=revision.submitted_at,
+    )
+    session.add(review_round)
+    session.flush()
+
     write_audit(
         session,
         "baseline.revision.submit",
@@ -1313,6 +1341,16 @@ def submit_review(
         target_type="baseline_revision",
         target_id=revision.id,
         after_data={"status": "submitted", "comment": comment},
+    )
+    write_audit(
+        session,
+        "baseline.review.submit",
+        actor_id=actor.id,
+        actor_role=actor.global_role,
+        project_id=project_id,
+        target_type="baseline_review_round",
+        target_id=review_round.id,
+        after_data={"round_no": review_round.round_no, "revision_id": revision.id},
     )
     session.commit()
     return revision
@@ -1333,6 +1371,127 @@ def _self_approval_allowed(session: Session) -> bool:
         return True
 
 
+ENTITY_MODELS = {
+    "module": BaselineModule,
+    "function": BaselineFunction,
+    "feature_point": BaselineFeaturePoint,
+}
+
+
+def _latest_review_round(
+    session: Session, revision_id: int
+) -> BaselineReviewRound | None:
+    return session.scalar(
+        select(BaselineReviewRound)
+        .where(BaselineReviewRound.revision_id == revision_id)
+        .order_by(BaselineReviewRound.round_no.desc())
+    )
+
+
+def _review_round_or_404(session: Session, revision_id: int) -> BaselineReviewRound:
+    review_round = _latest_review_round(session, revision_id)
+    if review_round is None:
+        raise ReviewNotFound("该审核记录没有审核轮次")
+    return review_round
+
+
+def _entity_name(
+    session: Session, *, project_id: int, entity_type: str, entity_id: int
+) -> str | None:
+    model = ENTITY_MODELS.get(entity_type)
+    if model is None:
+        raise InvalidReviewItem("实体类型不合法")
+    row = session.scalar(
+        select(model).where(model.id == entity_id, model.project_id == project_id)
+    )
+    return row.name if row is not None else None
+
+
+def _apply_decisions(
+    session: Session,
+    *,
+    review_round: BaselineReviewRound,
+    project_id: int,
+    actor: User,
+    items: list,
+) -> int:
+    """校验并写入逐项决策。**先全部校验，再统一写入**——避免半批落库。"""
+    prepared: list[tuple] = []
+    for item in items:
+        if item.entity_type not in ENTITY_MODELS:
+            raise InvalidReviewItem("实体类型不合法")
+        if item.decision not in ("pending", "approved", "rejected"):
+            raise InvalidReviewDecision("审核结论不合法")
+        name = _entity_name(
+            session,
+            project_id=project_id,
+            entity_type=item.entity_type,
+            entity_id=item.entity_id,
+        )
+        if name is None:
+            raise ReviewItemNotFound("审核对象不存在或不属于该项目")
+        comment = (item.comment or "").strip() or None
+        if item.decision == "rejected" and comment is None:
+            raise ReviewItemCommentRequired("驳回条目必须填写意见")
+        prepared.append((item, name, comment))
+
+    updated = 0
+    now = _now()
+    for item, name, comment in prepared:
+        row = session.scalar(
+            select(BaselineReviewItem).where(
+                BaselineReviewItem.round_id == review_round.id,
+                BaselineReviewItem.entity_type == item.entity_type,
+                BaselineReviewItem.entity_id == item.entity_id,
+            )
+        )
+        if row is None:
+            row = BaselineReviewItem(
+                project_id=project_id,
+                round_id=review_round.id,
+                revision_id=review_round.revision_id,
+                entity_type=item.entity_type,
+                entity_id=item.entity_id,
+                entity_name=name,
+            )
+            session.add(row)
+        row.entity_name = name
+        row.decision = item.decision
+        row.comment = comment
+        row.decided_by = actor.id
+        row.decided_at = now
+        updated += 1
+    session.flush()
+    return updated
+
+
+def _round_decisions(
+    session: Session, review_round: BaselineReviewRound
+) -> list[BaselineReviewItem]:
+    return list(
+        session.scalars(
+            select(BaselineReviewItem)
+            .where(BaselineReviewItem.round_id == review_round.id)
+            .order_by(BaselineReviewItem.id)
+        ).all()
+    )
+
+
+def _decision_stats(rows: list[BaselineReviewItem]) -> dict:
+    stats = {"total": len(rows), "approved": 0, "rejected": 0, "pending": 0}
+    for row in rows:
+        stats[row.decision] += 1
+    return stats
+
+
+def _approved_set(session: Session, review_round: BaselineReviewRound) -> set:
+    return {
+        (row.entity_type, row.entity_id)
+        for row in _round_decisions(session, review_round)
+        if row.decision == "approved"
+    }
+
+
 def approve_review(
     session: Session,
     *,
@@ -1340,11 +1499,15 @@ def approve_review(
     revision_id: int,
     actor: User,
     comment: str | None = None,
+    items: list | None = None,
 ) -> BaselineRevision:
     """审核通过：冻结结构、分配版本号、把上一份快照的生效标签复制过来。
 
     标签复制成**独立行**（`revision_id` 指向新版本），
     因此旧版本上的清除动作不会波及新版本——级联清除默认关闭。
+
+    `items` 不传 = 旧行为「全部通过」（兼容旧前端与旧用例）；
+    传了 `items` = 按逐项决策冻结，未决策的节点视为未通过。
     """
     _ensure_writable_project(session, project_id)
     _ensure_admin(session, project_id=project_id, actor=actor)
@@ -1356,7 +1519,25 @@ def approve_review(
     if self_approved and not _self_approval_allowed(session):
         raise SelfApprovalForbidden("不能审核自己提交的基线版本")
 
-    structure, counts = _freeze_structure(session, project_id)
+    review_round = _latest_review_round(session, revision.id)
+    approved: set | None = None
+    if items is not None:
+        if review_round is None:
+            raise ReviewNotFound("该审核记录没有审核轮次")
+        _apply_decisions(
+            session,
+            review_round=review_round,
+            project_id=project_id,
+            actor=actor,
+            items=items,
+        )
+        approved = _approved_set(session, review_round)
+        if not approved:
+            raise EmptyReviewApproval("至少通过一条才能生成快照")
+        if comment:
+            review_round.summary_comment = comment
+
+    structure, counts = _freeze_structure(session, project_id, approved=approved)
     revision.structure_json = structure
     revision.module_count = counts["modules"]
     revision.function_count = counts["functions"]
@@ -1369,9 +1550,26 @@ def approve_review(
         revision.review_comment = comment
     session.flush()
 
-    copied = _copy_labels_forward(session, project_id, revision.id)
+    copied = _copy_labels_forward(
+        session, project_id, revision.id, approved=approved
+    )
     revision.label_count = copied
     session.flush()
+
+    if review_round is not None:
+        review_round.status = "approved"
+        review_round.reviewed_by = actor.id
+        review_round.reviewed_at = revision.reviewed_at
+        if comment:
+            review_round.summary_comment = comment
+        decision_stats = _decision_stats(_round_decisions(session, review_round))
+    else:
+        decision_stats = {
+            "total": sum(counts.values()),
+            "approved": sum(counts.values()),
+            "rejected": 0,
+            "pending": 0,
+        }
 
     write_audit(
         session,
@@ -1390,6 +1588,11 @@ def approve_review(
             "feature_point_count": revision.feature_point_count,
             "label_count": revision.label_count,
             "comment": comment,
+            # 逐项审核的统计：通过 / 驳回 / 未决策
+            "round_id": review_round.id if review_round else None,
+            "approved_count": decision_stats["approved"],
+            "rejected_count": decision_stats["rejected"],
+            "pending_count": decision_stats["pending"],
             # 自审放行时留痕，方便事后分辨「双人复核」与「单人兜底」
             "self_approved": self_approved,
         },
@@ -1425,6 +1628,14 @@ def reject_review(
     revision.review_comment = comment
     session.flush()
 
+    review_round = _latest_review_round(session, revision.id)
+    if review_round is not None:
+        review_round.status = "rejected"
+        review_round.reviewed_by = actor.id
+        review_round.reviewed_at = revision.reviewed_at
+        review_round.summary_comment = comment
+        session.flush()
+
     write_audit(
         session,
         "baseline.revision.reject",
@@ -1443,6 +1654,146 @@ def reject_review(
     )
     session.commit()
     return revision
+
+
+def list_review_items(
+    session: Session, project_id: int, revision_id: int
+) -> dict:
+    """该审核记录最近一轮的逐项决策。"""
+    revision = _load_revision(session, project_id, revision_id, as_review=True)
+    review_round = _review_round_or_404(session, revision.id)
+    rows = _round_decisions(session, review_round)
+    return {
+        "revision_id": revision.id,
+        "round_id": review_round.id,
+        "round_no": review_round.round_no,
+        "status": review_round.status,
+        "items": [
+            {
+                "id": row.id,
+                "entity_type": row.entity_type,
+                "entity_id": row.entity_id,
+                "entity_name": row.entity_name,
+                "decision": row.decision,
+                "comment": row.comment,
+                "decided_by": row.decided_by,
+                "decided_at": row.decided_at,
+            }
+            for row in rows
+        ],
+        "stats": _decision_stats(rows),
+    }
+
+
+def list_review_tree(
+    session: Session, project_id: int, revision_id: int
+) -> dict:
+    """该审核轮次的「待审内容树」：当前结构 + 每条当前决策。
+
+    **不写 structure_json**：快照只在 approve 时冻结（AC-132）。
+    """
+    revision = _load_revision(session, project_id, revision_id, as_review=True)
+    review_round = _review_round_or_404(session, revision.id)
+    structure, _ = _collect_structure(session, project_id)
+    decisions = {
+        (row.entity_type, row.entity_id): row
+        for row in _round_decisions(session, review_round)
+    }
+    stats = {"total": 0, "approved": 0, "rejected": 0, "pending": 0}
+
+    def node(entity_type: str, entity: dict, children: list[dict]) -> dict:
+        row = decisions.get((entity_type, entity["id"]))
+        decision = row.decision if row is not None else "pending"
+        stats["total"] += 1
+        stats[decision] += 1
+        return {
+            "entity_type": entity_type,
+            "entity_id": entity["id"],
+            "name": entity["name"],
+            "description": entity.get("description"),
+            "source_type": entity.get("source_type"),
+            "version_no": entity.get("version_no"),
+            "decision": decision,
+            "comment": row.comment if row is not None else None,
+            "children": children,
+        }
+
+    tree = []
+    for module in structure:
+        functions = [
+            node(
+                "function",
+                function,
+                [
+                    node("feature_point", point, [])
+                    for point in function["feature_points"]
+                ],
+            )
+            for function in module["functions"]
+        ]
+        tree.append(node("module", module, functions))
+
+    return {
+        "revision_id": revision.id,
+        "round_id": review_round.id,
+        "round_no": review_round.round_no,
+        "status": review_round.status,
+        "tree": tree,
+        "stats": stats,
+    }
+
+
+def decide_review(
+    session: Session,
+    *,
+    project_id: int,
+    revision_id: int,
+    actor: User,
+    items: list,
+) -> dict:
+    """保存逐项决策草稿，**不冻结**。可多次调用，approve 时才落快照。"""
+    _ensure_writable_project(session, project_id)
+    _ensure_admin(session, project_id=project_id, actor=actor)
+
+    revision = _load_revision(session, project_id, revision_id, as_review=True)
+    if revision.status != "submitted":
+        raise InvalidReviewStatus("只有审核中的记录可以逐项决策")
+    review_round = _review_round_or_404(session, revision.id)
+
+    updated = _apply_decisions(
+        session,
+        review_round=review_round,
+        project_id=project_id,
+        actor=actor,
+        items=items,
+    )
+    rows = _round_decisions(session, review_round)
+    stats = _decision_stats(rows)
+
+    write_audit(
+        session,
+        "baseline.review.decide",
+        actor_id=actor.id,
+        actor_role=actor.global_role,
+        project_id=project_id,
+        target_type="baseline_review_round",
+        target_id=review_round.id,
+        after_data={
+            "round_id": review_round.id,
+            "updated": updated,
+            "items": [
+                {
+                    "entity_type": item.entity_type,
+                    "entity_id": item.entity_id,
+                    "decision": item.decision,
+                }
+                for item in items
+            ],
+            "stats": stats,
+        },
+    )
+    session.commit()
+    return {"updated": updated, "stats": stats}
 
 
 def list_revisions(
@@ -1515,16 +1866,23 @@ def get_revision(session: Session, project_id: int, revision_id: int) -> dict:
     return item
 
 
-def _freeze_structure(session: Session, project_id: int) -> tuple[str, dict[str, int]]:
-    """把当前的三级结构冻结成 JSON 文本，并给出各级计数。
+def _collect_structure(
+    session: Session, project_id: int, *, approved: set | None = None
+) -> tuple[list[dict], dict[str, int]]:
+    """当前三级结构（归档排除）。`approved` 非空时只保留通过集合里的节点。
 
-    归档模块及其功能不参与新快照（spec §2.3 第 5 条），计数也不含它们。
+    过滤顺序是「模块 → 功能 → 功能点」：父不在集合，子根本不会进入下一层
+    查询，因此天然实现「父被驳回 → 子出局」。
     """
     modules = session.scalars(
         select(BaselineModule)
         .where(BaselineModule.project_id == project_id, BaselineModule.status == "active")
         .order_by(BaselineModule.sort_order, BaselineModule.id)
     ).all()
+    if approved is not None:
+        modules = [
+            module for module in modules if ("module", module.id) in approved
+        ]
     module_ids = [module.id for module in modules]
     functions = (
         session.scalars(
@@ -1539,6 +1897,12 @@ def _freeze_structure(session: Session, project_id: int) -> tuple[str, dict[str,
         if module_ids
         else []
     )
+    if approved is not None:
+        functions = [
+            function
+            for function in functions
+            if ("function", function.id) in approved
+        ]
     function_ids = [function.id for function in functions]
     points = (
         session.scalars(
@@ -1553,6 +1917,12 @@ def _freeze_structure(session: Session, project_id: int) -> tuple[str, dict[str,
         if function_ids
         else []
     )
+    if approved is not None:
+        points = [
+            point
+            for point in points
+            if ("feature_point", point.id) in approved
+        ]
 
     points_by_function: dict[int, list[BaselineFeaturePoint]] = {}
     for point in points:
@@ -1599,6 +1969,18 @@ def _freeze_structure(session: Session, project_id: int) -> tuple[str, dict[str,
         "functions": len(functions),
         "feature_points": len(points),
     }
+    return structure, counts
+
+
+def _freeze_structure(
+    session: Session, project_id: int, *, approved: set | None = None
+) -> tuple[str, dict[str, int]]:
+    """把当前三级结构冻结成 JSON 文本，并给出各级计数。
+
+    归档模块及其功能不参与新快照（spec §2.3 第 5 条），计数也不含它们；
+    传 `approved` 时只冻结这一轮通过的节点（AC-133）。
+    """
+    structure, counts = _collect_structure(session, project_id, approved=approved)
     return json.dumps(structure, ensure_ascii=False), counts
 
 
@@ -1613,10 +1995,17 @@ def _next_version_no(session: Session, project_id: int) -> int:
     return int(current) + 1 if current is not None else 0
 
 
-def _copy_labels_forward(session: Session, project_id: int, revision_id: int) -> int:
+def _copy_labels_forward(
+    session: Session,
+    project_id: int,
+    revision_id: int,
+    *,
+    approved: set | None = None,
+) -> int:
     """把上一份快照的**生效**标签复制成新行，挂在当前版本下。
 
-    已清除的标签不复制；当前版本已有的同类型标签不重复复制。
+    已清除的标签不复制；当前版本已有的同类型标签不重复复制；
+    传 `approved` 时只复制挂在通过节点上的标签（AC-134）。
     """
     previous = session.scalar(
         select(BaselineRevision)
@@ -1651,6 +2040,8 @@ def _copy_labels_forward(session: Session, project_id: int, revision_id: int) ->
 
     copied = 0
     for label in source_labels:
+        if approved is not None and (label.target_type, label.target_id) not in approved:
+            continue
         key = (label.target_type, label.target_id, label.label_type)
         if key in existing:
             continue

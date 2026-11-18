@@ -707,10 +707,11 @@ export async function approveBaselineReview(
   projectId: number,
   revisionId: number,
   comment?: string | null,
+  items?: BaselineReviewItemDecision[] | null,
 ): Promise<BaselineRevision> {
   const { data } = await client.post<BaselineRevision>(
     `${BASELINES(projectId)}/reviews/${revisionId}/approve`,
-    { comment },
+    { comment, items: items ?? undefined },
   )
   return data
 }
@@ -723,6 +724,103 @@ export async function rejectBaselineReview(
   const { data } = await client.post<BaselineRevision>(
     `${BASELINES(projectId)}/reviews/${revisionId}/reject`,
     { comment },
+  )
+  return data
+}
+
+// ------------------------------------------------------- 分点审核（T97）
+
+export type ReviewEntityType = 'module' | 'function' | 'feature_point'
+export type ReviewDecisionValue = 'pending' | 'approved' | 'rejected'
+
+export interface BaselineReviewItemDecision {
+  entity_type: ReviewEntityType
+  entity_id: number
+  decision: ReviewDecisionValue
+  comment?: string | null
+}
+
+export interface BaselineReviewStats {
+  total: number
+  approved: number
+  rejected: number
+  pending: number
+}
+
+export interface BaselineReviewItem {
+  id: number
+  entity_type: ReviewEntityType
+  entity_id: number
+  entity_name: string
+  decision: ReviewDecisionValue
+  comment: string | null
+  decided_by: number | null
+  decided_at: string | null
+}
+
+export interface BaselineReviewItems {
+  revision_id: number
+  round_id: number
+  round_no: number
+  status: string
+  items: BaselineReviewItem[]
+  stats: BaselineReviewStats
+}
+
+export interface BaselineReviewTreeNode {
+  entity_type: ReviewEntityType
+  entity_id: number
+  name: string
+  description: string | null
+  source_type: string | null
+  version_no: number | null
+  decision: ReviewDecisionValue
+  comment: string | null
+  children: BaselineReviewTreeNode[]
+}
+
+export interface BaselineReviewTree {
+  revision_id: number
+  round_id: number
+  round_no: number
+  status: string
+  tree: BaselineReviewTreeNode[]
+  stats: BaselineReviewStats
+}
+
+export interface BaselineReviewDecideResult {
+  updated: number
+  stats: BaselineReviewStats
+}
+
+export async function fetchBaselineReviewTree(
+  projectId: number,
+  revisionId: number,
+): Promise<BaselineReviewTree> {
+  const { data } = await client.get<BaselineReviewTree>(
+    `${BASELINES(projectId)}/reviews/${revisionId}/tree`,
+  )
+  return data
+}
+
+export async function fetchBaselineReviewItems(
+  projectId: number,
+  revisionId: number,
+): Promise<BaselineReviewItems> {
+  const { data } = await client.get<BaselineReviewItems>(
+    `${BASELINES(projectId)}/reviews/${revisionId}/items`,
+  )
+  return data
+}
+
+export async function decideBaselineReview(
+  projectId: number,
+  revisionId: number,
+  items: BaselineReviewItemDecision[],
+): Promise<BaselineReviewDecideResult> {
+  const { data } = await client.post<BaselineReviewDecideResult>(
+    `${BASELINES(projectId)}/reviews/${revisionId}/decide`,
+    { items },
   )
   return data
 }

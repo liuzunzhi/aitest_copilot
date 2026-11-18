@@ -209,6 +209,19 @@ admin 提交 → 只有 admin 能审 → admin 不能审自己 → 永久死锁
 的 `baseline_index`），不是快照——那么「部分通过」要生效，得改的是
 **结构表**而不是快照，与「快照不可变」的原则冲突。这个语义要先裁决。
 
+> **已实现（2026-11-18）**：[spec-phase4-review.md](./spec-phase4-review.md)。
+> 验证记录见下方「T88–T98 验证记录」。关键结论：
+> - 表结构：**新增 2 张表**（`baseline_review_rounds` / `baseline_review_items`），
+>   **`structure_json` 格式不动**；结构表**不加** `node_status` 列
+>   （状态是「某一轮审核的结论」，不是实体自身的属性）；
+> - 快照：**只冻结 approved 节点**；驳回节点**留在草稿**（不删不藏，可编辑可重提）；
+> - 05 清单：**排除**被驳回节点（`baseline_index()` 按 approved 集合过滤，
+>   **只改读取口径，不动判定逻辑**）；
+> - 前端：**不改 `ProjectBaselineTree.tsx`**——审核是独立界面，
+>   在 `ProjectBaselineSnapshots.tsx` 里新增**审核抽屉**
+>   （Checkbox + 顶部批量通过/驳回工具条）；
+> - 任务：**T93–T98**（见方案 §9）。
+
 ### TOD-04 · 从文档推导基线
 
 spec §2 明确「文档推导、基线反推本期不做（依赖 LLM，见 05）」。
@@ -220,6 +233,32 @@ spec §2 明确「文档推导、基线反推本期不做（依赖 LLM，见 05�
 `source_method` / `source_analysis_id`。
 
 跨 03 + 04 两个模块，建议单独立项。
+
+> **已实现（2026-11-18）**：[spec-phase4-derive.md](./spec-phase4-derive.md)。
+> 验证记录见下方「T88–T98 验证记录」。关键结论：
+> - **不新增结构表**——04 的结构表已预留全部追溯字段，本期只加
+>   `baseline_derives`（推导记录）+ `baseline_derive_candidates`（候选草稿）两张表；
+> - 推导结果**先落候选草稿**，用户确认后才进结构表（模型会抽错，直接落会污染 05 的比对基准）；
+> - 同名冲突**绝不覆盖**：提示用户选 复用 / 改名新建 / 跳过；
+> - **同步执行**（与 05 一致）；坏 JSON **整次失败**，抽不出内容不算失败；
+> - 走 05 已有的 `get_provider` 工厂（无配置 → 自动降级 Mock）与
+>   `task_type='document_parse'`（枚举里已预留，至今没人用过）；
+> - 采纳后的节点**和手工建的一模一样**，走**同一套审核流程**；
+> - 任务：**T88–T92**（见方案 §10）。
+
+### 两个方案的落地顺序与迁移编号
+
+**2026-11-18 用户裁决：先做从文档推导。**
+
+```
+T88–T92  从文档推导   -> 迁移 0020_baseline_derive（down_revision = 0019）
+T93–T98  分点审核     -> 迁移 0021_review_items（down_revision = 0020）
+```
+
+- 两个方案**串行落地，不并行**（都改 `ProjectBaselineTree.tsx` /
+  `ProjectBaselineSnapshots.tsx`，并行会撞）；
+- AC 编号：从文档推导占 **AC-122~AC-131**，分点审核占 **AC-132~AC-140**；
+- 已裁决事项分别见两份方案的「已裁决事项」章节。
 
 ## T67 验证记录（2026-11-17）
 | 项 | 结果 |
@@ -243,6 +282,48 @@ spec §2 明确「文档推导、基线反推本期不做（依赖 LLM，见 05�
 - **MySQL DDL 隐式提交**会破坏 pytest 夹具的外层事务，
   所以造表必须在夹具事务开始之前完成——这条约束在测试里用独立引擎规避。
 
+
+## T88–T98 验证记录（2026-11-18）
+
+| 项 | 结果 |
+|---|---|
+| 迁移 | 开发库 / e2e 库 head 均到 `0021`（`0020_baseline_derive` → `0021_review_items`） |
+| 后端全量 pytest | exit 0（新增 `tests/baselines/test_derive.py` 22 条、`test_review_items.py` 13 条） |
+| `tests/baselines` | **115 passed** |
+| 前端构建 | `npm run build` 通过 |
+| e2e 全量 | **39 passed**（`scripts/run_e2e.py`，135.67s，自动清理 `e2e-` 数据） |
+| 真实网络 | 零（推导走 `get_provider`，测试用 `MockProvider`；分点审核不调模型） |
+
+### 实现要点（与方案的偏差）
+
+- **模块行没有追溯列**：`baseline_modules` 只有 `source_type`，没有
+  `source_document_id` / `source_version_id` / `source_chapter_id`。按「结构表零改动」
+  红线，推导采纳时**只在功能/功能点写完整追溯**，模块只写
+  `source_type='document_derived'`。
+- **轮次号是项目级单调递增**：`submit_review` 取 `max(round_no) + 1`，
+  满足 AC-134「重提后是第 2 轮」；`(revision_id, round_no)` 唯一索引不变。
+- **新一轮不隐式继承旧决策**：后端只存本轮 items；§4.3 的「上一轮 approved 预选」
+  属于展示层（抽屉打开时全部 pending，旧决策走 `GET /items` 回看）。
+- **`ReviewItemDecision` 枚举用 `str`**：非法值要落 400 业务码
+  （`INVALID_REVIEW_ITEM` / `INVALID_REVIEW_DECISION`），用 `Literal` 会被
+  Pydantic 先拦成 422。
+- **修 2 处全表审计断言**：`tests/incremental/test_second_pass_flow.py` 改用
+  `project_id` 过滤——开发库有历史审计行时全表查询会命中别的项目。
+
+### 任务对照
+
+| 任务 | 产出 |
+|---|---|
+| T88–T89 | `app/models/baseline_derive.py`、迁移 `0020` |
+| T90 | `app/baselines/derive.py`（纯引擎）+ `service.run_document_derive` / `adopt_derive_candidates` |
+| T91 | 前端「从文档推导」按钮 + 选择弹窗 + 候选抽屉（`BaselineDerive*`） |
+| T92 | `tests/baselines/test_derive.py` 22 条 |
+| T93 | `app/models/baseline_review.py`、迁移 `0021` |
+| T94 | `approval.py` 生效集合 + `baseline_index()` 读取口径 |
+| T95 | `service.decide_review` / `list_review_tree` / `list_review_items` + 按 items 冻结 |
+| T96 | `BaselineReviewDrawer.tsx` + `baselineReviewNodes.tsx`；快照页新增「分点审核」入口 |
+| T97 | `tests/baselines/test_review_items.py` 13 条（AC-132~139） |
+| T98 | 全量回归 + 两端迁移升级 + 文档回填 |
 
 ## T66 验证记录（2026-11-16）
 

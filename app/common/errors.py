@@ -706,6 +706,44 @@ class AdoptCandidateNotFound(AppError):
     code = "ADOPT_CANDIDATE_NOT_FOUND"
 
 
+# ------------------------------------------------- 分点审核（AC-132~140）
+
+
+class InvalidReviewItem(AppError):
+    """AC-132：逐项决策里的 `entity_type` 非法。"""
+
+    status_code = 400
+    code = "INVALID_REVIEW_ITEM"
+
+
+class InvalidReviewDecision(AppError):
+    """AC-132：逐项决策里的 `decision` 非法。"""
+
+    status_code = 400
+    code = "INVALID_REVIEW_DECISION"
+
+
+class ReviewItemNotFound(AppError):
+    """AC-132：实体不存在或不属于该项目。"""
+
+    status_code = 404
+    code = "REVIEW_ITEM_NOT_FOUND"
+
+
+class ReviewItemCommentRequired(AppError):
+    """AC-132：驳回条目必须填意见。"""
+
+    status_code = 400
+    code = "REVIEW_ITEM_COMMENT_REQUIRED"
+
+
+class EmptyReviewApproval(AppError):
+    """AC-133：一条都没通过，不允许生成空快照。"""
+
+    status_code = 409
+    code = "EMPTY_REVIEW_APPROVAL"
+
+
 def install_error_handlers(app: FastAPI) -> None:
     """把 AppError 统一渲染成 {"code","message",**extra}。"""
 
@@ -752,6 +790,7 @@ __all__ = [
     "DuplicateLabel",
     "DuplicateModuleName",
     "EmptyDocument",
+    "EmptyReviewApproval",
     "FeaturePointNotFound",
     "Forbidden",
     "FunctionNotFound",
@@ -768,6 +807,8 @@ __all__ = [
     "InvalidProjectDescription",
     "InvalidProjectName",
     "InvalidResetCode",
+    "InvalidReviewDecision",
+    "InvalidReviewItem",
     "InvalidReviewStatus",
     "InvalidRoleAssignment",
     "InvalidSplitGranularity",
@@ -799,6 +840,8 @@ __all__ = [
     "RateLimited",
     "ReasonRequired",
     "ReviewCommentRequired",
+    "ReviewItemCommentRequired",
+    "ReviewItemNotFound",
     "ReviewNotFound",
     "SelfApprovalForbidden",
     "SecondPassConflictsPending",

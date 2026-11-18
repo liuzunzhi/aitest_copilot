@@ -34,6 +34,7 @@ import type {
 } from '../api'
 import { errorMessage } from '../api/client'
 import { formatSnapshotVersion, isValidationError } from './baselineShared'
+import BaselineReviewDrawer from './BaselineReviewDrawer'
 
 const REVISION_STATUS_META: Record<string, { label: string; color: string }> = {
   draft: { label: '草稿', color: 'default' },
@@ -67,6 +68,10 @@ export default function ProjectBaselineSnapshots({ projectId, canWrite }: Props)
     mode: 'approve' | 'reject'
   }>({ open: false, mode: 'approve' })
   const [structureOpen, setStructureOpen] = useState(false)
+  // 分点审核抽屉：独立的审核界面，不影响日常编辑树（spec §6.1）
+  const [reviewRevision, setReviewRevision] = useState<BaselineRevision | null>(
+    null,
+  )
 
   const [submitForm] = Form.useForm()
   const [decisionForm] = Form.useForm()
@@ -176,10 +181,18 @@ export default function ProjectBaselineSnapshots({ projectId, canWrite }: Props)
     {
       title: '操作',
       key: 'actions',
-      width: 180,
+      width: 300,
       render: (_: unknown, revision) =>
         canWrite ? (
           <Space size={8}>
+            <Button
+              size="small"
+              type="primary"
+              data-testid={`review-items-${revision.id}`}
+              onClick={() => setReviewRevision(revision)}
+            >
+              分点审核
+            </Button>
             <Button
               size="small"
               data-testid={`approve-${revision.id}`}
@@ -188,7 +201,7 @@ export default function ProjectBaselineSnapshots({ projectId, canWrite }: Props)
                 setDecision({ open: true, revision, mode: 'approve' })
               }}
             >
-              通过
+              整包通过
             </Button>
             <Button
               size="small"
@@ -199,7 +212,7 @@ export default function ProjectBaselineSnapshots({ projectId, canWrite }: Props)
                 setDecision({ open: true, revision, mode: 'reject' })
               }}
             >
-              驳回
+              整包驳回
             </Button>
           </Space>
         ) : (
@@ -473,6 +486,18 @@ export default function ProjectBaselineSnapshots({ projectId, canWrite }: Props)
           <Typography.Text type="secondary">该快照没有结构数据。</Typography.Text>
         )}
       </Modal>
+
+      {/* 分点审核抽屉：勾选部分通过、逐条驳回 */}
+      <BaselineReviewDrawer
+        open={reviewRevision !== null}
+        projectId={projectId}
+        revision={reviewRevision}
+        onClose={() => setReviewRevision(null)}
+        onApproved={() => {
+          void reload()
+          void reloadRetention()
+        }}
+      />
     </div>
   )
 }

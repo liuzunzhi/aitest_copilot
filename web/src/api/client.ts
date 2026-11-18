@@ -85,6 +85,12 @@ const CODE_TEXT: Record<string, string> = {
   ADOPT_TARGET_INVALID: '复用目标不合法，请选择同层级的同类实体',
   ADOPT_ALREADY_DECIDED: '该候选已采纳或已跳过，不能重复操作',
   ADOPT_CANDIDATE_NOT_FOUND: '候选不存在',
+  /* 分点审核 */
+  INVALID_REVIEW_ITEM: '审核条目的实体类型不合法',
+  INVALID_REVIEW_DECISION: '审核结论不合法',
+  REVIEW_ITEM_NOT_FOUND: '审核对象不存在或不属于该项目',
+  REVIEW_ITEM_COMMENT_REQUIRED: '驳回条目必须填写意见',
+  EMPTY_REVIEW_APPROVAL: '至少通过一条才能生成快照',
   /* 增量分析（05） */
   INCREMENTAL_ANALYSIS_NOT_FOUND: '分析记录不存在',
   BASELINE_REVISION_REQUIRED: '请选择审核通过的基线快照',

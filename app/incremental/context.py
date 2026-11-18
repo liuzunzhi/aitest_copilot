@@ -27,6 +27,7 @@
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.baselines.approval import approved_entities
 from app.models.baseline import BaselineFeaturePoint, BaselineFunction, BaselineModule
 from app.models.document import DocumentChapter
 from app.models.incremental import PromptTemplate
@@ -140,6 +141,12 @@ def baseline_index(session: Session, *, project_id: int) -> dict[tuple[str, int]
             )
         ).all()
         index.update({("feature_point", point_id): name for point_id, name in points})
+
+    # 分点审核生效集合（AC-137）：项目有过已批准的审核轮次时，
+    # 被驳回的节点**不再喂给模型**；没有轮次则保持原有全量口径。
+    approved = approved_entities(session, project_id)
+    if approved is not None:
+        index = {key: name for key, name in index.items() if key in approved}
     return index
 
 

@@ -33,8 +33,12 @@ from app.baselines.schemas import (
     RetentionUpdate,
     RevisionDetail,
     RevisionOut,
+    ReviewDecideOut,
+    ReviewDecideRequest,
     ReviewDecision,
+    ReviewItemsOut,
     ReviewSubmit,
+    ReviewTreeOut,
 )
 from app.common.db import get_db
 from app.common.deps import current_user
@@ -584,7 +588,12 @@ def approve_review(
 ) -> RevisionOut:
     """审核通过：冻结结构、分配版本号、把生效标签复制到新快照。"""
     revision = service.approve_review(
-        session, project_id=project_id, revision_id=revision_id, actor=user, comment=payload.comment
+        session,
+        project_id=project_id,
+        revision_id=revision_id,
+        actor=user,
+        comment=payload.comment,
+        items=payload.items,
     )
     return RevisionOut(
         id=revision.id,
@@ -631,6 +640,59 @@ def reject_review(
         reviewed_at=revision.reviewed_at,
         review_comment=revision.review_comment,
         created_at=revision.created_at,
+    )
+
+
+@router.get(
+    "/{project_id}/baselines/reviews/{revision_id}/items",
+    response_model=ReviewItemsOut,
+)
+def list_review_items(
+    project_id: int,
+    revision_id: int,
+    session: Session = Depends(get_db),
+    user: User = Depends(current_user),
+) -> ReviewItemsOut:
+    """该审核记录最近一轮的逐项决策。"""
+    service.ensure_readable(session, project_id=project_id, actor=user)
+    return ReviewItemsOut(**service.list_review_items(session, project_id, revision_id))
+
+
+@router.get(
+    "/{project_id}/baselines/reviews/{revision_id}/tree",
+    response_model=ReviewTreeOut,
+)
+def get_review_tree(
+    project_id: int,
+    revision_id: int,
+    session: Session = Depends(get_db),
+    user: User = Depends(current_user),
+) -> ReviewTreeOut:
+    """该轮待审内容树（模块 / 功能 / 功能点 + 当前决策）。"""
+    service.ensure_readable(session, project_id=project_id, actor=user)
+    return ReviewTreeOut(**service.list_review_tree(session, project_id, revision_id))
+
+
+@router.post(
+    "/{project_id}/baselines/reviews/{revision_id}/decide",
+    response_model=ReviewDecideOut,
+)
+def decide_review(
+    project_id: int,
+    revision_id: int,
+    payload: ReviewDecideRequest,
+    session: Session = Depends(get_db),
+    user: User = Depends(current_user),
+) -> ReviewDecideOut:
+    """保存逐项决策草稿（不冻结）。可多次调用。"""
+    return ReviewDecideOut(
+        **service.decide_review(
+            session,
+            project_id=project_id,
+            revision_id=revision_id,
+            actor=user,
+            items=payload.items,
+        )
     )
 
 

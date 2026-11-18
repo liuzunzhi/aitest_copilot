@@ -110,13 +110,31 @@ L2 真实联调已跑通**（真实 MiniMax-M3：12 章 → 15 条结论落库�
    开发库有了真实数据（手工建的项目、改角色留下的审计）后，
    全表比对必然失败——`git stash` 验证过这些失败在改动前就存在。
 
-### 04 待办（用户 2026-11-18 提出，已登记）
+### 04 补做完成（用户 2026-11-18 提出，T88–T98 已落地）
 
 - **TOD-03 分点审核**：整包审核 → 逐项勾选通过 / 局部驳回。
-  需要新表 `baseline_review_items` + 新接口 + 新前端。
-  **业务语义待裁决**：「部分通过」的条目算不算进基线？
+  > **已完成（T93–T98）**：`specs/04-baseline/spec-phase4-review.md`。
+  > 新增 2 张表（`baseline_review_rounds` / `baseline_review_items`），
+  > `structure_json` 不动、结构表不加 `node_status`；
+  > 快照只冻结 approved 节点，驳回节点留草稿；
+  > 05 清单**排除**被驳回节点（`baseline_index()` 按 approved 集合过滤，
+  > **只改读取口径，不动判定逻辑**）；
+  > 前端不改 `ProjectBaselineTree.tsx`，改为在快照页新增「分点审核」抽屉。
+  > 任务 **T93–T98**（迁移 `0021_review_items`）。
 - **TOD-04 从文档推导基线**：spec §2 明确本期不做，06 期 LLM 已通，
   技术上可行但从未实现。跨 03 + 04，建议单独立项。
+  > **已完成（T88–T92）**：`specs/04-baseline/spec-phase4-derive.md`。
+  > 结构表不动（追溯字段已预留），新增 `baseline_derives` +
+  > `baseline_derive_candidates`（候选草稿）；同名冲突绝不覆盖；
+  > 同步执行，坏 JSON 整次失败。
+  > 任务 **T88–T92**（迁移 `0020_baseline_derive`）。
+- **落地顺序已裁决（2026-11-18）**：**先做从文档推导**（T88–T92，迁移 0020），
+  再做分点审核（T93–T98，迁移 0021，`down_revision = "0020"`）。
+  AC 编号：推导占 AC-122~AC-131，审核占 AC-132~AC-140。
+- **验证（2026-11-18）**：后端全量 pytest exit 0；`tests/baselines` **115 passed**；
+  e2e 全量 **39 passed**；`npm run build` 通过；开发库与 e2e 库迁移 head 均为
+  **`0021`**；零真实网络请求。细节见 `specs/04-baseline/tasks.md`
+  「T88–T98 验证记录」。
 
 ### T87 已完成（前端系统设置页 + 05 动态模板 + L1 端到端）
 

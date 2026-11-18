@@ -274,7 +274,10 @@ def test_ac_96_second_pass_audit(client: TestClient, db: Session):
     assert response.status_code == 200, response.text
 
     log = db.scalar(
-        select(AuditLog).where(AuditLog.action == "incremental.second_pass.run")
+        select(AuditLog).where(
+            AuditLog.action == "incremental.second_pass.run",
+            AuditLog.project_id == chain["project"].id,
+        )
     )
     assert log is not None
     assert log.project_id == chain["project"].id
@@ -298,7 +301,10 @@ def test_ac_96_failed_run_writes_no_audit(client: TestClient, db: Session):
         db.scalar(
             select(func.count())
             .select_from(AuditLog)
-            .where(AuditLog.action == "incremental.second_pass.run")
+            .where(
+                AuditLog.action == "incremental.second_pass.run",
+                AuditLog.project_id == chain["project"].id,
+            )
         )
         == 0
     )

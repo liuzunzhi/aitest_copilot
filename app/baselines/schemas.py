@@ -181,8 +181,84 @@ class ReviewSubmit(BaseModel):
     comment: str | None = Field(default=None, max_length=500)
 
 
+class ReviewItemDecision(BaseModel):
+    """一条逐项决策。`rejected` 必须带 comment。
+
+    枚举值故意用 `str` 而不是 `Literal`：非法值要返回 400
+    `INVALID_REVIEW_ITEM` / `INVALID_REVIEW_DECISION`（AC-132 的固定校验顺序），
+    用 `Literal` 会先被 Pydantic 拦成 422。
+    """
+
+    entity_type: str = Field(max_length=16)
+    entity_id: int
+    decision: str = Field(max_length=16)
+    comment: str | None = Field(default=None, max_length=500)
+
+
 class ReviewDecision(BaseModel):
     comment: str | None = Field(default=None, max_length=500)
+    # 不传 items = 旧行为「全部通过」；传了 items 才按逐项决策冻结。
+    items: list[ReviewItemDecision] | None = None
+
+
+class ReviewDecideRequest(BaseModel):
+    items: list[ReviewItemDecision] = Field(min_length=1)
+
+
+class ReviewItemOut(BaseModel):
+    id: int
+    entity_type: str
+    entity_id: int
+    entity_name: str
+    decision: str
+    comment: str | None = None
+    decided_by: int | None = None
+    decided_at: datetime | None = None
+
+
+class ReviewStats(BaseModel):
+    total: int = 0
+    approved: int = 0
+    rejected: int = 0
+    pending: int = 0
+
+
+class ReviewItemsOut(BaseModel):
+    revision_id: int
+    round_id: int
+    round_no: int
+    status: str
+    items: list[ReviewItemOut] = Field(default_factory=list)
+    stats: ReviewStats
+
+
+class ReviewTreeNode(BaseModel):
+    entity_type: str
+    entity_id: int
+    name: str
+    description: str | None = None
+    source_type: str | None = None
+    version_no: int | None = None
+    decision: str = "pending"
+    comment: str | None = None
+    children: list["ReviewTreeNode"] = Field(default_factory=list)
+
+
+ReviewTreeNode.model_rebuild()
+
+
+class ReviewTreeOut(BaseModel):
+    revision_id: int
+    round_id: int
+    round_no: int
+    status: str
+    tree: list[ReviewTreeNode] = Field(default_factory=list)
+    stats: ReviewStats
+
+
+class ReviewDecideOut(BaseModel):
+    updated: int
+    stats: ReviewStats
 
 
 class RevisionOut(BaseModel):
