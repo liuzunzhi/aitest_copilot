@@ -668,6 +668,44 @@ class PromptTemplateNameTaken(AppError):
     code = "PROMPT_TEMPLATE_NAME_TAKEN"
 
 
+# ------------------------------------------------- 从文档推导基线（AC-122~131）
+
+
+class BaselineDeriveNotFound(AppError):
+    """AC-122：推导记录不存在或不属于该项目。"""
+
+    status_code = 404
+    code = "BASELINE_DERIVE_NOT_FOUND"
+
+
+class BaselineDeriveStatusInvalid(AppError):
+    """AC-122：推导未成功（或候选已决策），当前状态不允许该操作。"""
+
+    status_code = 409
+    code = "BASELINE_DERIVE_STATUS_INVALID"
+
+
+class AdoptTargetInvalid(AppError):
+    """AC-127：`reuse` 的目标不是同类型、同层级的实体。"""
+
+    status_code = 400
+    code = "ADOPT_TARGET_INVALID"
+
+
+class AdoptAlreadyDecided(AppError):
+    """AC-127：候选已被采纳或跳过，不能重复决策。"""
+
+    status_code = 409
+    code = "ADOPT_ALREADY_DECIDED"
+
+
+class AdoptCandidateNotFound(AppError):
+    """AC-127：候选不存在或不属于该次推导。"""
+
+    status_code = 404
+    code = "ADOPT_CANDIDATE_NOT_FOUND"
+
+
 def install_error_handlers(app: FastAPI) -> None:
     """把 AppError 统一渲染成 {"code","message",**extra}。"""
 
@@ -682,6 +720,9 @@ def install_error_handlers(app: FastAPI) -> None:
 __all__ = [
     "AccountDisabled",
     "AccountLocked",
+    "AdoptAlreadyDecided",
+    "AdoptCandidateNotFound",
+    "AdoptTargetInvalid",
     "AlreadyProjectMember",
     "AppError",
     "ApplyConflictsPending",
@@ -691,6 +732,8 @@ __all__ = [
     "ApplicationNotPending",
     "ApplyCooldown",
     "ApplyDisabled",
+    "BaselineDeriveNotFound",
+    "BaselineDeriveStatusInvalid",
     "BaselineRevisionRequired",
     "CannotChangeOwnRole",
     "CannotRemoveSelf",

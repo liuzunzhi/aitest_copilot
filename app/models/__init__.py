@@ -13,6 +13,7 @@ from app.models.baseline import (
     BaselineModule,
     BaselineRevision,
 )
+from app.models.baseline_derive import BaselineDerive, BaselineDeriveCandidate
 from app.models.chapter_link import DocumentChapterLink
 from app.models.document import BaselineSnapshot, Document, DocumentChapter, DocumentVersion
 from app.models.incremental import (
@@ -35,6 +36,8 @@ __all__ = [
     "AccessToken",
     "AuditLog",
     "Base",
+    "BaselineDerive",
+    "BaselineDeriveCandidate",
     "BaselineFeaturePoint",
     "BaselineFunction",
     "BaselineLabel",

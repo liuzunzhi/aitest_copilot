@@ -9,7 +9,12 @@ from sqlalchemy.orm import Session
 
 from app.baselines import service
 from app.baselines.schemas import (
+    AdoptOut,
+    AdoptRequest,
     DeleteResponse,
+    DeriveDetailOut,
+    DeriveOut,
+    DeriveRunRequest,
     FeaturePointCreate,
     FeaturePointOut,
     FeaturePointUpdate,
@@ -33,6 +38,7 @@ from app.baselines.schemas import (
 )
 from app.common.db import get_db
 from app.common.deps import current_user
+from app.llm.provider import LLMProvider, get_provider
 from app.models.user import User
 
 router = APIRouter(prefix="/api/projects", tags=["baselines"])
@@ -665,4 +671,117 @@ def delete_revision(
     """删快照。被标签引用 → 409 `SNAPSHOT_REFERENCED`。"""
     return DeleteResponse(
         **service.delete_revision(session, project_id=project_id, revision_id=revision_id, actor=user)
+    )
+
+
+# ------------------------------------------------- 从文档推导基线（T90）
+
+
+@router.post(
+    "/{project_id}/baselines/derive",
+    response_model=DeriveDetailOut,
+    status_code=201,
+)
+def run_derive(
+    project_id: int,
+    payload: DeriveRunRequest,
+    session: Session = Depends(get_db),
+    user: User = Depends(current_user),
+    provider: LLMProvider = Depends(get_provider),
+) -> DeriveDetailOut:
+    """发起推导（同步跑完返回）。限项目管理员。
+
+    响应直接带候选树（AC-123）：前端不用再发一次 GET。
+    """
+    derive = service.run_document_derive(
+        session,
+        project_id=project_id,
+        actor=user,
+        document_id=payload.document_id,
+        document_version_id=payload.document_version_id,
+        template_id=payload.template_id,
+        provider=provider,
+    )
+    return DeriveDetailOut(
+        **service.get_derive_detail(session, project_id, derive.id)
+    )
+
+
+@router.get(
+    "/{project_id}/baselines/derive", response_model=Page[DeriveOut]
+)
+def list_derives(
+    project_id: int,
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=50, ge=1, le=200),
+    session: Session = Depends(get_db),
+    user: User = Depends(current_user),
+) -> Page[DeriveOut]:
+    """推导记录列表。"""
+    service.ensure_readable(session, project_id=project_id, actor=user)
+    result = service.list_derives(session, project_id, page=page, page_size=page_size)
+    return Page[DeriveOut](
+        items=[DeriveOut(**item) for item in result["items"]],
+        total=result["total"],
+        page=result["page"],
+        page_size=result["page_size"],
+    )
+
+
+@router.get(
+    "/{project_id}/baselines/derive/{derive_id}", response_model=DeriveDetailOut
+)
+def get_derive(
+    project_id: int,
+    derive_id: int,
+    session: Session = Depends(get_db),
+    user: User = Depends(current_user),
+) -> DeriveDetailOut:
+    """推导详情 + 候选树。"""
+    service.ensure_readable(session, project_id=project_id, actor=user)
+    return DeriveDetailOut(**service.get_derive_detail(session, project_id, derive_id))
+
+
+@router.post(
+    "/{project_id}/baselines/derive/{derive_id}/adopt", response_model=AdoptOut
+)
+def adopt_derive(
+    project_id: int,
+    derive_id: int,
+    payload: AdoptRequest,
+    session: Session = Depends(get_db),
+    user: User = Depends(current_user),
+) -> AdoptOut:
+    """采纳候选：写入结构表（层级递归）。"""
+    return AdoptOut(
+        **service.adopt_derive_candidates(
+            session,
+            project_id=project_id,
+            derive_id=derive_id,
+            actor=user,
+            items=payload.candidates,
+        )
+    )
+
+
+@router.delete(
+    "/{project_id}/baselines/derive/{derive_id}/candidates/{candidate_id}",
+    response_model=DeleteResponse,
+)
+def delete_derive_candidate(
+    project_id: int,
+    derive_id: int,
+    candidate_id: int,
+    session: Session = Depends(get_db),
+    user: User = Depends(current_user),
+) -> DeleteResponse:
+    """删一个候选（草稿阶段），子候选随之删除。"""
+    return DeleteResponse(
+        **service.delete_derive_candidate(
+            session,
+            project_id=project_id,
+            derive_id=derive_id,
+            candidate_id=candidate_id,
+            actor=user,
+        )
     )

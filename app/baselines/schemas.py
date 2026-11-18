@@ -223,3 +223,93 @@ class DeleteResponse(BaseModel):
     deleted: bool = True
     warning: str | None = None
     cleared_label_count: int = 0
+
+
+# ------------------------------------------------- 从文档推导基线（T90）
+
+
+class DeriveRunRequest(BaseModel):
+    document_id: int
+    document_version_id: int
+    template_id: int
+
+
+class DeriveStats(BaseModel):
+    chapter_count: int = 0
+    processed_count: int = 0
+    candidate_count: int = 0
+    module_count: int = 0
+    function_count: int = 0
+    feature_point_count: int = 0
+    skipped_chapters: list[dict] = Field(default_factory=list)
+
+
+class DeriveOut(BaseModel):
+    id: int
+    provider: str
+    status: str
+    document_id: int
+    document_version_id: int
+    template_id: int
+    stats: DeriveStats | None = None
+    error_code: str | None = None
+    error_message: str | None = None
+    started_at: datetime | None = None
+    finished_at: datetime | None = None
+    created_at: datetime
+
+
+class DeriveCandidateOut(BaseModel):
+    id: int
+    parent_id: int | None = None
+    entity_type: str
+    name: str
+    description: str | None = None
+    source_chapter_title: str | None = None
+    confidence: float | None = None
+    rationale: str | None = None
+    status: str
+    # 空子列表不返回（spec §5.2：前端渲染更简单）
+    children: list["DeriveCandidateOut"] | None = None
+
+
+DeriveCandidateOut.model_rebuild()
+
+
+class DeriveDetailOut(DeriveOut):
+    document_name: str | None = None
+    candidates: list[DeriveCandidateOut] = Field(default_factory=list)
+
+
+class AdoptItem(BaseModel):
+    candidate_id: int
+    action: str = Field(pattern="^(reuse|create|skip)$")
+    name: str | None = Field(default=None, min_length=1, max_length=128)
+    existing_entity_id: int | None = None
+
+
+class AdoptRequest(BaseModel):
+    candidates: list[AdoptItem] = Field(min_length=1)
+
+
+class AdoptCounts(BaseModel):
+    modules: int = 0
+    functions: int = 0
+    feature_points: int = 0
+
+
+class AdoptItemResult(BaseModel):
+    candidate_id: int
+    entity_type: str
+    entity_id: int | None = None
+    name: str
+    action: str
+
+
+class AdoptOut(BaseModel):
+    derive_id: int
+    adopted_count: int
+    created: AdoptCounts
+    reused: AdoptCounts
+    skipped: AdoptCounts
+    items: list[AdoptItemResult] = Field(default_factory=list)

@@ -742,6 +742,134 @@ export async function updateRetention(
   return data
 }
 
+/* ------------------------------------------------ 从文档推导基线（04 补期） */
+
+export type DeriveStatus = 'running' | 'succeeded' | 'failed'
+export type DeriveCandidateStatus = 'pending' | 'adopted' | 'skipped'
+export type DeriveCandidateType = 'module' | 'function' | 'feature_point'
+
+export interface BaselineDeriveStats {
+  chapter_count: number
+  processed_count: number
+  candidate_count: number
+  module_count: number
+  function_count: number
+  feature_point_count: number
+  skipped_chapters: Array<{ chapter_id: number; reason: string }>
+}
+
+export interface BaselineDeriveCandidate {
+  id: number
+  parent_id: number | null
+  entity_type: DeriveCandidateType
+  name: string
+  description: string | null
+  source_chapter_title: string | null
+  confidence: number | null
+  rationale: string | null
+  status: DeriveCandidateStatus
+  children?: BaselineDeriveCandidate[] | null
+}
+
+export interface BaselineDerive {
+  id: number
+  provider: string
+  status: DeriveStatus
+  document_id: number
+  document_version_id: number
+  template_id: number
+  stats: BaselineDeriveStats | null
+  error_code: string | null
+  error_message: string | null
+  started_at: string | null
+  finished_at: string | null
+  created_at: string
+}
+
+export interface BaselineDeriveDetail extends BaselineDerive {
+  document_name: string | null
+  candidates: BaselineDeriveCandidate[]
+}
+
+export interface DeriveAdoptItem {
+  candidate_id: number
+  action: 'reuse' | 'create' | 'skip'
+  name?: string | null
+  existing_entity_id?: number | null
+}
+
+export interface DeriveAdoptCounts {
+  modules: number
+  functions: number
+  feature_points: number
+}
+
+export interface DeriveAdoptResult {
+  derive_id: number
+  adopted_count: number
+  created: DeriveAdoptCounts
+  reused: DeriveAdoptCounts
+  skipped: DeriveAdoptCounts
+  items: Array<{
+    candidate_id: number
+    entity_type: string
+    entity_id: number | null
+    name: string
+    action: string
+  }>
+}
+
+const DERIVES = (projectId: number) => `${BASELINES(projectId)}/derive`
+
+export async function runBaselineDerive(
+  projectId: number,
+  payload: { document_id: number; document_version_id: number; template_id: number },
+): Promise<BaselineDeriveDetail> {
+  const { data } = await client.post<BaselineDeriveDetail>(DERIVES(projectId), payload)
+  return data
+}
+
+export async function listBaselineDerives(
+  projectId: number,
+  params?: { page?: number; page_size?: number },
+): Promise<Page<BaselineDerive>> {
+  const { data } = await client.get<Page<BaselineDerive>>(DERIVES(projectId), { params })
+  return data
+}
+
+export async function getBaselineDerive(
+  projectId: number,
+  deriveId: number,
+): Promise<BaselineDeriveDetail> {
+  const { data } = await client.get<BaselineDeriveDetail>(
+    `${DERIVES(projectId)}/${deriveId}`,
+  )
+  return data
+}
+
+export async function adoptBaselineDerive(
+  projectId: number,
+  deriveId: number,
+  candidates: DeriveAdoptItem[],
+): Promise<DeriveAdoptResult> {
+  const { data } = await client.post<DeriveAdoptResult>(
+    `${DERIVES(projectId)}/${deriveId}/adopt`,
+    { candidates },
+  )
+  return data
+}
+
+export async function deleteBaselineDeriveCandidate(
+  projectId: number,
+  deriveId: number,
+  candidateId: number,
+): Promise<DeleteResult> {
+  const { data } = await client.delete<DeleteResult>(
+    `${DERIVES(projectId)}/${deriveId}/candidates/${candidateId}`,
+  )
+  return data
+}
+
 /* ---------------------------------------------------------- 增量分析（05） */
 
 export type IncrementalAnalysisStatus = 'pending' | 'running' | 'succeeded' | 'failed'

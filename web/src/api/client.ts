@@ -79,6 +79,12 @@ const CODE_TEXT: Record<string, string> = {
   SNAPSHOT_NOT_FOUND: '基线快照不存在',
   SNAPSHOT_REFERENCED: '该快照仍被引用，请先解除引用',
   TRACE_FIELDS_READONLY: '来源追溯字段只读，不能手工修改',
+  /* 从文档推导基线 */
+  BASELINE_DERIVE_NOT_FOUND: '推导记录不存在',
+  BASELINE_DERIVE_STATUS_INVALID: '推导未成功或已决策，当前状态不允许该操作',
+  ADOPT_TARGET_INVALID: '复用目标不合法，请选择同层级的同类实体',
+  ADOPT_ALREADY_DECIDED: '该候选已采纳或已跳过，不能重复操作',
+  ADOPT_CANDIDATE_NOT_FOUND: '候选不存在',
   /* 增量分析（05） */
   INCREMENTAL_ANALYSIS_NOT_FOUND: '分析记录不存在',
   BASELINE_REVISION_REQUIRED: '请选择审核通过的基线快照',

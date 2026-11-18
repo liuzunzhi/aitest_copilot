@@ -19,6 +19,7 @@ import {
   updateBaselineModule,
 } from '../api'
 import type {
+  BaselineDeriveDetail,
   BaselineFeaturePoint,
   BaselineFunction,
   BaselineLabel,
@@ -35,6 +36,8 @@ import {
 } from './baselineMeta'
 import type { LabelTarget } from './baselineShared'
 import { buildBaselineTreeData } from './baselineTreeNodes'
+import BaselineDeriveDrawer from './BaselineDeriveDrawer'
+import BaselineDeriveModal from './BaselineDeriveModal'
 import { BaselineTreeDialogs } from './ProjectBaselineTreeDialogs'
 import type {
   ClearDialogState,
@@ -75,6 +78,10 @@ export default function ProjectBaselineTree({ projectId, canWrite }: Props) {
   const [migrateModal, setMigrateModal] = useState<MigrateDialogState>({ open: false })
   /** AC-64：模块下还有功能时不给删，给「迁移功能」「删除功能」两个入口。 */
   const [notEmptyModal, setNotEmptyModal] = useState<MigrateDialogState>({ open: false })
+
+  /** 从文档推导基线：选文档弹窗 + 结果抽屉（候选草稿，确认后才进结构表）。 */
+  const [deriveModalOpen, setDeriveModalOpen] = useState(false)
+  const [deriveDetail, setDeriveDetail] = useState<BaselineDeriveDetail | null>(null)
 
   /**
    * 模块层默认展开（功能行直接可见），功能点按需懒加载：
@@ -505,6 +512,14 @@ export default function ProjectBaselineTree({ projectId, canWrite }: Props) {
             新增模块
           </Button>
         )}
+        {canWrite && (
+          <Button
+            data-testid="derive-from-document"
+            onClick={() => setDeriveModalOpen(true)}
+          >
+            从文档推导
+          </Button>
+        )}
         <Button onClick={() => reload().catch((error) => message.error(errorMessage(error)))}>
           刷新
         </Button>
@@ -544,6 +559,23 @@ export default function ProjectBaselineTree({ projectId, canWrite }: Props) {
           }
         />
       )}
+
+      <BaselineDeriveModal
+        open={deriveModalOpen}
+        projectId={projectId}
+        onClose={() => setDeriveModalOpen(false)}
+        onDerived={(detail) => setDeriveDetail(detail)}
+      />
+
+      <BaselineDeriveDrawer
+        open={deriveDetail !== null}
+        projectId={projectId}
+        detail={deriveDetail}
+        onClose={() => setDeriveDetail(null)}
+        onAdopted={() => {
+          reload().catch((error) => message.error(errorMessage(error)))
+        }}
+      />
 
       <BaselineTreeDialogs
         canWrite={canWrite}

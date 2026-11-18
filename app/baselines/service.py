@@ -16,14 +16,24 @@ from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from app.baselines import derive as derive_engine
 from app.baselines.references import snapshot_references
 from app.baselines.schemas import trace_fields_in
 from app.common.audit import write_audit
+from app.common.config import get_settings
 from app.common.deps import SYSTEM_ADMIN
 from app.common.errors import (
+    AdoptAlreadyDecided,
+    AdoptCandidateNotFound,
+    AdoptTargetInvalid,
     AppError,
+    BaselineDeriveNotFound,
+    BaselineDeriveStatusInvalid,
     ClearNoteRequired,
     ClearReasonRequired,
+    DocumentNotFound,
+    DocumentVersionNotAnalyzable,
+    DocumentVersionNotFound,
     DuplicateFeaturePointName,
     DuplicateFunctionName,
     DuplicateLabel,
@@ -36,12 +46,14 @@ from app.common.errors import (
     InvalidReviewStatus,
     LabelAlreadyCleared,
     LabelNotFound,
+    LLMCallFailed,
     ModuleNotEmpty,
     ModuleNotFound,
     NotProjectAdmin,
     NotProjectMember,
     ProjectArchived,
     ProjectNotFound,
+    PromptTemplateInvalid,
     ReviewCommentRequired,
     ReviewNotFound,
     SelfApprovalForbidden,
@@ -50,6 +62,8 @@ from app.common.errors import (
     TraceFieldsReadOnly,
 )
 from app.common.settings import get_setting
+from app.documents import service as documents_service
+from app.llm.provider import LLMProvider
 from app.models.baseline import (
     BaselineFeaturePoint,
     BaselineFunction,
@@ -57,6 +71,9 @@ from app.models.baseline import (
     BaselineModule,
     BaselineRevision,
 )
+from app.models.baseline_derive import BaselineDerive, BaselineDeriveCandidate
+from app.models.document import Document, DocumentVersion
+from app.models.incremental import PromptTemplate
 from app.models.project import Project, ProjectMember
 from app.models.user import User
 
@@ -1800,3 +1817,638 @@ def delete_revision(
     )
     session.commit()
     return {"deleted": True, "cleared_label_count": len(cleared_rows)}
+
+
+# ------------------------------------------------- 从文档推导基线（T90）
+
+DERIVE_TASK_TYPE = "document_parse"
+DERIVE_SOURCE_TYPE = "document_derived"
+DERIVE_SOURCE_METHOD = "baseline_reverse"
+
+
+def _load_derive_document(
+    session: Session, *, project_id: int, document_id: int
+) -> Document:
+    document = session.scalar(
+        select(Document).where(
+            Document.id == document_id, Document.project_id == project_id
+        )
+    )
+    if document is None:
+        raise DocumentNotFound("文档不存在")
+    return document
+
+
+def _load_derive_version(
+    session: Session, *, document_id: int, version_id: int
+) -> DocumentVersion:
+    version = session.scalar(
+        select(DocumentVersion).where(
+            DocumentVersion.id == version_id,
+            DocumentVersion.document_id == document_id,
+        )
+    )
+    if version is None:
+        raise DocumentVersionNotFound("版本不存在")
+    return version
+
+
+def _load_derive(session: Session, project_id: int, derive_id: int) -> BaselineDerive:
+    derive = session.scalar(
+        select(BaselineDerive).where(
+            BaselineDerive.id == derive_id,
+            BaselineDerive.project_id == project_id,
+        )
+    )
+    if derive is None:
+        raise BaselineDeriveNotFound("推导记录不存在")
+    return derive
+
+
+def _mark_derive_failed(
+    session: Session, derive: BaselineDerive, *, code: str, message: str | None
+) -> None:
+    """失败留痕在业务记录上，不写审计（与 05 的口径一致）。"""
+    derive.status = "failed"
+    derive.error_code = code
+    derive.error_message = (message or "")[:500]
+    derive.finished_at = _now()
+    session.flush()
+    session.commit()
+
+
+def _new_candidate(
+    *,
+    project_id: int,
+    derive_id: int,
+    parent_id: int | None,
+    node: derive_engine.CandidateNode,
+) -> BaselineDeriveCandidate:
+    return BaselineDeriveCandidate(
+        project_id=project_id,
+        derive_id=derive_id,
+        parent_id=parent_id,
+        entity_type=node.entity_type,
+        name=node.name,
+        description=node.description,
+        source_chapter_id=node.source_chapter_id,
+        source_chapter_title=node.source_chapter_title,
+        confidence=node.confidence,
+        rationale=node.rationale,
+    )
+
+
+def _persist_candidates(
+    session: Session,
+    *,
+    project_id: int,
+    derive_id: int,
+    modules: list[derive_engine.CandidateNode],
+) -> dict[str, int]:
+    """把候选树递归落库，返回各级计数。"""
+    counts = {"modules": 0, "functions": 0, "feature_points": 0}
+
+    for module in modules:
+        module_row = _new_candidate(
+            project_id=project_id, derive_id=derive_id, parent_id=None, node=module
+        )
+        session.add(module_row)
+        session.flush()
+        counts["modules"] += 1
+
+        for function in module.children:
+            function_row = _new_candidate(
+                project_id=project_id,
+                derive_id=derive_id,
+                parent_id=module_row.id,
+                node=function,
+            )
+            session.add(function_row)
+            session.flush()
+            counts["functions"] += 1
+
+            for point in function.children:
+                session.add(
+                    _new_candidate(
+                        project_id=project_id,
+                        derive_id=derive_id,
+                        parent_id=function_row.id,
+                        node=point,
+                    )
+                )
+                counts["feature_points"] += 1
+
+    session.flush()
+    return counts
+
+
+def run_document_derive(
+    session: Session,
+    *,
+    project_id: int,
+    actor: User,
+    document_id: int,
+    document_version_id: int,
+    template_id: int,
+    provider: LLMProvider,
+) -> BaselineDerive:
+    """发起一次推导（同步跑完）。
+
+    校验顺序固定：项目（404/409/403）→ 文档（404）→ 版本（404/400）
+    → 模板（400）。失败只留痕在 `baseline_derives`，不写审计。
+    """
+    _ensure_writable_project(session, project_id)
+    _ensure_admin(session, project_id=project_id, actor=actor)
+
+    document = _load_derive_document(
+        session, project_id=project_id, document_id=document_id
+    )
+    version = _load_derive_version(
+        session, document_id=document_id, version_id=document_version_id
+    )
+    if version.status != "active":
+        raise DocumentVersionNotAnalyzable("只有生效版本的文档可以推导基线")
+
+    template = session.get(PromptTemplate, template_id)
+    if (
+        template is None
+        or template.task_type != DERIVE_TASK_TYPE
+        or template.status != "active"
+    ):
+        raise PromptTemplateInvalid("提示词模板不存在、未启用或类型不是文档推导")
+
+    derive = BaselineDerive(
+        project_id=project_id,
+        document_id=document_id,
+        document_version_id=document_version_id,
+        template_id=template_id,
+        template_version=template.version_no,
+        provider=getattr(provider, "name", "mock"),
+        status="running",
+        started_at=_now(),
+        created_by=actor.id,
+    )
+    session.add(derive)
+    session.flush()
+
+    limit = get_settings().incremental_max_input_chars
+    chapters = documents_service.list_chapters(
+        session,
+        project_id=project_id,
+        document_id=document_id,
+        version_id=document_version_id,
+    )
+    existing_brief = derive_engine.render_existing_brief(
+        session, project_id=project_id, max_chars=limit
+    )
+
+    try:
+        result = derive_engine.run_derive(
+            provider=provider,
+            template=template,
+            document_name=document.name,
+            version_no=version.version_no,
+            chapters=chapters,
+            existing_brief=existing_brief,
+            max_chars=limit,
+        )
+    except AppError as exc:
+        _mark_derive_failed(
+            session, derive, code=exc.code, message=exc.message
+        )
+        raise
+    except Exception as exc:  # provider 抛任何异常都算调用失败
+        message = f"推导模型调用失败：{exc}"
+        _mark_derive_failed(session, derive, code="LLM_CALL_FAILED", message=message)
+        raise LLMCallFailed(message) from exc
+
+    counts = _persist_candidates(
+        session, project_id=project_id, derive_id=derive.id, modules=result.modules
+    )
+    stats = {
+        "chapter_count": result.chapter_count,
+        "processed_count": result.processed_count,
+        "candidate_count": sum(counts.values()),
+        "module_count": counts["modules"],
+        "function_count": counts["functions"],
+        "feature_point_count": counts["feature_points"],
+        "skipped_chapters": result.skipped_chapters,
+    }
+    derive.stats = stats
+    derive.status = "succeeded"
+    derive.finished_at = _now()
+    session.flush()
+
+    write_audit(
+        session,
+        "baseline.derive.run",
+        actor_id=actor.id,
+        actor_role=actor.global_role,
+        project_id=project_id,
+        target_type="baseline_derive",
+        target_id=derive.id,
+        after_data={
+            "document_id": document_id,
+            "document_version_id": document_version_id,
+            "template_id": template_id,
+            "provider": derive.provider,
+            "stats": stats,
+        },
+    )
+    session.commit()
+    return derive
+
+
+def list_derives(
+    session: Session,
+    project_id: int,
+    *,
+    page: int = 1,
+    page_size: int = 50,
+) -> dict:
+    """推导记录列表，新记录在前。"""
+    rows = session.scalars(
+        select(BaselineDerive)
+        .where(BaselineDerive.project_id == project_id)
+        .order_by(BaselineDerive.id.desc())
+    ).all()
+    items = [
+        {
+            "id": row.id,
+            "provider": row.provider,
+            "status": row.status,
+            "document_id": row.document_id,
+            "document_version_id": row.document_version_id,
+            "template_id": row.template_id,
+            "stats": row.stats,
+            "error_code": row.error_code,
+            "error_message": row.error_message,
+            "started_at": row.started_at,
+            "finished_at": row.finished_at,
+            "created_at": row.created_at,
+        }
+        for row in rows
+    ]
+    return _page(items, page, page_size)
+
+
+def get_derive_detail(session: Session, project_id: int, derive_id: int) -> dict:
+    """推导详情 + 候选树（空子列表返回 None，前端渲染更简单）。"""
+    derive = _load_derive(session, project_id, derive_id)
+    document = session.get(Document, derive.document_id)
+    rows = session.scalars(
+        select(BaselineDeriveCandidate)
+        .where(BaselineDeriveCandidate.derive_id == derive.id)
+        .order_by(BaselineDeriveCandidate.id)
+    ).all()
+
+    by_parent: dict[int | None, list[BaselineDeriveCandidate]] = {}
+    for row in rows:
+        by_parent.setdefault(row.parent_id, []).append(row)
+
+    def build(row: BaselineDeriveCandidate) -> dict:
+        children = [build(child) for child in by_parent.get(row.id, [])]
+        return {
+            "id": row.id,
+            "parent_id": row.parent_id,
+            "entity_type": row.entity_type,
+            "name": row.name,
+            "description": row.description,
+            "source_chapter_title": row.source_chapter_title,
+            "confidence": row.confidence,
+            "rationale": row.rationale,
+            "status": row.status,
+            "children": children or None,
+        }
+
+    return {
+        "id": derive.id,
+        "provider": derive.provider,
+        "status": derive.status,
+        "document_id": derive.document_id,
+        "document_version_id": derive.document_version_id,
+        "template_id": derive.template_id,
+        "document_name": document.name if document is not None else None,
+        "stats": derive.stats,
+        "error_code": derive.error_code,
+        "error_message": derive.error_message,
+        "started_at": derive.started_at,
+        "finished_at": derive.finished_at,
+        "created_at": derive.created_at,
+        "candidates": [build(row) for row in by_parent.get(None, [])],
+    }
+
+
+def _subtree_candidates(
+    session: Session, root: BaselineDeriveCandidate
+) -> list[BaselineDeriveCandidate]:
+    """前序收集一棵候选子树（含根）。"""
+    rows = session.scalars(
+        select(BaselineDeriveCandidate)
+        .where(BaselineDeriveCandidate.derive_id == root.derive_id)
+        .order_by(BaselineDeriveCandidate.id)
+    ).all()
+    children: dict[int, list[BaselineDeriveCandidate]] = {}
+    for row in rows:
+        if row.parent_id is not None:
+            children.setdefault(row.parent_id, []).append(row)
+
+    collected: list[BaselineDeriveCandidate] = []
+
+    def walk(node: BaselineDeriveCandidate) -> None:
+        collected.append(node)
+        for child in children.get(node.id, []):
+            walk(child)
+
+    walk(root)
+    return collected
+
+
+def delete_derive_candidate(
+    session: Session,
+    *,
+    project_id: int,
+    derive_id: int,
+    candidate_id: int,
+    actor: User,
+) -> dict:
+    """删一个候选（草稿阶段）。子候选随之删除。"""
+    _ensure_writable_project(session, project_id)
+    _ensure_admin(session, project_id=project_id, actor=actor)
+
+    derive = _load_derive(session, project_id, derive_id)
+    if derive.status != "succeeded":
+        raise BaselineDeriveStatusInvalid("推导未成功，不能修改候选")
+
+    candidate = session.scalar(
+        select(BaselineDeriveCandidate).where(
+            BaselineDeriveCandidate.id == candidate_id,
+            BaselineDeriveCandidate.derive_id == derive.id,
+            BaselineDeriveCandidate.project_id == project_id,
+        )
+    )
+    if candidate is None:
+        raise AdoptCandidateNotFound("候选不存在")
+    if candidate.status != "pending":
+        raise AdoptAlreadyDecided("已采纳或已跳过的候选不能删除")
+
+    removed = _subtree_candidates(session, candidate)
+    # 自引用外键没有 ORM 关系，必须「最深先删 + 逐条 flush」，
+    # 否则工作单元按表批量发 SQL 会撞 fk_bcandidates_parent。
+    for row in reversed(removed):
+        session.delete(row)
+        session.flush()
+    session.commit()
+    return {"deleted": True, "deleted_count": len(removed)}
+
+
+def _trace_kwargs(
+    derive: BaselineDerive, candidate: BaselineDeriveCandidate
+) -> dict:
+    """采纳时写入结构表的追溯字段（AC-126）。
+
+    ⚠️ `baseline_modules` **没有**逐章节追溯列（结构表零改动），
+    模块行只写 `source_type`；文档 / 版本 / 章节的追溯落在功能与功能点行。
+    """
+    return {
+        "source_type": DERIVE_SOURCE_TYPE,
+        "source_document_id": derive.document_id,
+        "source_version_id": derive.document_version_id,
+        "source_chapter_id": candidate.source_chapter_id,
+        "source_chapter_title": candidate.source_chapter_title,
+        "source_method": DERIVE_SOURCE_METHOD,
+        "source_analysis_id": None,
+    }
+
+
+def _decide_candidate(
+    candidate: BaselineDeriveCandidate, entity_type: str, entity_id: int
+) -> None:
+    candidate.status = "adopted"
+    candidate.adopted_entity_type = entity_type
+    candidate.adopted_entity_id = entity_id
+
+
+def _adopt_module_children(
+    session: Session,
+    *,
+    derive: BaselineDerive,
+    module_candidate: BaselineDeriveCandidate,
+    module_id: int,
+    actor: User,
+    created: dict,
+    reused: dict,
+) -> None:
+    """把模块候选下的功能 / 功能点挂到目标模块。
+
+    同名功能 / 功能点**自动复用**（不写行、不改已有行）——请求体只传顶层
+    模块，子级没有独立 action 可表达，自动复用是唯一不覆盖又能落地的选择。
+    """
+    function_candidates = session.scalars(
+        select(BaselineDeriveCandidate)
+        .where(
+            BaselineDeriveCandidate.derive_id == derive.id,
+            BaselineDeriveCandidate.parent_id == module_candidate.id,
+            BaselineDeriveCandidate.entity_type == "function",
+        )
+        .order_by(BaselineDeriveCandidate.id)
+    ).all()
+
+    for function_candidate in function_candidates:
+        if function_candidate.status != "pending":
+            continue
+        function = session.scalar(
+            select(BaselineFunction).where(
+                BaselineFunction.module_id == module_id,
+                BaselineFunction.name == function_candidate.name,
+            )
+        )
+        if function is not None:
+            reused["functions"] += 1
+        else:
+            function = BaselineFunction(
+                project_id=derive.project_id,
+                module_id=module_id,
+                name=function_candidate.name,
+                description=function_candidate.description,
+                created_by=actor.id,
+                **_trace_kwargs(derive, function_candidate),
+            )
+            session.add(function)
+            session.flush()
+            created["functions"] += 1
+        _decide_candidate(function_candidate, "function", function.id)
+
+        point_candidates = session.scalars(
+            select(BaselineDeriveCandidate)
+            .where(
+                BaselineDeriveCandidate.derive_id == derive.id,
+                BaselineDeriveCandidate.parent_id == function_candidate.id,
+                BaselineDeriveCandidate.entity_type == "feature_point",
+            )
+            .order_by(BaselineDeriveCandidate.id)
+        ).all()
+        for point_candidate in point_candidates:
+            if point_candidate.status != "pending":
+                continue
+            point = session.scalar(
+                select(BaselineFeaturePoint).where(
+                    BaselineFeaturePoint.function_id == function.id,
+                    BaselineFeaturePoint.name == point_candidate.name,
+                )
+            )
+            if point is not None:
+                reused["feature_points"] += 1
+            else:
+                point = BaselineFeaturePoint(
+                    project_id=derive.project_id,
+                    function_id=function.id,
+                    name=point_candidate.name,
+                    description=point_candidate.description,
+                    created_by=actor.id,
+                    **_trace_kwargs(derive, point_candidate),
+                )
+                session.add(point)
+                session.flush()
+                created["feature_points"] += 1
+            _decide_candidate(point_candidate, "feature_point", point.id)
+
+
+def adopt_derive_candidates(
+    session: Session,
+    *,
+    project_id: int,
+    derive_id: int,
+    actor: User,
+    items: list,
+) -> dict:
+    """采纳顶层模块候选：`create` 新建、`reuse` 复用、`skip` 跳过。
+
+    **绝不覆盖同名实体**：`create` 撞名直接 409，由前端引导用户
+    复用或改名；`reuse` 只改候选的指向，不动已有行的任何字段。
+    """
+    _ensure_writable_project(session, project_id)
+    _ensure_admin(session, project_id=project_id, actor=actor)
+
+    derive = _load_derive(session, project_id, derive_id)
+    if derive.status != "succeeded":
+        raise BaselineDeriveStatusInvalid("推导未成功，不能采纳候选")
+
+    created = {"modules": 0, "functions": 0, "feature_points": 0}
+    reused = {"modules": 0, "functions": 0, "feature_points": 0}
+    skipped = {"modules": 0, "functions": 0, "feature_points": 0}
+    results: list[dict] = []
+
+    for item in items:
+        candidate = session.scalar(
+            select(BaselineDeriveCandidate).where(
+                BaselineDeriveCandidate.id == item.candidate_id,
+                BaselineDeriveCandidate.derive_id == derive.id,
+                BaselineDeriveCandidate.project_id == project_id,
+            )
+        )
+        if candidate is None:
+            raise AdoptCandidateNotFound("候选不存在")
+        if candidate.entity_type != "module":
+            raise AdoptTargetInvalid("只能采纳顶层模块候选")
+        if candidate.status != "pending":
+            raise AdoptAlreadyDecided("候选已被采纳或跳过")
+
+        if item.action == "skip":
+            key_of = {
+                "module": "modules",
+                "function": "functions",
+                "feature_point": "feature_points",
+            }
+            for row in _subtree_candidates(session, candidate):
+                if row.status == "pending":
+                    row.status = "skipped"
+                    skipped[key_of[row.entity_type]] += 1
+            results.append(
+                {
+                    "candidate_id": candidate.id,
+                    "entity_type": "module",
+                    "entity_id": None,
+                    "name": candidate.name,
+                    "action": "skip",
+                }
+            )
+            continue
+
+        if item.action == "reuse":
+            if item.existing_entity_id is None:
+                raise AdoptTargetInvalid("复用必须指定已有模块")
+            module = session.scalar(
+                select(BaselineModule).where(
+                    BaselineModule.id == item.existing_entity_id,
+                    BaselineModule.project_id == project_id,
+                )
+            )
+            if module is None:
+                raise AdoptTargetInvalid("复用的模块不存在或不属于该项目")
+            _decide_candidate(candidate, "module", module.id)
+            reused["modules"] += 1
+        else:  # create
+            name = (item.name or candidate.name).strip()
+            if not name:
+                raise AdoptTargetInvalid("新建时名称不能为空")
+            module = BaselineModule(
+                project_id=project_id,
+                name=name,
+                description=candidate.description,
+                source_type=DERIVE_SOURCE_TYPE,
+                created_by=actor.id,
+            )
+            _guarded_insert(
+                session, module, DuplicateModuleName,
+                "同项目已存在同名模块，请选择复用或改名新建",
+            )
+            _decide_candidate(candidate, "module", module.id)
+            created["modules"] += 1
+
+        _adopt_module_children(
+            session,
+            derive=derive,
+            module_candidate=candidate,
+            module_id=module.id,
+            actor=actor,
+            created=created,
+            reused=reused,
+        )
+        results.append(
+            {
+                "candidate_id": candidate.id,
+                "entity_type": "module",
+                "entity_id": module.id,
+                "name": module.name,
+                "action": item.action,
+            }
+        )
+
+    session.flush()
+
+    write_audit(
+        session,
+        "baseline.derive.adopt",
+        actor_id=actor.id,
+        actor_role=actor.global_role,
+        project_id=project_id,
+        target_type="baseline_derive",
+        target_id=derive.id,
+        after_data={
+            "derive_id": derive.id,
+            "created": created,
+            "reused": reused,
+            "skipped": skipped,
+        },
+    )
+    session.commit()
+
+    return {
+        "derive_id": derive.id,
+        "adopted_count": sum(created.values()),
+        "created": created,
+        "reused": reused,
+        "skipped": skipped,
+        "items": results,
+    }
