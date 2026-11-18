@@ -38,6 +38,15 @@ class Settings(BaseSettings):
     # 增量分析单章节 Prompt 的字符上限，超出截断正文并记 WARN
     incremental_max_input_chars: int = Field(default=8000, gt=0)
 
+    # 大模型配置的主密钥（06 期）。用于加密 llm_providers.api_key_ciphertext，
+    # 必填——与 db_dsn 同一口径，不允许带空密钥启动。
+    # 由 sha256 派生出 Fernet 密钥，所以任意长度的字符串都能用。
+    llm_secret_key: str = Field(
+        ...,
+        min_length=1,
+        description="大模型 API Key 的加密主密钥",
+    )
+
 
 @lru_cache
 def get_settings() -> Settings:

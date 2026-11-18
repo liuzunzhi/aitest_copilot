@@ -19,7 +19,6 @@
 - 同目标既有 `conflict` 又有 `possible_impact` → 合并为一条 `conflict`。
 """
 
-import json
 from dataclasses import dataclass, field
 from decimal import Decimal
 from typing import Any
@@ -31,6 +30,7 @@ from app.common.config import get_settings
 from app.common.errors import LLMCallFailed, LLMOutputInvalid
 from app.incremental.context import baseline_index
 from app.incremental.context2b import TARGET_LABELS, build_system_prompt, build_user_prompt
+from app.llm.json_utils import parse_llm_json
 from app.llm.provider import LLMProvider
 from app.llm.schemas import LLMRequest
 from app.models.baseline import BaselineFeaturePoint, BaselineFunction, BaselineModule
@@ -244,8 +244,10 @@ def _parse_payload(
 ) -> tuple[str, Decimal | None, str | None, list[dict[str, Any]]]:
     """解析第二遍模型输出。`decision` 非法或非 JSON 直接抛错。"""
     try:
-        payload = json.loads(content)
-    except (TypeError, ValueError) as exc:
+        payload = parse_llm_json(content)
+    except (TypeError, ValueError, LLMOutputInvalid) as exc:
+        # LLMOutputInvalid 是 AppError 子类，不是 ValueError，要显式接住
+        # 才能换成带目标上下文的错误（与改造前行为一致）。
         raise _invalid(target_type, target_id, name, "返回不是合法 JSON") from exc
     if not isinstance(payload, dict):
         raise _invalid(target_type, target_id, name, "返回不是 JSON 对象")

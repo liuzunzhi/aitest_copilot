@@ -626,6 +626,58 @@ class InvalidConflictResolution(AppError):
     code = "INVALID_CONFLICT_RESOLUTION"
 
 
+class LLMProviderNotFound(AppError):
+    """AC-113：大模型配置不存在。"""
+
+    status_code = 404
+    code = "LLM_PROVIDER_NOT_FOUND"
+
+
+class LLMProviderNameTaken(AppError):
+    """AC-113：大模型配置名重复。"""
+
+    status_code = 409
+    code = "LLM_PROVIDER_NAME_TAKEN"
+
+
+class LLMProviderInvalid(AppError):
+    """AC-113：URL / Key / 模型名 / 超时非法。"""
+
+    status_code = 400
+    code = "LLM_PROVIDER_INVALID"
+
+
+class LLMConfigInvalid(AppError):
+    """AC-113：密文无法解密（主密钥不对或密文被改）。
+
+    消息固定，不含密文也不含明文——解密失败时原始异常里可能带密文片段。
+    """
+
+    status_code = 500
+    code = "LLM_CONFIG_INVALID"
+
+
+class PromptTemplateNotFound(AppError):
+    """AC-115：提示词模板不存在。"""
+
+    status_code = 404
+    code = "PROMPT_TEMPLATE_NOT_FOUND"
+
+
+class PromptTemplateInvalid(AppError):
+    """AC-115：Prompt 为空 / 超长 / status 非法。"""
+
+    status_code = 400
+    code = "PROMPT_TEMPLATE_INVALID"
+
+
+class PromptTemplateNameTaken(AppError):
+    """AC-115：同 task_type 下模板名重复。"""
+
+    status_code = 409
+    code = "PROMPT_TEMPLATE_NAME_TAKEN"
+
+
 def install_error_handlers(app: FastAPI) -> None:
     """把 AppError 统一渲染成 {"code","message",**extra}。"""
 
@@ -691,7 +743,11 @@ __all__ = [
     "InvalidStatus",
     "InvalidVersionStatus",
     "LLMCallFailed",
+    "LLMConfigInvalid",
     "LLMOutputInvalid",
+    "LLMProviderInvalid",
+    "LLMProviderNameTaken",
+    "LLMProviderNotFound",
     "LabelAlreadyCleared",
     "LabelNotFound",
     "LastProjectAdmin",
@@ -706,6 +762,9 @@ __all__ = [
     "ProjectArchived",
     "ProjectNameRequired",
     "ProjectNotFound",
+    "PromptTemplateInvalid",
+    "PromptTemplateNameTaken",
+    "PromptTemplateNotFound",
     "RateLimited",
     "ReasonRequired",
     "ReviewCommentRequired",

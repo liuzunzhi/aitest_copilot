@@ -16,7 +16,6 @@
   `label_type='new'` → `INCREMENTAL_LABEL_NEW_DROPPED`；其余待落库。
 """
 
-import json
 import logging
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -29,6 +28,7 @@ from sqlalchemy.orm import Session
 from app.common.config import get_settings
 from app.common.errors import LLMCallFailed, LLMOutputInvalid
 from app.incremental.context import baseline_index, build_system_prompt, build_user_prompt
+from app.llm.json_utils import parse_llm_json
 from app.llm.provider import LLMProvider
 from app.llm.schemas import LLMRequest
 from app.models.document import DocumentChapter
@@ -172,8 +172,10 @@ def _process_chapter(
         ) from exc
 
     try:
-        payload = json.loads(response.content)
-    except (TypeError, ValueError) as exc:
+        payload = parse_llm_json(response.content)
+    except (TypeError, ValueError, LLMOutputInvalid) as exc:
+        # LLMOutputInvalid 是 AppError 子类，不是 ValueError，
+        # 要显式接住才能换成带章节上下文的错误（与改造前行为一致）。
         raise _invalid(chapter, "返回不是合法 JSON", chapter_count=chapter_count) from exc
 
     if not isinstance(payload, dict) or "conclusions" not in payload:

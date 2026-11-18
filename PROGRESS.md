@@ -16,12 +16,12 @@
 - [x] 03-documents (文档解析) —— **已完成（含 T84-PDF：PDF 解析支持）**
 - [x] 04-baseline (基线管理、快照、标签) —— **已完成（含 T67 收尾）**
 - [x] 05-increment-analysis (增量分析) —— **第一期（T68~T70）+ 第二期（T71~T78）+ 第三期 T79~T83 全部完成**
-- [ ] 06-real-llm (真实大模型接入与提示词模板管理) —— **进行中：T84-PDF 已完成，下一个 T84**
+- [ ] 06-real-llm (真实大模型接入与提示词模板管理) —— **进行中：T84-PDF + T84 已完成，下一个 T85**
 
 ## 3. 当前冲刺任务（⚠️ 务必先做这个）
 
-**当前目标**：06 真实大模型接入 —— **T84-PDF 已完成（排头兵）**，下一步 T84
-（配置落库 + 密钥加密 + 动态 Provider + JSON 容错解析）。
+**当前目标**：06 真实大模型接入 —— **T84-PDF + T84 已完成**，下一步 **T85**
+（配置管理接口 + 模板管理接口）。
 
 > **06 期红线（用户 2026-11-17 裁决）**：
 > - 不做 Skill 双轨制 / Token 计费 / 不碰自动化执行；
@@ -47,6 +47,14 @@
 > `a | b` + 扫描件整文降级；**不改 `app/documents/service.py` 与
 > `app/common/errors.py`**（章节落库口径不变，`UNSUPPORTED_DOC_TYPE`
 > 回归「未知扩展名」语义）。
+
+### T84 已完成（配置落库 + 密钥加密 + 动态 Provider + JSON 容错）
+
+> 范围：两张新表（迁移 `0017`）+ Fernet 加密 + `OpenAICompatProvider` +
+> 查库降级工厂 + `parse_llm_json` 容错解析入口。
+> **05 的判定逻辑零改动**——`app/incremental/` 下只换了 2 处解析入口
+> （`engine.py` / `second_pass.py`），字段校验 / 标签分类 / 丢弃规则 /
+> 错误码全部原样。
 
 ### 第二期范围（已完成，不可扩大）
 
@@ -82,15 +90,15 @@
 
 | 项 | 值 |
 |---|---|
-| 后端全量 pytest | **636 passed**（串行；T84-PDF 收尾复核，基线 626 + 新增 10 条） |
+| 后端全量 pytest | **732 passed**（串行；T84 收尾复核，基线 636 + 新增 96 条） |
 | e2e | **37 passed**（含增量分析第一期 2 条 + 第二期 3 条 + 第三期 2 条 + PDF 1 条），一条命令 `.\.venv\Scripts\python.exe scripts\run_e2e.py`（8001/5174 + `aitest_copilot_e2e`） |
 | 前端构建 | `npm run build`（`web/` 目录，端口 5173，代理到 8000） |
 | 开跑前自检 | `.\.venv\Scripts\python.exe scripts\dev_check.py`（跑 e2e 时加 `--expect-db e2e`） |
 | 账号 | `admin` / `Admin12345` |
-| 迁移 head | `0016`（06 期 T84 建 `0017`） |
+| 迁移 head | **`0017`**（06 期 T84 建；T84-PDF 不动迁移） |
 | 截图目录 | 仓库根 `.screenshots/`（`E2E_SCREENSHOT_DIR` 可覆盖） |
-| 运行时依赖 | `pdfplumber>=0.11`（T84-PDF 新增）；`httpx` / `cryptography` 在 T84 移入运行时 |
-| 环境变量 | `LLM_SECRET_KEY` 已写入本地 `.env`（随机生成，不入库）；`.env.example` 有说明 |
+| 运行时依赖 | `pdfplumber>=0.11`（T84-PDF 新增）；**`cryptography>=43`（T84 新增）、`httpx>=0.28`（T84 从 dev 移入）** |
+| 环境变量 | **新增必填 `LLM_SECRET_KEY`**（已写入本地 `.env`，随机生成，不入库；`.env.example` 有说明） |
 
 ### ⚠️ 两个已知的坑（别重复踩）
 
@@ -217,10 +225,78 @@
 - **扫描件降级**：提取不到任何文字 → 整文单章「全文」，**不报错**
   （与「txt 无标题整文单章」同一口径）。OCR 明确留到后续期。
 
+## 5.3 06 期 · T84 完成情况（2026-11-18）
+
+**做了什么**：真实大模型接入的**模型侧底座**（不含接口、不含前端）。
+
+- [x] `app/models/llm.py`（新增）：`LLMProviderConfig`（`llm_providers`）+
+      `LLMRunLog`（`llm_run_logs`），字段 / 索引 / CheckConstraint 对齐 spec §4。
+- [x] `migrations/versions/0017_llm_providers.py`（新增）：`down_revision="0016"`，
+      两表按序建、downgrade 反序直接删表、**无种子数据**。
+- [x] `app/llm/crypto.py`（新增）：`encrypt` / `decrypt` / `mask`，
+      Fernet 密钥由 `sha256(llm_secret_key)` 派生。
+- [x] `app/llm/openai_compat.py`（新增）：`OpenAICompatProvider`
+      （`transport` 可注入 → 测试零真实 socket）。
+- [x] `app/llm/json_utils.py`（新增）：`parse_llm_json` 容错解析。
+- [x] `app/llm/provider.py`：工厂改造成查库降级（无配置 → Mock 单例）。
+- [x] `app/incremental/engine.py` + `second_pass.py`：**两处** `json.loads`
+      换成 `parse_llm_json`，判定逻辑零改动。
+- [x] `app/common/config.py`：`Settings.llm_secret_key` **必填**；
+      `.env` / `.env.example` 同步。
+- [x] `app/common/errors.py`：新增 7 个错误码类。
+- [x] `pyproject.toml`：`cryptography>=43` 进运行时；`httpx>=0.28` 从 dev 移入运行时。
+- [x] `tests/llm/`（新增 5 个文件）+ `tests/incremental/test_llm_json_fallback.py`：
+      新增 **96 条**用例，全部用 `httpx.MockTransport`，**零真实 socket**。
+
+**验证结果**：后端全量 **732 passed**（串行，exit 0）；e2e 全量 **37 passed**；
+`npm run build` 通过；`dev_check.py` 通过；两个库迁移 head 均在 `0017`；
+`alembic downgrade 0016 → upgrade head` 往返通过；`llm_providers` 表为空时
+（= 断网降级 Mock 场景）全量仍全绿。
+
+**实现要点**：
+
+- **为什么「先降级、后接真」不是妥协而是安全阀**：没有配置、用户没配就发分析，
+  平台仍然能跑（和今天一模一样），不会因为新功能把 05 打挂。
+  `get_provider` 每次都查库（单表 + 唯一索引，查询成本可忽略），
+  换来「管理员改完配置立即生效」，不用处理缓存一致性。
+- **解密失败不降级，抛 `LLMConfigInvalid`（500）**：配置坏了必须让人知道，
+  否则线上会用 Mock 跑出一堆空结论却没人发现。
+- **唯一默认用「生成列 + 唯一索引」在库层兜底**：
+  `default_key` 是 `STORED` 生成列 `IF(is_default=1, 1, NULL)`，
+  唯一索引 `uk_llmprov_default` 挂在它上面。
+  MySQL 唯一索引允许多个 NULL，所以非默认行不占位。
+- **⚠️ 切换默认必须「先清后置」**：生成列是**即时计算**的——
+  把新行 `is_default` 置 1 的那一刻它的 `default_key` 立刻落成 1，
+  而老默认行还没清、`default_key` 还是 1 → 唯一索引当场报错。
+  **反过来做（先置后清）必炸**，T85 的服务层要按这个顺序写。
+- **Fernet 密钥由 `sha256(llm_secret_key)` 派生**：
+  `base64.urlsafe_b64encode(sha256(secret).digest())`，
+  任意长度的字符串都能当主密钥，用户不必手工生成 32 字节。
+  换掉主密钥 = 库里已存的密文全部解不开。
+- **`decrypt` 的错误消息是固定的**：Fernet 的原始异常里可能带密文片段，
+  直接透出去等于把密文写进了日志。
+- **`parse_llm_json` 只做三件事，不做「智能修复」**：
+  剥围栏 → 取 `{` 到 `}` 区间兜底 → 失败就报错。
+  **补引号 / 截断补全 / JSON5 容错一律不做**——那些会掩盖模型输出的真实问题，
+  让「模型返回了坏 JSON」变成「平台悄悄改对了」，排查时更难定位。
+  围栏与前置说明是**格式噪声**，去掉它是还原原文；补引号是**猜测**。
+- **异常收敛成 6 类**：超时 / 连接失败 / 其他 HTTPError / 401-403 / 其他非 2xx /
+  响应结构不符，全部 → `LLMCallFailed`（502 `LLM_CALL_FAILED`），
+  消息给可读原因但**永远不带 API Key**。
+- **不传 `temperature` / `max_tokens`**：不同供应商默认值差异大，
+  传固定值反而制造行为不一致。
+- **`test_ac_84_no_real_network_code` 改写而非删除**（用户 2026-11-18 裁决）：
+  06 期引入了真实供应商，「代码里不出现 httpx 字样」的前提已不成立。
+  改成两条可执行断言——① `OpenAICompatProvider` 必须支持 `transport` 注入；
+  ② `app/` 下除它之外零真实网络客户端。另加一条
+  `test_ac_84_tests_never_use_real_socket`：测试目录里不许出现
+  `requests` / `urlopen` / `aiohttp` / `socket.socket`。
+  **守卫意图（断网可跑）保住了，用例一条没删。**
+
 ## 6. 待办（不属当前冲刺，等用户点头再做）
 
-- 06 期其余任务：T84（配置落库 + 加密 + Provider + JSON 容错）→
-  T85（配置与模板管理接口）→ T86（05 运行留痕 + 动态模板下拉）→
+- 06 期其余任务：T85（配置与模板管理接口）→
+  T86（05 运行留痕 + 动态模板下拉）→
   T87（前端系统设置页 + L1/L2 联调收尾）
 - PDF 扫描件 OCR（本期只做「无文字层 → 整文单章」降级）
 - PDF 表格结构化落库（本期还原成 `a | b` 文本行，与 docx 同构）

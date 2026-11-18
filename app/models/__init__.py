@@ -23,6 +23,7 @@ from app.models.incremental import (
     IncrementalLabel,
     PromptTemplate,
 )
+from app.models.llm import LLMProviderConfig, LLMRunLog
 from app.models.project import Project, ProjectMember
 from app.models.system import AuditLog, SystemSetting
 from app.models.token import AccessToken
@@ -49,6 +50,8 @@ __all__ = [
     "IncrementalConflict",
     "IncrementalDecision",
     "IncrementalLabel",
+    "LLMProviderConfig",
+    "LLMRunLog",
     "Project",
     "ProjectApplication",
     "ProjectMember",
