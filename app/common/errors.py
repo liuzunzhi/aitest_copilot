@@ -744,6 +744,76 @@ class EmptyReviewApproval(AppError):
     code = "EMPTY_REVIEW_APPROVAL"
 
 
+# ------------------------------------------------- 测试点分析（AC-141~158）
+
+
+class TestPointAnalysisNotFound(AppError):
+    """AC-141：生成记录不存在或不属于该项目。"""
+
+    status_code = 404
+    code = "TEST_POINT_ANALYSIS_NOT_FOUND"
+
+
+class TestPointNotFound(AppError):
+    """AC-141：测试点不存在或不属于该项目。"""
+
+    status_code = 404
+    code = "TEST_POINT_NOT_FOUND"
+
+
+class TestPointTemplateInvalid(AppError):
+    """AC-156：模板不存在、已停用或 `task_type` 不是 `test_point`。"""
+
+    status_code = 400
+    code = "TEST_POINT_TEMPLATE_INVALID"
+
+
+class TestPointInputEmpty(AppError):
+    """AC-142：生效标签与增量结论都没有——没有输入就没有依据，不许发起。"""
+
+    status_code = 400
+    code = "TEST_POINT_INPUT_EMPTY"
+
+
+class TestPointTargetNotFound(AppError):
+    """AC-141：章节 / 目标不存在或不属于本项目。"""
+
+    status_code = 400
+    code = "TEST_POINT_TARGET_NOT_FOUND"
+
+
+class TestPointReviewStateInvalid(AppError):
+    """AC-147：已评审过的测试点不能重复评审。"""
+
+    status_code = 409
+    code = "TEST_POINT_REVIEW_STATE_INVALID"
+
+
+class TestPointAnalysisHasApproved(AppError):
+    """AC-141：这次生成已产出评审通过的测试点，不允许连带删除。"""
+
+    status_code = 409
+    code = "TEST_POINT_ANALYSIS_HAS_APPROVED"
+
+
+class TestPointInvalid(AppError):
+    """AC-145：模型输出结构不合法，或请求里带了不可改的字段。"""
+
+    status_code = 400
+    code = "TEST_POINT_INVALID"
+
+
+class TestPointTargetOutOfBaseline(AppError):
+    """AC-144：模型给的目标不在本次输入清单内——**丢弃码**，不是 HTTP 错误。
+
+    与 05 的越界丢弃同一口径：模型猜出来的 id 一律丢，
+    不静默写入脏数据。记在 `stats.discarded` 里。
+    """
+
+    status_code = 400
+    code = "TEST_POINT_TARGET_OUT_OF_BASELINE"
+
+
 def install_error_handlers(app: FastAPI) -> None:
     """把 AppError 统一渲染成 {"code","message",**extra}。"""
 
@@ -851,6 +921,15 @@ __all__ = [
     "SnapshotReferenced",
     "TemplateDisabled",
     "TemplateNotFound",
+    "TestPointAnalysisHasApproved",
+    "TestPointAnalysisNotFound",
+    "TestPointInputEmpty",
+    "TestPointInvalid",
+    "TestPointNotFound",
+    "TestPointReviewStateInvalid",
+    "TestPointTargetNotFound",
+    "TestPointTargetOutOfBaseline",
+    "TestPointTemplateInvalid",
     "TokenExpired",
     "TokenRevoked",
     "TraceFieldsReadOnly",

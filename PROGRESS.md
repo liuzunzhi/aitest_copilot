@@ -17,12 +17,35 @@
 - [x] 04-baseline (基线管理、快照、标签) —— **已完成（含 T67 收尾）**
 - [x] 05-increment-analysis (增量分析) —— **第一期（T68~T70）+ 第二期（T71~T78）+ 第三期 T79~T83 全部完成**
 - [x] 06-real-llm (真实大模型接入与提示词模板管理) —— **T84-PDF ~ T87 全部完成，L2 真实联调已跑通**
+- [ ] 07-test-points (测试点分析) —— **T99 完成（建表 + 迁移 0022）；T100~T104 待做**
 
 ## 3. 当前冲刺任务（⚠️ 务必先做这个）
 
-**当前目标**：06 真实大模型接入 —— **T84-PDF + T84 + T85 + T86 + T87 已完成，
-L2 真实联调已跑通**（真实 MiniMax-M3：12 章 → 15 条结论落库）。
+**当前目标**：07 测试点分析 —— **T99 已完成**（两表 + 迁移 `0022` + 模板播种 +
+留痕枚举扩充），**下一步 T100（上下文组装 + 引擎）**。
 
+> **07 期红线（用户 2026-11-19 裁决）**：
+> - **不做 Skill 模式**（PRD 2.5）；**不做用例分析**（08 期）；
+> - **不做「无基线直接对文档分析」**——输入为空 → 400 `TEST_POINT_INPUT_EMPTY`
+>   （没有输入就没有依据，测试点挂不到任何功能上）；
+> - **复用 06 的模型层**：`get_provider` / `parse_llm_json` / `record_run`
+>   一个字都不重写；`app/llm/` 只允许给 Mock 加一个前缀分支；
+> - **不改 04 / 05 的判定逻辑**——只两处例外且逐条列明：
+>   ① 04 的 `clear_label()` 清除成功后补一行「标记下游测试点待复核」
+>   （**表探测**保护，07 迁移前后 04 都能跑）；
+>   ② 05 的 5 个权限函数**纯搬迁**到 `app/common/permissions.py`（函数体不改）；
+> - **只吃生效标签**（`baseline_labels.status='active'`），已清除的标签
+>   连同其目标**完全不进 Prompt**（服务端强制过滤）；
+> - **模型给的 `target_id` 越界 → 整条丢弃**（同 05 的 AC-79 口径）；
+> - **标签清除后不改测试点内容**，只置 `needs_review`；
+> - **任何测试不允许产生真实 socket**。
+
+> **任务顺序**：`T99 → T100 → T101 → T102 → T103 → T104`。
+> 规格与方案见 `specs/07-test-points/`。
+
+> **历史：06 真实大模型接入 —— T84-PDF + T84 + T85 + T86 + T87 已完成，
+> L2 真实联调已跑通**（真实 MiniMax-M3：12 章 → 15 条结论落库）。
+>
 > **06 期红线（用户 2026-11-17 裁决）**：
 > - 不做 Skill 双轨制 / Token 计费 / 不碰自动化执行；
 > - API Key 绝不明文落库，不出现在响应 / 审计 / 日志 / 异常 / 运行日志；
@@ -185,12 +208,12 @@ L2 真实联调已跑通**（真实 MiniMax-M3：12 章 → 15 条结论落库�
 
 | 项 | 值 |
 |---|---|
-| 后端全量 pytest | **829 passed**（串行；L2 真实联调修复后） |
-| e2e | **39 passed**（含增量分析第一期 2 条 + 第二期 3 条 + 第三期 2 条 + PDF 1 条 + 系统设置 2 条），一条命令 `.\.venv\Scripts\python.exe scripts\run_e2e.py`（8001/5174 + `aitest_copilot_e2e`） |
+| 后端全量 pytest | **876 passed**（串行；07 期 T99 后，基线 864 + 新增 12） |
+| e2e | **40 passed**（含增量分析第一期 2 条 + 第二期 3 条 + 第三期 2 条 + PDF 1 条 + 系统设置 2 条 + 来源筛选 1 条），一条命令 `.\.venv\Scripts\python.exe scripts\run_e2e.py`（8001/5174 + `aitest_copilot_e2e`） |
 | 前端构建 | `npm run build`（`web/` 目录，端口 5173，代理到 8000） |
 | 开跑前自检 | `.\.venv\Scripts\python.exe scripts\dev_check.py`（跑 e2e 时加 `--expect-db e2e`） |
 | 账号 | `admin` / `Admin12345` |
-| 迁移 head | **`0019`**（06 期 T84 建 `0017`；`0018` 免审核开关；`0019` 第一遍模板修正） |
+| 迁移 head | **`0022`**（06 期 T84 建 `0017`；`0018` 免审核开关；`0019` 第一遍模板修正；04 补期 `0020` 推导 / `0021` 分点审核；07 期 T99 建 `0022` 测试点） |
 | 截图目录 | 仓库根 `.screenshots/`（`E2E_SCREENSHOT_DIR` 可覆盖） |
 | 运行时依赖 | `pdfplumber>=0.11`（T84-PDF 新增）；**`cryptography>=43`（T84 新增）、`httpx>=0.28`（T84 从 dev 移入）** |
 | 环境变量 | **新增必填 `LLM_SECRET_KEY`**（已写入本地 `.env`，随机生成，不入库；`.env.example` 有说明） |
@@ -442,6 +465,47 @@ e2e 全量 **37 passed**（零回归）；`npm run build` 通过。
 - **校验一律在服务层做**：pydantic 校验失败会变成 422，
   而 spec 要求 400 `LLM_PROVIDER_INVALID` / `PROMPT_TEMPLATE_INVALID`
   （与 01–05 的既有口径一致）。
+
+## 5.5 07 期 · T99 完成情况（2026-11-19）
+
+**做完了什么**：测试点分析的**两张新表 + 迁移 `0022` + 播种模板 + 留痕枚举扩充 + 9 个错误码**。
+**零业务逻辑**——本期只落结构，不碰任何判定。
+
+- [x] `app/models/test_point.py`（新增）：`TestPointAnalysis`（`test_point_analyses`）+
+  `TestPoint`（`test_points`），字段 / 索引 / 4 个 CHECK 对齐 spec §4；
+  注册到 `app/models/__init__.py`。
+- [x] `migrations/versions/0022_test_points.py`：`down_revision="0021"`，
+  两表按外键顺序建、`downgrade` 反序直接删表。
+- [x] `llm_run_logs.task_type` 的 CHECK 扩 `'test_point'`。
+- [x] 播种 `task_type='test_point'` 模板（`[TEST_POINT_SYSTEM]` / `[TEST_POINT_USER]`）。
+- [x] `app/common/errors.py`：9 个错误类 + `__all__`。
+- [x] `tests/test_points/test_models.py`：12 条。
+
+**验证结果**：后端全量 **876 passed**（串行，exit 0）；e2e 全量 **40 passed**（零回归）；
+`npm run build` 通过；`dev_check.py` 通过；两个库迁移 head 均在 **`0022`**；
+`0022 → 0021 → 0022` 往返干净（两库都跑）。
+
+**实现要点**：
+
+- **测试点不建唯一键**：同名测试点是合法的（不同功能的同名测试点，
+  比如两个功能都要验「连续失败 5 次锁定」）。只靠 `idx_tpoints_target` 检索。
+- **生成记录与测试点分两张表**：生成任务是一次性的、可能失败；测试点是产出物，
+  有独立的评审生命周期，还可能被下游（08 期）引用。
+  结构与 05 的 `analyses` / `conclusions` 一致。
+- **`target_name` / `chapter_title` 落库快照**：目标或章节后来改名、被删，
+  历史测试点仍然对得上原文。
+- **MySQL 的 CHECK 违约抛 3819（`OperationalError`），不是 1062（`IntegrityError`）**——
+  唯一索引才是 1062。断言要分开写。
+- **`Test*` 开头的 ORM 类会被 pytest 当成测试类收集**（`PytestCollectionWarning`），
+  模型类上写 `__test__ = False` 关掉。
+- **模板示例里的 `target_id` 必须写 `"target_id": 123,`**（带逗号、冒号后有空格）。
+  这正是 06 期 L2 踩过的坑：模板示例写死 `"target_id": 1`，真实模型照抄，
+  真实的 10096 / 10097 全被当越界丢弃。
+- **`llm_run_logs` 的 CHECK 验证做了三层**（不只看「迁移跑通了」）：
+  ① `information_schema` 里能看到新约束文本含 `'test_point'`；
+  ② 实插 `task_type='test_point'` → 成功；
+  ③ 实插 `task_type='bogus_task'` → 被拒（3819）——
+  证明是「扩了枚举」而不是「放开了口子」。
 
 ## 6. 待办（不属当前冲刺，等用户点头再做）
 

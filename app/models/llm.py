@@ -37,7 +37,7 @@ _TABLE_OPTS = {
 
 PROVIDER_TYPES = ("openai_compat",)
 PROVIDER_STATUSES = ("active", "disabled")
-RUN_LOG_TASK_TYPES = ("incremental_first", "incremental_second", "provider_test")
+RUN_LOG_TASK_TYPES = ("incremental_first", "incremental_second", "provider_test", "test_point")
 RUN_LOG_STATUSES = ("succeeded", "failed")
 
 # 生成列：默认行取 1，其余取 NULL。
@@ -126,7 +126,8 @@ class LLMRunLog(Base):
         Index("idx_llmlogs_created", "created_at"),
         Index("idx_llmlogs_status", "status", "created_at"),
         CheckConstraint(
-            "task_type IN ('incremental_first','incremental_second','provider_test')",
+            "task_type IN "
+            "('incremental_first','incremental_second','provider_test','test_point')",
             name="ck_llmlogs_task_type",
         ),
         CheckConstraint(

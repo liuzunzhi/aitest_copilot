@@ -1,0 +1,230 @@
+# 07 · 测试点分析 · 任务清单
+
+> 规格 [spec.md](./spec.md) ｜ 方案 [plan.md](./plan.md) ｜ 验证约定 [../验证约定.md](../验证约定.md)
+
+## 执行约定
+
+1. 每个任务开跑前先 `.\.venv\Scripts\python.exe scripts\dev_check.py`，有 `[FAIL]` 先修环境。
+2. 定向用例跑 `-k ac_14X`，通过后再跑全量（**串行**，避免 `tests/projects/` 的既有 xdist flaky）。
+   全量基线 **864 passed**，数量只增不减。
+3. 改了前端就 `cd web; npm run build`；有前台交互就补 e2e 用例并截图到 `.screenshots/T10x/`。
+4. **每个任务一个提交**，提交信息写清「做了什么 / 为什么」。
+5. 测试名带 AC 编号（`test_ac_141_analysis_and_points_persisted`）。
+6. **断网红线**：任何一条测试都**不允许产生真实 socket**。真实 Provider 的测试一律 `httpx.MockTransport`。
+
+## 前置条件
+
+| 项 | 状态 |
+|---|---|
+| 01–06 模块 | T01–T98 已验收（06 到 T87，04 到 T98） |
+| 后端基线 | **864 passed**（2026-11-19，来源筛选修复后；e2e 默认 `-m "not e2e"`） |
+| e2e 基线 | **40 passed** |
+| 前端 | `D:\aitest_copilot\web`；项目详情页含「概览 / 成员 / 文档 / 版本快照 / 基线管理 / 申请 / 增量分析」7 个 Tab |
+| 数据库迁移 head | `0021`（07 建 `0022`） |
+| 可复用资产 | 06 的 `LLMProvider` / `get_provider` / `parse_llm_json` / `record_run`；04 的 `approved_entities()` / `clear_label()`；`prompt_templates.task_type='test_point'` 枚举已预留（`0013`） |
+
+## 本期红线（违反即返工）
+
+- **不做 Skill 模式**（PRD 2.5 的 Skill 包 / manifest / schema 校验 / 回退开关）。
+- **不做测试用例分析**（08 期）、不做自动化执行、不做测试报告。
+- **不做「无基线直接对文档分析」**：输入（增量结论 / 生效标签）为空 → 400 `TEST_POINT_INPUT_EMPTY`。
+- **不做工作台待办接入**、不做流程基线、不做 Token 计费。
+- **不改 04 / 05 的判定逻辑**——只允许两处例外，且逐条列明：
+  1. `app/baselines/service.py` 的 `clear_label()` 成功后补一行「标记下游测试点待复核」
+     （表探测保护，07 迁移前后 04 都能跑）；
+  2. 05 的 5 个权限函数**纯搬迁**到 `app/common/permissions.py`（函数体不改，05 保留别名导出）。
+- **不改 `app/llm/` 的 Provider / 解析 / 留痕**——只允许 `app/llm/mock.py` 加一个前缀分支。
+- **测试不允许产生真实 socket**。
+
+## 任务
+
+- [x] **T99 · 建表与迁移（`0022`）**（2026-11-19 完成）
+  - 内容：
+    - `app/models/test_point.py`（新增）：`TestPointAnalysis`（表 `test_point_analyses`）+
+      `TestPoint`（表 `test_points`），字段 / 索引 / CheckConstraint 严格对齐 spec §4；
+      注册到 `app/models/__init__.py` 的 import 与 `__all__`。
+    - `migrations/versions/0022_test_points.py`（新增）：`down_revision="0021"`；
+      两表按外键顺序建（`test_point_analyses` → `test_points`）、
+      `downgrade` 反序直接删表（不逐个 `drop_index`，避免 MySQL 1553）。
+    - **扩 `llm_run_logs` 的 CHECK**：`ck_llmlogs_task_type` 加 `'test_point'`。
+      MySQL 不允许直接改 CHECK → **先 `drop_constraint` 再 `create_check_constraint`**；
+      `downgrade` 反向。
+    - **播种模板**：`prompt_templates` 插 1 条 `task_type='test_point'`，
+      `system_prompt` 以 `[TEST_POINT_SYSTEM]` 开头、`user_prompt` 以 `[TEST_POINT_USER]` 开头；
+      **JSON 示例里的 `target_id` 必须写 `123`**（真实模型会照抄示例值）；
+      `downgrade` 里 `DELETE ... WHERE name = :name`。
+    - `app/common/errors.py`：新增 9 个错误类（spec §6.3），同步 `__all__`。
+  - 产出：AC-141（表结构部分）/ AC-154（枚举）/ AC-156（模板播种）可断言。
+  - 验证：
+    - `tests/test_points/test_models.py`——表约束（CK / 索引 / 枚举）；
+    - `alembic downgrade 0021 → upgrade head` **往返**（两个库都跑）；
+    - **确认 `llm_run_logs.task_type` 枚举扩充无误**：
+      查 `information_schema.CHECK_CONSTRAINTS` 看新约束文本，
+      并实际插入一条 `task_type='test_point'` 的留痕（应成功）、一条 `task_type='bogus'`（应被拒）。
+    - 模板播种断言：`prompt_templates` 里 `task_type='test_point'` 有且仅有 1 条 active。
+  - 前台：本期无页面。
+
+- [ ] **T100 · 上下文组装 + 引擎**
+  - 内容：
+    - `app/test_points/context.py`：`build_system_prompt` / `render_target_brief` /
+      `build_user_prompt` / `active_label_context` / `conclusion_context` /
+      `analysis_fully_revoked`。
+      **取数口径**：标签一律 `status='active'`；结构实体用 04 的 `approved_entities()` 过滤。
+    - `app/test_points/engine.py`：`run_generate()`（纯函数 + `on_chapter` 回调）+
+      `_parse_point()`（逐条校验与归一）。
+      **JSON 解析必须走 `parse_llm_json`**，不许裸 `json.loads`。
+    - `app/llm/mock.py`：加 `TEST_POINT_SYSTEM_PREFIX` + `TEST_POINT_DEFAULT_RESPONSE`
+      + `chat()` 里一条新分支（**既有分支行为不变**）。
+  - 产出：AC-142 / AC-143 / AC-144 / AC-145 / AC-146 / AC-156（Prompt 部分）可断言。
+  - 验证：
+    - `tests/test_points/test_context.py`——Prompt 段落顺序 / 清单排序 / 截断只截正文；
+    - `tests/test_points/test_engine.py`——坏 JSON 整次失败 / 越界丢弃 / 优先级归一 /
+      缺字段不丢 / Mock 前缀命中。
+  - 前台：本期无页面。
+
+- [ ] **T101 · 服务层 + 接口 + 留痕 + 权限搬迁**
+  - 内容：
+    - `app/common/permissions.py`（新增）：从 05 搬 5 个权限函数
+      （`_ensure_project` / `_ensure_writable_project` / `_ensure_admin` /
+      `_ensure_member` / `ensure_readable`），**函数体不改**；
+      05 的 `service.py` 改成 import 别名，既有测试不受影响。
+    - `app/test_points/service.py`：`create_analysis` / `list_analyses` / `get_analysis` /
+      `list_analysis_points` / `delete_analysis` / `list_points` / `get_point` /
+      `create_manual_point` / `update_point` / `delete_point` / `review_point`。
+    - `app/test_points/schemas.py`：请求与响应模型（枚举字段用 `str` 不用 `Literal`）。
+    - `app/test_points/router.py`：11 个路由，前缀
+      `/api/projects/{project_id}/test-points`；`app/main.py` 注册。
+    - 运行留痕：`run_log.record_run(task_type='test_point')`，
+      **`calls` 跑前记基线、跑完相减**。
+    - 审计：`test_point.analysis.create` / `test_point.analysis.delete` /
+      `test_point.review` / `test_point.point.*`。
+  - 产出：AC-141 / AC-152 / AC-153 / AC-154 / AC-156 可断言。
+  - 验证：
+    - `tests/test_points/test_generate_flow.py`——发起生成全链路；
+    - `tests/test_points/test_permissions.py`——权限矩阵 + 归档项目；
+    - `tests/test_points/test_run_log.py`——留痕（成功 / 失败两条路径）。
+  - 前台：本期无页面。
+
+- [ ] **T102 · 评审 + 手工增删改 + 引用保护 + 04 待复核标记**
+  - 内容：
+    - `service.review_point`：通过 / 驳回；已评审 → 409；审计 `test_point.review`，
+      `after_data` 含 `self_approved`。
+    - `service.create_manual_point` / `update_point` / `delete_point`：
+      `source_type='manual'`、`analysis_id=NULL`；更新只接受 4 个字段；
+      删除是**物理删除**。
+    - `service.delete_analysis`：有 `approved` 测试点 → 409；否则连带删。
+    - `app/baselines/references.py`：加 `_test_point_references` 解析器 + 注册
+      （表探测保护）。
+    - **`app/baselines/service.py` 的 `clear_label()`**：清除成功后把引用它的测试点
+      标 `needs_review=1` + `needs_review_reason` + `needs_review_at`
+      （**表探测**：表不存在就跳过）。
+  - 产出：AC-147 / AC-148 / AC-149 / AC-150 / AC-151 可断言。
+  - 验证：
+    - `tests/test_points/test_review.py`——评审流程；
+    - `tests/test_points/test_manual.py`——手工增删改；
+    - `tests/test_points/test_needs_review.py`——标签清除 → 待复核（**内容不变**）；
+    - `tests/baselines/` 全量回归（04 的 `clear_label` 改了）。
+  - 前台：本期无页面。
+
+- [ ] **T103 · 前端「测试点」Tab**
+  - 内容：
+    - `web/src/pages/ProjectTestPointsTab.tsx`（生成记录表 + 测试点表 + 发起弹窗）；
+    - `web/src/pages/TestPointDrawer.tsx`（详情 + 来源追溯 + 评审操作）；
+    - `web/src/pages/testPointMeta.tsx`（优先级 / 状态选项与文案）；
+    - `web/src/api/index.ts`：07 分节（类型 + 11 个函数）；
+    - `web/src/api/client.ts`：8 个错误码中文；
+    - `web/src/pages/ProjectDetailPage.tsx`：加「测试点」Tab（插在「增量分析」之后）。
+  - 产出：AC-157 可断言。
+  - 验证：
+    - `npm run build` 通过；
+    - `tests/e2e/test_test_points_ui.py`（`@pytest.mark.task("T103")`）：
+      发起生成 → 测试点出现在列表 → 评审通过 → 状态变「已通过」；
+      手工新增 → 编辑 → 删除；截图 `.screenshots/T103/`。
+  - 前台：项目详情页「测试点」Tab。
+
+- [ ] **T104 · 收尾**
+  - 内容：
+    - 全量 `pytest`（串行）+ 全量 e2e + `npm run build` + `dev_check.py`；
+    - `alembic downgrade 0021 → upgrade head` 往返（两个库）；
+    - 文档回填：`PROGRESS.md`（当前冲刺、迁移 head、计数、待办）、
+      `specs/验证约定.md`（第七期前台核对点 + 变更记录）、本文件验证记录。
+  - 产出：AC-151 / AC-155 / AC-158 可断言。
+  - 验证：
+    - 后端全量 **≥ 864 passed**（串行，exit 0）；
+    - e2e 全量 **≥ 40 passed**；
+    - `run_e2e.py` 内联的 `dev_check --expect-db e2e` 通过；
+    - 两个库迁移 head 均在 `0022`；
+    - 断网复核：清空 `llm_providers` 后全量 pytest 与 e2e 仍全绿。
+
+## 验证记录
+
+| 任务 | 后端定向 | 后端全量 | 前端构建 | e2e | 截图 |
+|---|---|---|---|---|---|
+| T99 | **12 passed**（新增） | **876 passed**（串行，exit 0） | 通过 | **40 passed**（零回归） | —（本期无页面） |
+| T100 | | | — | | —（本期无页面） |
+| T101 | | | — | | —（本期无页面） |
+| T102 | | | — | | —（本期无页面） |
+| T103 | | | | | `.screenshots/T103/` |
+| T104 | | | | | |
+
+## T99 实现要点（2026-11-19）
+
+**做完了什么**：两张新表 + 迁移 `0022` + 播种模板 + 留痕枚举扩充 + 9 个错误码。
+**零业务逻辑**——本期只落结构，不碰任何判定。
+
+### 关键决策
+
+- **测试点不建唯一键**：同名测试点是合法的（不同功能的同名测试点，
+  比如两个功能都要验「连续失败 5 次锁定」）。只靠 `idx_tpoints_target` 检索。
+- **测试点与生成记录分两张表**：生成任务是一次性的、可能失败；测试点是产出物，
+  有独立的评审生命周期（待评审 → 通过 / 驳回），会被手工增删改，
+  还可能被下游（08 期用例生成）引用。结构与 05 的 `analyses` / `conclusions` 一致。
+- **`target_name` / `chapter_title` 落库快照**：目标或章节后来改名、被删，
+  历史测试点仍然对得上原文。
+- **`analysis_id` 可空**：手工新增的测试点没有来源任务（`source_type='manual'`）。
+
+### 踩到的坑
+
+- **MySQL 的 CHECK 违约抛 3819（`OperationalError`），不是 1062（`IntegrityError`）**。
+  唯一索引才是 1062。断言要分开写：
+  `pytest.raises(OperationalError)` + `exc.value.orig.args[0] == 3819`。
+- **`Test*` 开头的 ORM 类会被 pytest 当成测试类收集**：
+  `PytestCollectionWarning: cannot collect test class 'TestPoint'`。
+  模型类上写 `__test__ = False` 关掉。
+- **模板示例里的 `target_id` 必须写成 `"target_id": 123,`（带逗号）**：
+  断言 `'"target_id": 123' in prompt` 会因为原文是 `"target_id": 123,`
+  而**恰好也匹配**——但 `'"target_id": 123'` 单独断言时，
+  若模板写的是 `"target_id":123`（无空格）就匹配不上。
+  统一按 `0019` 的写法：`"target_id": 123,`（冒号后有空格）。
+  **这正是 06 期 L2 踩过的坑**：模板示例写死 `"target_id": 1`，
+  真实模型照抄，真实的 10096 / 10097 全被当越界丢弃。
+- **`user_prompt` 也要带前缀**：第一版只给 `system_prompt` 加了
+  `[TEST_POINT_SYSTEM]`，`user_prompt` 漏了 `[TEST_POINT_USER]`，
+  被 `test_ac_156_seed_template_exists` 当场抓出来。
+
+### `llm_run_logs.task_type` 枚举扩充的验证方式
+
+MySQL **不允许**直接改 CHECK 约束，必须**先删后加**：
+
+```python
+op.drop_constraint("ck_llmlogs_task_type", "llm_run_logs", type_="check")
+op.create_check_constraint("ck_llmlogs_task_type", "llm_run_logs", "task_type IN (...)")
+```
+
+`downgrade()` 反向（先删新 CHECK、再建旧 CHECK）。
+
+**验证不只看「迁移跑通了」**，三层确认：
+1. `information_schema.CHECK_CONSTRAINTS` 里能看到新约束文本含 `'test_point'`；
+2. 实插一条 `task_type='test_point'` → **成功**；
+3. 实插一条 `task_type='bogus_task'` → **被拒**（3819）——
+   证明是「扩了枚举」而不是「放开了口子」。
+
+### 迁移往返
+
+两个库（开发库 `aitest_copilot_v2` 与 e2e 库 `aitest_copilot_e2e`）都跑了
+`0022 → 0021 → 0022` 往返，干净无残留：
+- 两库 `alembic_version` 均在 `0022`；
+- 两库 `test_point_analyses` / `test_points` 均已建；
+- 两库 `prompt_templates` 各有 1 条 `task_type='test_point'` 的 active 模板；
+- 降级时模板随 `DELETE ... WHERE name = :name` 一并清掉，升级时重新播种
+  （**不重复**——`uk_ptemplates_type_name` 唯一键兜底）。
