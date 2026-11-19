@@ -13,6 +13,11 @@ from fastapi.responses import JSONResponse
 class AppError(Exception):
     """业务错误基类：子类只需声明 status_code 与 code。"""
 
+    # pytest 会把 `Test*` 开头的类当成测试类收集。
+    # `TestPointInvalid` 等错误类正好撞上这个规则——基类上关掉，
+    # 07 期新增的 `Test*` 错误类就都自动免疫。
+    __test__ = False
+
     status_code = 400
     code = "BAD_REQUEST"
 

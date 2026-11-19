@@ -17,12 +17,12 @@
 - [x] 04-baseline (基线管理、快照、标签) —— **已完成（含 T67 收尾）**
 - [x] 05-increment-analysis (增量分析) —— **第一期（T68~T70）+ 第二期（T71~T78）+ 第三期 T79~T83 全部完成**
 - [x] 06-real-llm (真实大模型接入与提示词模板管理) —— **T84-PDF ~ T87 全部完成，L2 真实联调已跑通**
-- [ ] 07-test-points (测试点分析) —— **T99 完成（建表 + 迁移 0022）；T100~T104 待做**
+- [ ] 07-test-points (测试点分析) —— **T99 + T100 完成（建表 + 迁移 0022；上下文组装 + 引擎）；T101~T104 待做**
 
 ## 3. 当前冲刺任务（⚠️ 务必先做这个）
 
-**当前目标**：07 测试点分析 —— **T99 已完成**（两表 + 迁移 `0022` + 模板播种 +
-留痕枚举扩充），**下一步 T100（上下文组装 + 引擎）**。
+**当前目标**：07 测试点分析 —— **T99 + T100 已完成**（建表 + 迁移 `0022`；
+上下文组装 + 纯引擎 + Mock 前缀分支），**下一步 T101（服务层 + 接口 + 留痕）**。
 
 > **07 期红线（用户 2026-11-19 裁决）**：
 > - **不做 Skill 模式**（PRD 2.5）；**不做用例分析**（08 期）；
@@ -208,7 +208,7 @@
 
 | 项 | 值 |
 |---|---|
-| 后端全量 pytest | **876 passed**（串行；07 期 T99 后，基线 864 + 新增 12） |
+| 后端全量 pytest | **919 passed**（串行；07 期 T100 后，基线 864 + T99 的 12 + T100 的 43） |
 | e2e | **40 passed**（含增量分析第一期 2 条 + 第二期 3 条 + 第三期 2 条 + PDF 1 条 + 系统设置 2 条 + 来源筛选 1 条），一条命令 `.\.venv\Scripts\python.exe scripts\run_e2e.py`（8001/5174 + `aitest_copilot_e2e`） |
 | 前端构建 | `npm run build`（`web/` 目录，端口 5173，代理到 8000） |
 | 开跑前自检 | `.\.venv\Scripts\python.exe scripts\dev_check.py`（跑 e2e 时加 `--expect-db e2e`） |
@@ -506,6 +506,43 @@ e2e 全量 **37 passed**（零回归）；`npm run build` 通过。
   ② 实插 `task_type='test_point'` → 成功；
   ③ 实插 `task_type='bogus_task'` → 被拒（3819）——
   证明是「扩了枚举」而不是「放开了口子」。
+
+## 5.6 07 期 · T100 完成情况（2026-11-19）
+
+**做完了什么**：Prompt 组装（`context.py`）+ 纯引擎（`engine.py`）+ Mock 前缀分支。
+**引擎不写库**——丢弃判定因此可以纯函数级测试，不必起 HTTP、不必起数据库。
+
+- [x] `app/test_points/context.py`：分段组装 + 三段渲染 + 标签 / 结论取数 +
+  「全部撤销」判定。
+- [x] `app/test_points/engine.py`：`run_generate()`（纯函数 + `on_chapter` 回调）+
+  逐条校验与归一；**JSON 解析走 `parse_llm_json`**，不裸 `json.loads`。
+- [x] `app/llm/mock.py`：加 `[TEST_POINT_SYSTEM]` 分支，**既有三个分支零影响**。
+- [x] `tests/test_points/`：43 条（context 15 + engine 24 + mock 前缀 4）。
+
+**验证结果**：后端全量 **919 passed**（串行，exit 0）；e2e 全量 **40 passed**（零回归）。
+
+**实现要点**：
+
+- **Prompt 严格分段**：模板正文 → 基线目标清单 → 标签依据 → 增量结论 → 章节正文。
+  空段落整段省略（不留空标题），相对顺序永不改变。
+  **截断只砍章节正文**，前缀保持不变。
+- **三处排序全部确定性**（防 Prompt 漂移）：
+  清单 `(target_type, target_id)` / 标签依据 `(target_type, target_id, label_type)` /
+  增量结论 `(chapter_id, target_type, target_id)`。
+  排序键是**元组按字典序**——`"feature_point" < "function"`，
+  功能点排在功能前面（与 05 的 `render_baseline_brief` 一致）。
+- **逐条校验口径**：`name` 缺失 / `target_type` 非法 → **整条丢弃**；
+  `target_id` 不在清单 → **整条丢弃**（`TEST_POINT_TARGET_OUT_OF_BASELINE`）；
+  `priority` 非法 → **归一到 medium**（不丢，优先级是展示属性）；
+  `precondition` / `verification` 缺失 → **存空串**（不丢）；
+  `target_id` 是数字字符串 → **归一成整数**（格式噪声，不是猜测性修复）。
+- **测试必须显式给 Mock 队列**：Mock 默认响应的 `target_id=123` 不在真实清单里，
+  全被当越界丢弃。`helpers.point_response(target_id=...)` 接收真实 id，
+  生成命中清单的响应。**这是 06 期「Mock 通过 ≠ 真实模型能跑」的同一个坑**，
+  必须在测试层堵死。
+- **`AppError` 基类加 `__test__ = False`**：否则 `TestPointInvalid` 这类
+  `Test*` 开头的**错误类**也会被 pytest 当成测试类收集
+  （`PytestCollectionWarning`）。基类上一处，全期免疫。
 
 ## 6. 待办（不属当前冲刺，等用户点头再做）
 

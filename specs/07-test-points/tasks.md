@@ -64,11 +64,11 @@
     - 模板播种断言：`prompt_templates` 里 `task_type='test_point'` 有且仅有 1 条 active。
   - 前台：本期无页面。
 
-- [ ] **T100 · 上下文组装 + 引擎**
+- [x] **T100 · 上下文组装 + 引擎**（2026-11-19 完成）
   - 内容：
     - `app/test_points/context.py`：`build_system_prompt` / `render_target_brief` /
-      `build_user_prompt` / `active_label_context` / `conclusion_context` /
-      `analysis_fully_revoked`。
+      `render_label_brief` / `render_conclusion_brief` / `build_user_prompt` /
+      `active_label_context` / `conclusion_context` / `analysis_fully_revoked`。
       **取数口径**：标签一律 `status='active'`；结构实体用 04 的 `approved_entities()` 过滤。
     - `app/test_points/engine.py`：`run_generate()`（纯函数 + `on_chapter` 回调）+
       `_parse_point()`（逐条校验与归一）。
@@ -79,7 +79,8 @@
   - 验证：
     - `tests/test_points/test_context.py`——Prompt 段落顺序 / 清单排序 / 截断只截正文；
     - `tests/test_points/test_engine.py`——坏 JSON 整次失败 / 越界丢弃 / 优先级归一 /
-      缺字段不丢 / Mock 前缀命中。
+      缺字段不丢 / Mock 前缀命中；
+    - `tests/test_points/test_mock_prefix.py`——既有分支零影响。
   - 前台：本期无页面。
 
 - [ ] **T101 · 服务层 + 接口 + 留痕 + 权限搬迁**
@@ -161,7 +162,7 @@
 | 任务 | 后端定向 | 后端全量 | 前端构建 | e2e | 截图 |
 |---|---|---|---|---|---|
 | T99 | **12 passed**（新增） | **876 passed**（串行，exit 0） | 通过 | **40 passed**（零回归） | —（本期无页面） |
-| T100 | | | — | | —（本期无页面） |
+| T100 | **43 passed**（新增） | **919 passed**（串行，exit 0） | 通过 | **40 passed**（零回归） | —（本期无页面） |
 | T101 | | | — | | —（本期无页面） |
 | T102 | | | — | | —（本期无页面） |
 | T103 | | | | | `.screenshots/T103/` |
@@ -228,3 +229,77 @@ op.create_check_constraint("ck_llmlogs_task_type", "llm_run_logs", "task_type IN
 - 两库 `prompt_templates` 各有 1 条 `task_type='test_point'` 的 active 模板；
 - 降级时模板随 `DELETE ... WHERE name = :name` 一并清掉，升级时重新播种
   （**不重复**——`uk_ptemplates_type_name` 唯一键兜底）。
+
+## T100 实现要点（2026-11-19）
+
+**做完了什么**：上下文组装（`context.py`）+ 纯引擎（`engine.py`）+ Mock 前缀分支。
+**引擎不写库**——丢弃判定因此可以纯函数级测试，不必起 HTTP、不必起数据库。
+
+### Prompt 的分段契约
+
+```
+{template.user_prompt}
+
+## 可对照的基线目标
+- 功能#10096 用户扫码登录
+
+## 标签依据
+- [变更] 用户扫码登录（function#10096），确认人 admin，确认于 2026-11-18 10:00:00
+
+## 增量结论
+- 4.2 登录失败次数限制 → 用户扫码登录：变更（0.8） 正文有改动
+
+## 章节：4.2 登录失败次数限制
+{章节正文}
+```
+
+- **顺序固定**：模板正文 → 清单 → 依据 → 结论 → 章节正文。
+- **空段落整段省略**（不留空标题），但相对顺序永不改变。
+- **截断只砍章节正文**，前缀保持不变 → 「user 以模板 user_prompt 开头」
+  在超长场景下依然成立。
+
+### 三处排序全部确定性（防 Prompt 漂移）
+
+| 段 | 排序键 |
+|---|---|
+| 基线目标清单 | `(target_type, target_id)` |
+| 标签依据 | `(target_type, target_id, label_type)` |
+| 增量结论 | `(chapter_id, target_type, target_id)` |
+
+**排序键是元组，按字典序**——所以 `"feature_point" < "function"`，
+功能点排在功能前面（与 05 的 `render_baseline_brief` 完全一致）。
+写测试时我一开始按「功能在前」写期望值，被当场打回——**代码是对的，期望值错了**。
+
+### 逐条校验口径
+
+| 字段 | 不合法时 | 码 |
+|---|---|---|
+| `name` 缺失 / 空 | **整条丢弃** | `TEST_POINT_INVALID` |
+| `target_type` 不在枚举 | **整条丢弃** | `TEST_POINT_INVALID` |
+| `target_id` 不在清单 | **整条丢弃** | `TEST_POINT_TARGET_OUT_OF_BASELINE` |
+| `priority` 不在枚举 | **归一到 `medium`** | — |
+| `precondition` / `verification` 缺失 | **存空串** | — |
+| `target_id` 是数字字符串 | **归一成整数** | — |
+
+**为什么 `target_id` 是字符串要归一而不是丢**：真实模型经常给 `"10096"`（带引号）。
+这是格式噪声，还原成整数就是原文——与「补引号」那种猜测性修复不同，
+这里只是把同一个数字换种写法。
+
+**为什么 `priority` 不合法不丢**：优先级是展示属性，
+丢掉整条测试点（可能包含有价值的验证要点）代价太大。
+
+### 测试的关键约束
+
+**所有用例显式给 `MockProvider(queue=[...])`**。
+Mock 默认响应的 `target_id=123` 不在真实清单里 → 全被当越界丢弃。
+`helpers.point_response(target_id=...)` 接收**真实 id**，生成命中清单的响应。
+这是 06 期「Mock 通过 ≠ 真实模型能跑」的同一个坑，必须在测试层堵死。
+
+`tests/test_points/test_mock_prefix.py` 额外钉死「既有分支零影响」——
+第一遍 / 第二遍 / 文档推导三个前缀的默认返回一个字节没变。
+
+### 顺手修的 pytest 坑
+
+`AppError` 基类上加 `__test__ = False`——否则 `TestPointInvalid`
+这类 `Test*` 开头的**错误类**也会被 pytest 当成测试类收集
+（`PytestCollectionWarning`）。基类上一处，全期免疫。
