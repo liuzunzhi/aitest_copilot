@@ -122,6 +122,15 @@ const CODE_TEXT: Record<string, string> = {
   PROMPT_TEMPLATE_NOT_FOUND: '提示词模板不存在',
   PROMPT_TEMPLATE_INVALID: '提示词模板不合法',
   PROMPT_TEMPLATE_NAME_TAKEN: '同一任务类型下模板名已存在',
+  /* 测试点分析（07） */
+  TEST_POINT_ANALYSIS_NOT_FOUND: '测试点生成记录不存在',
+  TEST_POINT_NOT_FOUND: '测试点不存在',
+  TEST_POINT_TEMPLATE_INVALID: '提示词模板不可用：必须启用且类型为「测试点生成」',
+  TEST_POINT_INPUT_EMPTY: '没有生效标签或可用的增量结论，无法生成测试点',
+  TEST_POINT_TARGET_NOT_FOUND: '章节或目标不存在，或不属于本项目',
+  TEST_POINT_REVIEW_STATE_INVALID: '该测试点已评审过，不能重复评审',
+  TEST_POINT_ANALYSIS_HAS_APPROVED: '这次生成含评审通过的测试点，不允许连带删除',
+  TEST_POINT_INVALID: '测试点请求不合法',
 }
 
 /**

@@ -83,6 +83,14 @@ def cleanup_e2e_data(name_prefix: str = "e2e-") -> dict[str, int]:
     )
     statements = [
         (
+            "test_points",
+            f"DELETE FROM test_points WHERE project_id IN ({in_projects})",
+        ),
+        (
+            "test_point_analyses",
+            f"DELETE FROM test_point_analyses WHERE project_id IN ({in_projects})",
+        ),
+        (
             "incremental_conflicts",
             "DELETE FROM incremental_conflicts WHERE analysis_id IN ("
             "SELECT id FROM incremental_analyses WHERE project_id IN ("
@@ -276,8 +284,61 @@ def seed_chapter_links(version_id: int, links: list[dict]) -> None:
         session.close()
 
 
-def seed_second_pass_rows(
+def seed_test_points(
     analysis_id: int,
+    project_id: int,
+    rows: list[dict],
+    *,
+    created_by: int = 1,
+) -> list[int]:
+    """给一次测试点生成记录补写测试点。
+
+    MockProvider 返回的占位 `target_id` 一定越界（不在基线清单内），
+    发起生成只会得到 `succeeded` + 0 条测试点；
+    前台用例又要核对「生成 → 列表 → 评审通过」的展示与操作，
+    所以按真实表结构直接写 e2e 库。只造数——评审仍走真实 `review` 接口。
+
+    `rows` 每项：{name, target_type, target_id, target_name, priority?,
+    precondition?, verification?, chapter_id?, chapter_title?, status?}
+    """
+    session = _session()
+    inserted: list[int] = []
+    try:
+        for item in rows:
+            result = session.execute(
+                text(
+                    "INSERT INTO test_points (project_id, analysis_id, name, target_type,"
+                    " target_id, target_name, priority, precondition, verification,"
+                    " chapter_id, chapter_title, status, source_type, created_by,"
+                    " created_at, updated_at) VALUES (:project_id, :analysis_id, :name,"
+                    " :target_type, :target_id, :target_name, :priority, :precondition,"
+                    " :verification, :chapter_id, :chapter_title, :status, 'llm',"
+                    " :created_by, NOW(3), NOW(3))"
+                ),
+                {
+                    "project_id": project_id,
+                    "analysis_id": analysis_id,
+                    "name": item["name"],
+                    "target_type": item["target_type"],
+                    "target_id": item["target_id"],
+                    "target_name": item["target_name"],
+                    "priority": item.get("priority", "medium"),
+                    "precondition": item.get("precondition"),
+                    "verification": item.get("verification"),
+                    "chapter_id": item.get("chapter_id"),
+                    "chapter_title": item.get("chapter_title"),
+                    "status": item.get("status", "pending"),
+                    "created_by": created_by,
+                },
+            )
+            inserted.append(int(result.lastrowid))
+        session.commit()
+    finally:
+        session.close()
+    return inserted
+
+
+def seed_second_pass_rows(    analysis_id: int,
     *,
     decisions: list[dict] | None = None,
     conflicts: list[dict] | None = None,

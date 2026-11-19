@@ -124,7 +124,7 @@
     - 04 引用检查 + 清除标签定向 **13 passed**。
   - 前台：本期无页面。
 
-- [ ] **T103 · 前端「测试点」Tab**
+- [x] **T103 · 前端「测试点」Tab**（2026-11-19 完成）
   - 内容：
     - `web/src/pages/ProjectTestPointsTab.tsx`（生成记录表 + 测试点表 + 发起弹窗）；
     - `web/src/pages/TestPointDrawer.tsx`（详情 + 来源追溯 + 评审操作）；
@@ -162,7 +162,7 @@
 | T100 | **43 passed**（新增） | **919 passed**（串行，exit 0） | 通过 | **40 passed**（零回归） | —（本期无页面） |
 | T101 | **39 passed**（新增） | **958 passed**（串行，exit 0） | 通过 | **40 passed**（零回归） | —（本期无页面） |
 | T102 | **8 passed**（新增） | **966 passed**（串行，exit 0） | 通过 | **40 passed**（零回归） | —（本期无页面） |
-| T103 | | | | | `.screenshots/T103/` |
+| T103 | —（无后端改动） | **966 passed**（未动后端） | 通过 | **42 passed**（新增 2 + 原 40 零回归） | `.screenshots/T103/` |
 | T104 | | | | | |
 
 ## T99 实现要点（2026-11-19）
@@ -458,3 +458,51 @@ update(TestPoint)
 `_test_point_references` 直接加进 `_BUILTIN_RESOLVERS`，
 **不 import-time 改全局注册表**——与 05 的 `_analysis_record_references`
 完全同构：04 不 import 05 / 07 的任何模块，各自的表自己探测。
+
+## T103 实现要点（2026-11-19）
+
+**做完了什么**：项目详情页新增第 8 个 Tab「测试点」——生成记录表 + 测试点表 +
+发起生成弹窗 + 详情/评审抽屉 + 手工增删改。
+
+**验证结果**：`npm run build` 通过；e2e 全量 **42 passed**（新增 2 条，原 40 条零回归）；
+后端未改动（仍 966 passed）。
+
+### 文件划分
+
+| 文件 | 职责 |
+|---|---|
+| `web/src/pages/ProjectTestPointsTab.tsx` | 生成记录 + 测试点两张表、筛选、发起弹窗、手工增删改弹窗 |
+| `web/src/pages/TestPointDrawer.tsx` | 详情 + 来源追溯 + 待复核提示 + 通过/驳回 |
+| `web/src/pages/testPointMeta.tsx` | 优先级 / 状态 / 目标类型 / 来源 / 丢弃标识的文案与 Tag |
+
+`web/src/api/index.ts` 加 07 分节（6 个类型 + 11 个函数）；
+`web/src/api/client.ts` 加 8 个 HTTP 错误码中文
+（`TEST_POINT_TARGET_OUT_OF_BASELINE` 只在 `stats.discarded` 里出现，不算错误码）。
+
+### 冲突提示的落地方式
+
+PRD 2.4.4 要求「同章节已有评审通过的测试点时，再次生成前提示将覆盖」，
+且**由前端二次确认、服务端不静默覆盖**。实现：
+
+1. 打开弹窗时并行拉一份 `status='approved'` 的测试点做快照；
+2. 提交前用所选 `chapter_ids` 与快照里的 `chapter_id` 求交集；
+3. 有交集 → `modal.confirm('将覆盖已有评审结果')`，确认后才发请求。
+
+未选章节（全文档）时不做冲突判定——前端拿不到「全文档」的章节全集，
+这一档留给服务端行为（新增而非删除已有测试点）。
+
+### e2e 为什么需要种子数据
+
+MockProvider 对 `[TEST_POINT_SYSTEM]` 返回的占位 `target_id=123` 一定不在依据清单内，
+引擎按「越界丢弃」处理 → 发起生成只会得到 `succeeded` + 0 条测试点。
+所以 `tests/e2e/support.py` 新增 `seed_test_points()`：
+按真实表结构补写测试点，**评审 / 增删改仍走真实接口**，只造数、不绕过被验证的路径。
+同时在 `cleanup_e2e_data()` 的最前面补了 `test_points` / `test_point_analyses` 的清理。
+
+### 踩到的坑
+
+- `InputNumber` 的 `data-testid` 落在 rc-input-number 外层，`fill()` 找不到 `input`；
+  e2e 改用 `.ant-form-item`（标签「目标 ID」）下的 `input` 定位。
+- 弹窗里「模板」是否已自动选中取决于模板接口返回时序；
+  e2e 不依赖自动选中，显式再选一次模板，避免 flaky。
+

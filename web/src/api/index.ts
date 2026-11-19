@@ -1517,3 +1517,226 @@ export async function listAvailablePromptTemplates(
   )
   return data.items
 }
+
+/* ------------------------------------------------------ 测试点分析（07） */
+
+export type TestPointAnalysisStatus = 'pending' | 'running' | 'succeeded' | 'failed'
+export type TestPointStatus = 'pending' | 'approved' | 'rejected'
+export type TestPointPriority = 'high' | 'medium' | 'low'
+export type TestPointTargetType = 'function' | 'feature_point'
+export type TestPointSourceType = 'llm' | 'manual'
+
+/** 丢弃明细：只留痕，不写业务表。 */
+export interface TestPointDiscard {
+  chapter_id: number
+  chapter_title: string
+  name: string
+  target_type?: string
+  target_id?: number
+  code: string
+}
+
+export interface TestPointStats {
+  chapter_count: number
+  processed_count: number
+  test_point_count: number
+  discarded_count: number
+  skipped_empty_count: number
+  discarded: TestPointDiscard[]
+}
+
+export interface TestPointAnalysis {
+  id: number
+  project_id: number
+  template_id: number
+  template_name: string | null
+  template_version: number
+  provider: string
+  /** 作为依据的增量分析记录；没有则为 null。 */
+  analysis_id: number | null
+  baseline_revision_id: number | null
+  document_id: number | null
+  document_name: string | null
+  document_version_id: number | null
+  status: TestPointAnalysisStatus
+  error_code: string | null
+  error_message: string | null
+  stats: TestPointStats | null
+  started_at: string | null
+  finished_at: string | null
+  created_by: number
+  created_at: string
+}
+
+export interface TestPointAnalysisDetail extends TestPointAnalysis {
+  points: TestPoint[]
+}
+
+export interface TestPoint {
+  id: number
+  project_id: number
+  /** 来源生成记录；手工新增为 null。 */
+  analysis_id: number | null
+  name: string
+  target_type: TestPointTargetType
+  target_id: number
+  /** 落库快照——目标后来改名、被删，历史测试点仍对得上原文。 */
+  target_name: string
+  priority: TestPointPriority
+  precondition: string | null
+  verification: string | null
+  chapter_id: number | null
+  chapter_title: string | null
+  source_label_id: number | null
+  source_conclusion_id: number | null
+  status: TestPointStatus
+  reviewed_by: number | null
+  reviewed_at: string | null
+  review_comment: string | null
+  /** 依赖的基线标签被清除后置真，只提示复核，不改内容。 */
+  needs_review: boolean
+  needs_review_reason: string | null
+  needs_review_at: string | null
+  source_type: TestPointSourceType
+  created_by: number
+  created_at: string
+  updated_at: string
+}
+
+export interface TestPointAnalysisPayload {
+  template_id: number
+  analysis_id?: number | null
+  baseline_revision_id?: number | null
+  document_id?: number | null
+  document_version_id?: number | null
+  chapter_ids?: number[] | null
+}
+
+export interface TestPointPayload {
+  name: string
+  target_type: TestPointTargetType
+  target_id: number
+  priority?: TestPointPriority
+  precondition?: string | null
+  verification?: string | null
+  chapter_id?: number | null
+}
+
+/** 手工改：只接受这 4 个字段，传别的会 400 `TEST_POINT_INVALID`。 */
+export interface TestPointUpdatePayload {
+  name?: string
+  priority?: TestPointPriority
+  precondition?: string | null
+  verification?: string | null
+}
+
+const TEST_POINTS = (projectId: number) => `/projects/${projectId}/test-points`
+
+export async function listTestPointAnalyses(
+  projectId: number,
+  params?: { page?: number; page_size?: number },
+): Promise<Page<TestPointAnalysis>> {
+  const { data } = await client.get<Page<TestPointAnalysis>>(
+    `${TEST_POINTS(projectId)}/analyses`,
+    { params },
+  )
+  return data
+}
+
+/** 发起生成。后端同步跑完才返回，响应直接带上产出的测试点。 */
+export async function createTestPointAnalysis(
+  projectId: number,
+  payload: TestPointAnalysisPayload,
+): Promise<TestPointAnalysisDetail> {
+  const { data } = await client.post<TestPointAnalysisDetail>(
+    `${TEST_POINTS(projectId)}/analyses`,
+    payload,
+  )
+  return data
+}
+
+export async function fetchTestPointAnalysis(
+  projectId: number,
+  analysisId: number,
+): Promise<TestPointAnalysisDetail> {
+  const { data } = await client.get<TestPointAnalysisDetail>(
+    `${TEST_POINTS(projectId)}/analyses/${analysisId}`,
+  )
+  return data
+}
+
+export async function listTestPointAnalysisPoints(
+  projectId: number,
+  analysisId: number,
+): Promise<TestPoint[]> {
+  const { data } = await client.get<TestPoint[]>(
+    `${TEST_POINTS(projectId)}/analyses/${analysisId}/points`,
+  )
+  return data
+}
+
+/** 删除生成记录，连带删除它产出的测试点；已有评审通过的点会 409。 */
+export async function deleteTestPointAnalysis(
+  projectId: number,
+  analysisId: number,
+): Promise<void> {
+  await client.delete(`${TEST_POINTS(projectId)}/analyses/${analysisId}`)
+}
+
+export async function listTestPoints(
+  projectId: number,
+  params?: {
+    status?: TestPointStatus
+    target_type?: TestPointTargetType
+    target_id?: number
+    analysis_id?: number
+    page?: number
+    page_size?: number
+  },
+): Promise<Page<TestPoint>> {
+  const { data } = await client.get<Page<TestPoint>>(`${TEST_POINTS(projectId)}/points`, {
+    params,
+  })
+  return data
+}
+
+export async function createTestPoint(
+  projectId: number,
+  payload: TestPointPayload,
+): Promise<TestPoint> {
+  const { data } = await client.post<TestPoint>(`${TEST_POINTS(projectId)}/points`, payload)
+  return data
+}
+
+export async function fetchTestPoint(projectId: number, pointId: number): Promise<TestPoint> {
+  const { data } = await client.get<TestPoint>(`${TEST_POINTS(projectId)}/points/${pointId}`)
+  return data
+}
+
+export async function updateTestPoint(
+  projectId: number,
+  pointId: number,
+  payload: TestPointUpdatePayload,
+): Promise<TestPoint> {
+  const { data } = await client.patch<TestPoint>(
+    `${TEST_POINTS(projectId)}/points/${pointId}`,
+    payload,
+  )
+  return data
+}
+
+export async function deleteTestPoint(projectId: number, pointId: number): Promise<void> {
+  await client.delete(`${TEST_POINTS(projectId)}/points/${pointId}`)
+}
+
+export async function reviewTestPoint(
+  projectId: number,
+  pointId: number,
+  payload: { action: 'approve' | 'reject'; comment?: string | null },
+): Promise<TestPoint> {
+  const { data } = await client.post<TestPoint>(
+    `${TEST_POINTS(projectId)}/points/${pointId}/review`,
+    payload,
+  )
+  return data
+}
