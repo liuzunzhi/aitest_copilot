@@ -31,10 +31,14 @@ export const CLEAR_REASON_OPTIONS = (Object.keys(CLEAR_REASON_META) as ClearReas
   (reason) => ({ value: reason, label: CLEAR_REASON_META[reason] }),
 )
 
-/** 功能 / 功能点来源下拉选项（AC-63：来源只展示，不可编辑）。 */
+/** 功能 / 功能点来源下拉选项（AC-63：来源只展示，不可编辑）。
+ *
+ * 值与后端 `source_type` 枚举一致（spec §4：`manual` / `document_derived`），
+ * 写成别的值会让筛选永远命中 0 条。
+ */
 export const SOURCE_TYPE_OPTIONS = [
   { value: 'manual', label: '手工添加' },
-  { value: 'document', label: '文档解析' },
+  { value: 'document_derived', label: '文档解析' },
 ]
 
 /** 模块状态筛选选项（归档模块默认不参与展示，spec §2.3 第 5 条）。 */

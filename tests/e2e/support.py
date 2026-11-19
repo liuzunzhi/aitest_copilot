@@ -120,6 +120,11 @@ def cleanup_e2e_data(name_prefix: str = "e2e-") -> dict[str, int]:
         ("baseline_revisions", f"DELETE FROM baseline_revisions WHERE project_id IN ({in_projects})"),
         ("baseline_snapshots", f"DELETE FROM baseline_snapshots WHERE project_id IN ({in_projects})"),
         (
+            "baseline_derive_candidates",
+            f"DELETE FROM baseline_derive_candidates WHERE project_id IN ({in_projects})",
+        ),
+        ("baseline_derives", f"DELETE FROM baseline_derives WHERE project_id IN ({in_projects})"),
+        (
             "document_versions",
             f"DELETE FROM document_versions WHERE document_id IN ({in_documents})",
         ),

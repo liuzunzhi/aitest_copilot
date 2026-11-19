@@ -450,8 +450,12 @@ e2e 全量 **37 passed**（零回归）；`npm run build` 通过。
 - PDF 表格结构化落库（本期还原成 `a | b` 文本行，与 docx 同构）
 - 05 第五期：模板管理 UI 与阈值回填（依赖基准集）
 - 修 `tests/projects/` 的 xdist flaky（断言未按项目隔离）
-- 前端「来源类型」筛选下拉值是 `'document'`，后端枚举是 `'document_derived'`——**真 bug**，
-  选「文档解析」永远 0 条，且无测试覆盖
+- [x] （2026-11-19）前端「来源类型」筛选下拉值 `'document'` → `'document_derived'`
+      （原值让「文档解析」永远 0 条）。新增 e2e
+      `test_ac_73_source_filter_document_derived`：走真实「上传 → 生效 → 推导 → 采纳」
+      造出 `document_derived` 功能，再验筛选双向命中；`cleanup_e2e_data` 补清理
+      `baseline_derives` / `baseline_derive_candidates`。
+      验证：后端全量 **864**（串行，exit 0）、e2e **40 passed**、`npm run build` 通过。
 - 标签清除原因 6 类枚举与 PRD 2.4.2 不符（`priority_changed` / `duplicate_label`
   应为「基线已调整」/「回溯覆盖」）
 - 基准集与评估脚本（v2.2 §10；05 的召回策略与切分阈值全靠它回填）

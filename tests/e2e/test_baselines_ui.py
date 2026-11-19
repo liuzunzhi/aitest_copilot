@@ -486,6 +486,119 @@ def test_ac_73_filter_ui(admin_page: Page, api, make_user, shot) -> None:
     shot(admin_page, "filter-cleared")
 
 
+_DOC_MD = """# 支付需求
+
+## 1. 概述
+
+支付支持扫码与刷卡。
+
+## 2. 流程
+
+下单 → 支付 → 回调。
+"""
+
+
+def _upload_and_activate(api, project_id: int) -> dict:
+    """上传一份 md 并确认生效（只有生效版本能推导基线）。"""
+    response = api.ctx.post(
+        f"/api/projects/{project_id}/documents",
+        multipart={
+            "file": {
+                "name": "支付需求.md",
+                "mimeType": "text/markdown",
+                "buffer": _DOC_MD.encode("utf-8"),
+            }
+        },
+        headers=_headers(api),
+    )
+    assert response.status in (200, 201), response.text()
+    payload = response.json()
+    activate = api.ctx.post(
+        f"/api/projects/{project_id}/documents/{payload['document']['id']}"
+        f"/versions/{payload['version']['id']}/activate",
+        headers=_headers(api),
+    )
+    assert activate.status in (200, 201), activate.text()
+    return payload
+
+
+def _derive_and_adopt(api, project_id: int, uploaded: dict) -> dict:
+    """走真实推导 + 采纳链路，产出一条 `document_derived` 功能。"""
+    templates = api.ctx.get(
+        "/api/prompt-templates",
+        params={"task_type": "document_parse"},
+        headers=_headers(api),
+    )
+    assert templates.ok, templates.text()
+    items = templates.json()["items"]
+    assert items, "document_parse 提示词模板未播种"
+
+    response = api.ctx.post(
+        f"/api/projects/{project_id}/baselines/derive",
+        data={
+            "document_id": uploaded["document"]["id"],
+            "document_version_id": uploaded["version"]["id"],
+            "template_id": items[0]["id"],
+        },
+        headers=_headers(api),
+    )
+    assert response.status == 201, response.text()
+    derive = response.json()
+    assert derive["status"] == "succeeded", derive
+    assert derive["candidates"], "推导没有产出候选"
+
+    adopted = api.ctx.post(
+        f"/api/projects/{project_id}/baselines/derive/{derive['id']}/adopt",
+        data={
+            "candidates": [
+                {"candidate_id": root["id"], "action": "create"}
+                for root in derive["candidates"]
+            ]
+        },
+        headers=_headers(api),
+    )
+    assert adopted.status == 200, adopted.text()
+    return adopted.json()
+
+
+@pytest.mark.task("T66")
+def test_ac_73_source_filter_document_derived(admin_page: Page, api, shot) -> None:
+    """AC-73：来源筛选「文档解析」必须匹配后端的 `document_derived`。
+
+    修复前的下拉值是 `'document'`，而结构表存的是 `'document_derived'`，
+    选「文档解析」永远 0 条——所以这里必须造出一条真实的推导功能。
+    """
+    project = api.create_project(_name("bl-src"))
+    module = _create_module(api, project["id"], _name("手工模块"))
+    manual = _create_function(api, project["id"], module["id"], _name("手工功能"))
+
+    uploaded = _upload_and_activate(api, project["id"])
+    _derive_and_adopt(api, project["id"], uploaded)
+
+    functions = api.ctx.get(
+        f"/api/projects/{project['id']}/baselines/functions",
+        headers=_headers(api),
+    ).json()["items"]
+    derived = [row for row in functions if row["source_type"] == "document_derived"]
+    assert derived, "采纳后应有文档推导的功能"
+
+    admin_page.reload()
+    _open_management(admin_page, project["name"])
+    source_select = _filter_select(admin_page, 1)
+
+    # 文档解析 → 只剩推导出来的那条功能
+    _pick_filter(admin_page, source_select, "文档解析")
+    expect(_tree_node(admin_page, derived[0]["name"])).to_be_visible()
+    expect(_tree_node(admin_page, manual["name"])).to_have_count(0)
+    shot(admin_page, "filter-document-derived")
+
+    # 手工添加 → 只剩手工建的那条
+    _pick_filter(admin_page, source_select, "手工添加")
+    expect(_tree_node(admin_page, manual["name"])).to_be_visible()
+    expect(_tree_node(admin_page, derived[0]["name"])).to_have_count(0)
+    shot(admin_page, "filter-manual")
+
+
 @pytest.mark.task("T66")
 def test_ac_74_permission_matrix_ui(api, make_user, page_as, shot) -> None:
     """AC-74：成员 / 访客只读，非成员读 403，member 写 403，归档项目写 409。"""
