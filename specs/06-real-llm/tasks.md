@@ -160,7 +160,7 @@
     - 后端全量 **≥ 626 passed**（串行，exit 0）。
   - 前台：本期无新增交互（**05 模板下拉动态化在 T87**，本任务只做后端留痕）。
 
-- [x] **T87 · 前端系统设置页 + 收尾**（2026-11-18 完成；**L2 真实联调待人工执行**）
+- [x] **T87 · 前端系统设置页 + 收尾**（2026-11-18 完成；L2 真实联调记录见下方「L2 真实联调发现」）
   - 内容：
     - `web/src/pages/AdminSettingsPage.tsx`（Tab 骨架）+ `web/src/pages/settings/LlmProviderPanel.tsx`
       + `web/src/pages/settings/PromptTemplatePanel.tsx`。
@@ -309,7 +309,7 @@ AC-79 的越界判定、AC-80 的 `new` 丢弃、`LLM_OUTPUT_INVALID` 错误码�
 | T84 | **96 passed**（新增） | **732 passed**（串行，exit 0） | 通过 | **37 passed**（零回归） | —（本期无页面） |
 | T85 | **66 passed**（新增） | **798 passed**（串行，exit 0） | 通过 | **37 passed**（零回归） | —（本期无页面） |
 | T86 | **11 passed**（新增） | **812 passed**（串行，exit 0） | 通过 | **37 passed**（零回归） | —（本期无页面） |
-| T87 | （待填） | （待填） | 通过 | （待填） | `.screenshots/T87/` |
+| T87 | **2 passed**（`test_real_docs_e2e.py`，pdf/docx；样本缺失则 skip） | **829 passed**（串行，exit 0；含 T87 新增 17 条） | 通过 | **39 passed**（新增 2 条，零回归） | `.screenshots/T87/`（5 张） |
 
 ## 实现要点（待补）
 
