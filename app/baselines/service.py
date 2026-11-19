@@ -12,7 +12,7 @@ import json
 from collections.abc import Callable
 from datetime import datetime, timezone
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -81,6 +81,7 @@ from app.models.baseline_review import BaselineReviewItem, BaselineReviewRound
 from app.models.document import Document, DocumentVersion
 from app.models.incremental import PromptTemplate
 from app.models.project import Project, ProjectMember
+from app.models.test_point import TestPoint
 from app.models.user import User
 
 LABEL_TYPES = ("new", "changed", "affected", "unchanged")
@@ -1215,6 +1216,49 @@ def create_label(
     return label
 
 
+def _mark_dependent_test_points_needs_review(
+    session: Session,
+    *,
+    project_id: int,
+    label_id: int,
+    clear_reason: str,
+) -> int:
+    """标签被清除 → 引用它的测试点标记「待复核」。
+
+    **只改三列**：`needs_review` / `needs_review_reason` / `needs_review_at`。
+    测试点的**内容一个字都不动**——PRD 2.4.2「清除后下游约束」：
+    「已生成测试点不自动删改，仅提示复核」。历史资产只读。
+
+    **也不改评审状态**：已评审通过（`status='approved'`）的测试点
+    **仍保持 approved**——清除标签不自动降级下游的评审结论。
+
+    **表探测保护**：07 期迁移没跑时表不存在 → 直接跳过，
+    04 期的老库 / 老测试都不受影响。
+    """
+    from app.baselines.references import _table_exists
+
+    if not _table_exists(session, "test_points"):
+        return 0
+
+    # 用 ORM 的 update 语句只碰那三列——不加载实体，
+    # 更不可能误改别的字段。
+    result = session.execute(
+        update(TestPoint)
+        .where(
+            TestPoint.project_id == project_id,
+            TestPoint.source_label_id == label_id,
+            TestPoint.needs_review == 0,
+        )
+        .values(
+            needs_review=1,
+            needs_review_reason=f"所依赖的基线标签已被清除（原因：{clear_reason}）",
+            needs_review_at=_now(),
+        )
+    )
+    session.flush()
+    return int(result.rowcount or 0)
+
+
 def clear_label(
     session: Session,
     *,
@@ -1256,6 +1300,10 @@ def clear_label(
     label.clear_reason = clear_reason
     label.clear_note = clear_note
     session.flush()
+
+    _mark_dependent_test_points_needs_review(
+        session, project_id=project_id, label_id=label.id, clear_reason=clear_reason
+    )
 
     write_audit(
         session,

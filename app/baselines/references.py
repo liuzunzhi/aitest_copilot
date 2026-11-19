@@ -55,6 +55,9 @@ ReferenceResolver = Callable[[Session, int], list[dict]]
 # 增量分析记录表名。05 落地前不存在，探测到就用，探测不到就跳过。
 INCREMENTAL_ANALYSIS_TABLE = "incremental_analyses"
 
+# 测试点生成记录表名。07 落地前不存在，探测到就用，探测不到就跳过。
+TEST_POINT_ANALYSIS_TABLE = "test_point_analyses"
+
 # 标签类引用的来源类型
 LABEL_SOURCE_TYPES = ("baseline_function", "baseline_feature_point")
 
@@ -182,11 +185,47 @@ def _analysis_record_references(session: Session, revision_id: int) -> list[dict
     ]
 
 
-# 内置解析器：标签来源在前（最常见），增量分析来源在后。
+# --------------------------------------------- 测试点来源（07 的预留位）
+
+
+def _test_point_references(session: Session, revision_id: int) -> list[dict]:
+    """测试点生成记录把该快照当作比对基准 → 该快照被测试点引用。
+
+    07 落地前 `test_point_analyses` 表不存在，本解析器直接返回空列表；
+    07 落地后自动生效，04 不需要改动。
+
+    **表探测保护**：用 `_table_exists`（inspector 探测），
+    不直接 `select`——表不存在时直接跳过，04 的老库/老测试都不受影响。
+    """
+    if not _table_exists(session, TEST_POINT_ANALYSIS_TABLE):
+        return []
+
+    rows = session.execute(
+        text(
+            "SELECT id, COALESCE(status, '') FROM test_point_analyses "
+            "WHERE baseline_revision_id = :revision_id"
+        ),
+        {"revision_id": revision_id},
+    ).all()
+    return [
+        {
+            "source_type": "test_point_analysis",
+            "target_id": row_id,
+            "target_name": f"测试点生成 #{row_id}" + (f"（{status}）" if status else ""),
+        }
+        for row_id, status in rows
+    ]
+
+
+# 内置解析器：标签来源在前（最常见），增量分析来源在后，测试点来源最后。
 # 用列表而非元组——测试可以整体替换它来验证各来源分支。
+#
+# 后两个来源都是「表不存在就跳过」——它们分别由 05 / 07 落地，
+# 04 本身不需要知道那些表长什么样。
 _BUILTIN_RESOLVERS: list[ReferenceResolver] = [
     _label_references,
     _analysis_record_references,
+    _test_point_references,
 ]
 
 
@@ -215,6 +254,7 @@ __all__ = [
     "INCREMENTAL_ANALYSIS_TABLE",
     "LABEL_SOURCE_TYPES",
     "ReferenceResolver",
+    "TEST_POINT_ANALYSIS_TABLE",
     "register_resolver",
     "snapshot_references",
 ]

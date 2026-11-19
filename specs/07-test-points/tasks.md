@@ -109,18 +109,19 @@
       `test_point.analysis.create`。
   - 前台：本期无页面。
 
-- [ ] **T102 · 引用保护 + 04 待复核标记**
+- [x] **T102 · 引用保护 + 04 待复核标记**（2026-11-19 完成）
   - 评审与手工增删改的**服务层与接口已在 T101 落地**（便于 T101 一次交付完整闭环）；
-  - 本期剩余：
+  - 本期内容：
     - `app/baselines/references.py`：加 `_test_point_references` 解析器 + 注册
-      （表探测保护）。
+      （**`_table_exists` 探测保护**）。
     - **`app/baselines/service.py` 的 `clear_label()`**：清除成功后把引用它的测试点
       标 `needs_review=1` + `needs_review_reason` + `needs_review_at`
       （**表探测**：表不存在就跳过）。
   - 产出：AC-149 / AC-150 / AC-151 可断言。
   - 验证：
     - `tests/test_points/test_needs_review.py`——标签清除 → 待复核（**内容不变**）；
-    - `tests/baselines/` 全量回归（04 的 `clear_label` 改了）。
+    - `tests/baselines/` 全量 **115 passed**（04 的 `clear_label` 改了，零回归）；
+    - 04 引用检查 + 清除标签定向 **13 passed**。
   - 前台：本期无页面。
 
 - [ ] **T103 · 前端「测试点」Tab**
@@ -160,7 +161,7 @@
 | T99 | **12 passed**（新增） | **876 passed**（串行，exit 0） | 通过 | **40 passed**（零回归） | —（本期无页面） |
 | T100 | **43 passed**（新增） | **919 passed**（串行，exit 0） | 通过 | **40 passed**（零回归） | —（本期无页面） |
 | T101 | **39 passed**（新增） | **958 passed**（串行，exit 0） | 通过 | **40 passed**（零回归） | —（本期无页面） |
-| T102 | | | — | | —（本期无页面） |
+| T102 | **8 passed**（新增） | **966 passed**（串行，exit 0） | 通过 | **40 passed**（零回归） | —（本期无页面） |
 | T103 | | | | | `.screenshots/T103/` |
 | T104 | | | | | |
 
@@ -371,3 +372,89 @@ def _ensure_writable_project(session, project_id) -> Project:
 
 > 造数时踩了个坑：手写 JSON 字面量**漏了闭合的 `}`**，
 > 被 `TEST_POINT_INVALID` 当场抓出。改用 `json.dumps` 生成，一劳永逸。
+
+## T102 实现要点（2026-11-19）
+
+**做完了什么**：04 侧的引用保护（快照被测试点引用 → 禁止删除）+
+标签清除 → 测试点待复核标记。
+
+**验证结果**：后端全量 **966 passed**（串行，exit 0）；e2e 全量 **40 passed**（零回归）；
+**04 全部 115 条零回归**（引用检查 + 清除标签定向 13 条也全绿）。
+
+### 04 的红线：两处都做了表探测保护
+
+**① `references.py` 的新解析器**——严格照 05 的 `_analysis_record_references` 写：
+
+```python
+if not _table_exists(session, TEST_POINT_ANALYSIS_TABLE):
+    return []
+```
+
+表不存在 → 返回空列表，**不报错、不误判**。
+`_table_exists` 用 SQLAlchemy 的 inspector 探测（不查 information_schema），
+对 MySQL 与 SQLite 都成立。
+
+**② `clear_label()` 的待复核标记**——同样先探测：
+
+```python
+if not _table_exists(session, "test_points"):
+    return 0
+```
+
+07 期迁移没跑时表不存在 → 直接跳过，04 的老库 / 老测试都不受影响。
+
+### `clear_label()` 的改动只有一处调用
+
+```python
+label.status = "cleared"
+...
+session.flush()
+
+_mark_dependent_test_points_needs_review(   # ← 只多了这一处
+    session, project_id=project_id, label_id=label.id, clear_reason=clear_reason
+)
+
+write_audit(...)   # 审计逻辑一行没动
+```
+
+**清除逻辑本身、错误码、审计全部原样**——这是本期对 04 的唯一改动点。
+
+### 标记只碰三列，用 ORM 的 update 语句
+
+```python
+update(TestPoint)
+.where(
+    TestPoint.project_id == project_id,
+    TestPoint.source_label_id == label_id,
+    TestPoint.needs_review == 0,       # 已标记的不重复处理
+)
+.values(
+    needs_review=1,
+    needs_review_reason=f"所依赖的基线标签已被清除（原因：{clear_reason}）",
+    needs_review_at=_now(),
+)
+```
+
+**不加载实体**——从物理上杜绝「误改别的字段」的可能。
+测试点的名称、目标、优先级、前置条件、验证要点、章节、来源、评审状态
+**一个字都不动**。
+
+**也不改评审状态**：已评审通过（`status='approved'`）的测试点
+**仍保持 approved**——清除标签不自动降级下游的评审结论
+（PRD 2.4.4「已生成测试点不自动删改，仅提示复核」）。
+
+### 踩到的坑：引擎在同一章节内会对同一目标去重
+
+第一版测试想造「两条引用同一标签的测试点」，用 `extra` 在**同一章**里塞两条——
+结果只落了 1 条：引擎的 `seen` 集合会按 `(target_type, target_id)` 去重
+（只留第一条），这是 T100 就定下的口径。
+
+**改用两个章节**：每章各产出一条，都指向同一个目标（因而同一个标签）。
+顺带确认了「手工新增的测试点 `source_label_id` 为 NULL」——
+所以它天然不受标签清除影响（AC-150 的另一半）。
+
+### 引用保护的接线方式
+
+`_test_point_references` 直接加进 `_BUILTIN_RESOLVERS`，
+**不 import-time 改全局注册表**——与 05 的 `_analysis_record_references`
+完全同构：04 不 import 05 / 07 的任何模块，各自的表自己探测。
