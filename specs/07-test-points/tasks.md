@@ -6,7 +6,7 @@
 
 1. 每个任务开跑前先 `.\.venv\Scripts\python.exe scripts\dev_check.py`，有 `[FAIL]` 先修环境。
 2. 定向用例跑 `-k ac_14X`，通过后再跑全量（**串行**，避免 `tests/projects/` 的既有 xdist flaky）。
-   全量基线 **864 passed**，数量只增不减。
+   全量基线 **966 passed**，数量只增不减。
 3. 改了前端就 `cd web; npm run build`；有前台交互就补 e2e 用例并截图到 `.screenshots/T10x/`。
 4. **每个任务一个提交**，提交信息写清「做了什么 / 为什么」。
 5. 测试名带 AC 编号（`test_ac_141_analysis_and_points_persisted`）。
@@ -17,10 +17,10 @@
 | 项 | 状态 |
 |---|---|
 | 01–06 模块 | T01–T98 已验收（06 到 T87，04 到 T98） |
-| 后端基线 | **864 passed**（2026-11-19，来源筛选修复后；e2e 默认 `-m "not e2e"`） |
-| e2e 基线 | **40 passed** |
-| 前端 | `D:\aitest_copilot\web`；项目详情页含「概览 / 成员 / 文档 / 版本快照 / 基线管理 / 申请 / 增量分析」7 个 Tab |
-| 数据库迁移 head | `0021`（07 建 `0022`） |
+| 后端基线 | **966 passed**（2026-11-19，07 期收官；e2e 默认 `-m "not e2e"`） |
+| e2e 基线 | **42 passed** |
+| 前端 | `D:\aitest_copilot\web`；项目详情页含「概览 / 成员 / 文档 / 版本快照 / 基线管理 / 申请 / 增量分析 / 测试点」8 个 Tab |
+| 数据库迁移 head | `0022`（07 建 `0022`） |
 | 可复用资产 | 06 的 `LLMProvider` / `get_provider` / `parse_llm_json` / `record_run`；04 的 `approved_entities()` / `clear_label()`；`prompt_templates.task_type='test_point'` 枚举已预留（`0013`） |
 
 ## 本期红线（违反即返工）
@@ -140,7 +140,7 @@
       手工新增 → 编辑 → 删除；截图 `.screenshots/T103/`。
   - 前台：项目详情页「测试点」Tab。
 
-- [ ] **T104 · 收尾**
+- [x] **T104 · 收尾**（2026-11-19 完成）
   - 内容：
     - 全量 `pytest`（串行）+ 全量 e2e + `npm run build` + `dev_check.py`；
     - `alembic downgrade 0021 → upgrade head` 往返（两个库）；
@@ -163,7 +163,7 @@
 | T101 | **39 passed**（新增） | **958 passed**（串行，exit 0） | 通过 | **40 passed**（零回归） | —（本期无页面） |
 | T102 | **8 passed**（新增） | **966 passed**（串行，exit 0） | 通过 | **40 passed**（零回归） | —（本期无页面） |
 | T103 | —（无后端改动） | **966 passed**（未动后端） | 通过 | **42 passed**（新增 2 + 原 40 零回归） | `.screenshots/T103/` |
-| T104 | | | | | |
+| T104 | 04: **115 passed** / 05: **154 passed** / 06: **174 passed** | **966 passed**（串行，exit 0） | 通过 | **42 passed**（exit 0） | 复用 T103 截图 |
 
 ## T99 实现要点（2026-11-19）
 
@@ -505,4 +505,52 @@ MockProvider 对 `[TEST_POINT_SYSTEM]` 返回的占位 `target_id=123` 一定不
   e2e 改用 `.ant-form-item`（标签「目标 ID」）下的 `input` 定位。
 - 弹窗里「模板」是否已自动选中取决于模板接口返回时序；
   e2e 不依赖自动选中，显式再选一次模板，避免 flaky。
+
+## T104 实现要点（2026-11-19）
+
+**做完了什么**：07 期总收尾——迁移往返、全量回归、文档回填、欠账入 Backlog。
+
+### 验证结果
+
+| 项 | 结果 |
+|---|---|
+| 迁移往返（开发库 `aitest_copilot_v2`） | `0022 → 0021 → 0022` 干净，head `0022` |
+| 迁移往返（e2e 库 `aitest_copilot_e2e`） | `0022 → 0021 → 0022` 干净，head `0022` |
+| `dev_check.py` | 全部 `[ OK ]`，两库 head 均 `0022`、04 基线表齐 |
+| 后端全量（串行） | **966 passed, 42 deselected**（exit 0） |
+| 04 定向 | **115 passed** |
+| 05 定向 | **154 passed** |
+| 06 定向 | **174 passed** |
+| e2e 全量 | **42 passed**（exit 0，含 `dev_check --expect-db e2e`） |
+| 前端构建 | 通过 |
+
+### 迁移往返时暴露并修掉的一个真实问题
+
+第一次在 e2e 库跑 `downgrade 0021` 时，**降级在「重建旧 CHECK」这步失败**：
+`llm_run_logs` 里还有 T103 e2e 留下的 `task_type='test_point'` 留痕，
+旧 CHECK 不含该值 → `CheckConstraint` 违约。此时 `alembic_version` 仍停在 `0022`，
+但模板已删、新 CHECK 已删、旧 CHECK 未建，库处于**半成品状态**。
+
+- **根因**：`cleanup_e2e_data()` 没清 `llm_run_logs`（该表有 `project_id`，按项目就能清）。
+- **修复**：清理清单补一行 `DELETE FROM llm_run_logs WHERE project_id IN (...)`。
+- **修复现场**：先删 `task_type='test_point'` 留痕、删两张 07 表、补回旧 CHECK，
+  `alembic stamp 0021` 把版本对齐后，再跑两轮 `upgrade → downgrade → upgrade` 确认干净。
+- **为什么值得记**：这是「e2e 数据残留挡住迁移降级」的典型形态，
+  只跑 `upgrade` 永远发现不了；**收尾必须做真实往返**。
+
+### 断网复核的口径
+
+开发库有 1 条真实大模型配置（L2 联调用），e2e 库 0 条。
+不在收尾时清空开发库配置——`tests/conftest.py` 的 autouse 夹具在每条用例里
+都会把 `llm_providers` 置空，全量 966 passed 本身就是「无真实 Provider」下的结果；
+e2e 库本就 0 条，42 passed 即断网口径。**不为了形式上的「清空再跑」破坏 L2 配置。**
+
+### 本期欠账（已记入 `PROGRESS.md` §6 Backlog）
+
+- **无基线直接对文档分析**（PRD 2.4.4 输入②）：本期只有「增量结论 + 生效标签」一条输入路径。
+- 工作台「待评审的测试点」计数：与 08 期用例评审合并口径后再接。
+- 测试点版本历史 / 快照：本期定位为可增删改的活文档。
+- Skill 模式（PRD 2.5）：06 / 07 均只做直连模式。
+- Token 计费 / 配额。
+
 

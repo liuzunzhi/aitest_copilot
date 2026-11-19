@@ -91,6 +91,12 @@ def cleanup_e2e_data(name_prefix: str = "e2e-") -> dict[str, int]:
             f"DELETE FROM test_point_analyses WHERE project_id IN ({in_projects})",
         ),
         (
+            # 留痕带 project_id；不清会让 `task_type='test_point'` 的数据挡住
+            # `0022` 降级时重建旧 CHECK（T104 迁移往返实测）。
+            "llm_run_logs",
+            f"DELETE FROM llm_run_logs WHERE project_id IN ({in_projects})",
+        ),
+        (
             "incremental_conflicts",
             "DELETE FROM incremental_conflicts WHERE analysis_id IN ("
             "SELECT id FROM incremental_analyses WHERE project_id IN ("
