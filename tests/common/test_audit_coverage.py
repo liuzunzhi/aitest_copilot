@@ -17,8 +17,14 @@ from app.common.captcha import get_redis
 from app.common.clock import FixedClock
 from app.common.config import get_settings
 from app.common.security import hash_password
+from app.main import app as fastapi_app
 from app.models.application import ProjectApplication
-from app.models.baseline import BaselineFunction, BaselineModule, BaselineRevision
+from app.models.baseline import (
+    BaselineFunction,
+    BaselineLabel,
+    BaselineModule,
+    BaselineRevision,
+)
 from app.models.document import DocumentChapter
 from app.models.incremental import (
     IncrementalAnalysis,
@@ -57,6 +63,7 @@ INCREMENTAL = "/api/projects/{project_id}/incremental"
 CHAPTER_LINKS = (
     DOCUMENTS + "/{document_id}/versions/{version_id}/links"
 )
+TEST_POINTS = "/api/projects/{project_id}/test-points"
 
 
 @pytest.fixture(autouse=True)
@@ -868,6 +875,114 @@ def _incremental_apply_run(client: TestClient, db: Session, monkeypatch) -> None
     assert response.status_code == 200, response.text
 
 
+def _test_point_chain(client: TestClient, db: Session):
+    """造出 07 期测试点需要的一条链：项目 + 文档版本 + 快照 + 结构 + 生效标签。
+
+    返回 `(project, user, headers, function, version_id)`。
+    """
+    user = _user(db)
+    project = _project(db)
+    _join(db, project, user, "project_admin")
+    headers = _headers(client, user)
+
+    # 上传并生效一份文档——测试点要挂在章节上
+    uploaded = client.post(
+        DOCUMENTS.format(project_id=project.id),
+        files={"file": ("审计.md", "# 审计\n正文".encode("utf-8"), "text/markdown")},
+        headers=headers,
+    )
+    assert uploaded.status_code == 201, uploaded.text
+    body = uploaded.json()
+    activated = client.post(
+        ACTIVATE.format(
+            project_id=project.id,
+            document_id=body["document"]["id"],
+            version_id=body["version"]["id"],
+        ),
+        headers=headers,
+    )
+    assert activated.status_code == 200, activated.text
+
+    revision = BaselineRevision(project_id=project.id, status="approved")
+    db.add(revision)
+    db.flush()
+    module = BaselineModule(
+        project_id=project.id, name="审计模块", created_by=user.id
+    )
+    db.add(module)
+    db.flush()
+    function = BaselineFunction(
+        project_id=project.id,
+        module_id=module.id,
+        name="审计功能",
+        created_by=user.id,
+    )
+    db.add(function)
+    db.flush()
+    db.add(
+        BaselineLabel(
+            project_id=project.id,
+            revision_id=revision.id,
+            target_type="function",
+            target_id=function.id,
+            label_type="changed",
+            confirmed_by=user.id,
+        )
+    )
+    db.flush()
+    return project, user, headers, function, revision.id, body["version"]["id"]
+
+
+def _test_point_analysis_create(
+    client: TestClient, db: Session, monkeypatch
+) -> None:
+    """07 期：发起一次测试点生成（走真实接口，模型侧用 Mock）。"""
+    import json as _json
+
+    from app.llm.mock import MockProvider
+    from app.llm.provider import get_provider
+
+    project, _, headers, function, revision_id, version_id = _test_point_chain(
+        client, db
+    )
+    template = db.scalar(
+        select(PromptTemplate).where(PromptTemplate.task_type == "test_point")
+    )
+    assert template is not None
+
+    provider = MockProvider(
+        queue=[
+            _json.dumps(
+                {
+                    "test_points": [
+                        {
+                            "name": "审计测试点",
+                            "target_type": "function",
+                            "target_id": function.id,
+                            "priority": "high",
+                        }
+                    ]
+                },
+                ensure_ascii=False,
+            )
+        ]
+    )
+    monkeypatch.setitem(
+        fastapi_app.dependency_overrides, get_provider, lambda: provider
+    )
+
+    response = client.post(
+        TEST_POINTS.format(project_id=project.id) + "/analyses",
+        json={
+            "template_id": template.id,
+            "baseline_revision_id": revision_id,
+            "document_version_id": version_id,
+        },
+        headers=headers,
+    )
+    assert response.status_code == 201, response.text
+
+
 def _chapter_link_create(client: TestClient, db: Session, monkeypatch) -> None:
     """05 第二期：人工补一条章节引用边。"""
     project, _, headers, body = _uploaded(client, db)
@@ -1008,6 +1123,7 @@ SCENARIOS = {
     "llm.provider.create": _llm_provider_create,
     "llm.provider.update": _llm_provider_update,
     "prompt_template.update": _prompt_template_update,
+    "test_point.analysis.create": _test_point_analysis_create,
 }
 
 

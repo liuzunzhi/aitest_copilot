@@ -28,8 +28,8 @@ from datetime import datetime, timezone
 from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 
+from app.common import permissions
 from app.common.audit import write_audit
-from app.common.deps import SYSTEM_ADMIN
 from app.common.errors import (
     AppError,
     ApplyConflictsPending,
@@ -44,10 +44,6 @@ from app.common.errors import (
     InvalidSplitGranularity,
     LLMCallFailed,
     NoActiveDocumentVersion,
-    NotProjectAdmin,
-    NotProjectMember,
-    ProjectArchived,
-    ProjectNotFound,
     SecondPassConflictsPending,
     SecondPassNotReady,
     SecondPassTemplateMissing,
@@ -76,7 +72,7 @@ from app.models.incremental import (
     IncrementalLabel,
     PromptTemplate,
 )
-from app.models.project import Project, ProjectMember
+from app.models.project import Project
 from app.models.user import User
 
 DEFAULT_GRANULARITY = "chapter"
@@ -100,42 +96,39 @@ def _page(items: list, page: int, page_size: int) -> dict:
 
 
 # ---------------------------------------------------------------- 权限
+#
+# 07 期（T101）把这 5 个函数**纯搬迁**到 `app/common/permissions.py`，
+# 05 与 07 共用一份——「归档先判、角色后判」的顺序只有一个出处。
+# 这里的别名**保留原名与原签名**，既有调用点与既有测试一个都不用改。
+#
+# `action` 参数只影响错误文案：05 传「发起增量分析」，
+# 搬迁前的消息逐字节一致（e2e 有断言盯着这句文案）。
+
+_ACTION = "发起增量分析"
 
 
 def _ensure_project(session: Session, project_id: int) -> Project:
-    project = session.get(Project, project_id)
-    if project is None:
-        raise ProjectNotFound("项目不存在")
-    return project
+    return permissions.ensure_project(session, project_id)
 
 
 def _ensure_writable_project(session: Session, project_id: int) -> Project:
     """写接口：不存在 404，已归档 409（先判归档再判角色）。"""
-    project = _ensure_project(session, project_id)
-    if project.status != "active":
-        raise ProjectArchived("项目已归档，不可发起增量分析")
-    return project
+    return permissions.ensure_writable_project(session, project_id, action=_ACTION)
 
 
 def _ensure_admin(session: Session, *, project_id: int, actor: User) -> None:
-    if actor.global_role == SYSTEM_ADMIN:
-        return
-    member = session.get(ProjectMember, (project_id, actor.id))
-    if member is None or member.role != "project_admin":
-        raise NotProjectAdmin("只有项目管理员可以发起增量分析")
+    permissions.ensure_admin(
+        session, project_id=project_id, actor=actor, action=_ACTION
+    )
 
 
 def _ensure_member(session: Session, *, project_id: int, actor: User) -> None:
-    if actor.global_role == SYSTEM_ADMIN:
-        return
-    if session.get(ProjectMember, (project_id, actor.id)) is None:
-        raise NotProjectMember("不是该项目成员")
+    permissions.ensure_member(session, project_id=project_id, actor=actor)
 
 
 def ensure_readable(session: Session, *, project_id: int, actor: User) -> None:
     """读接口权限入口：项目存在 + 成员（含访客）。"""
-    _ensure_project(session, project_id)
-    _ensure_member(session, project_id=project_id, actor=actor)
+    permissions.ensure_readable(session, project_id=project_id, actor=actor)
 
 
 # ------------------------------------------------------------ 资源校验

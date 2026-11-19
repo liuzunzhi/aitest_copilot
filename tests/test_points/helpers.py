@@ -39,6 +39,8 @@ PASSWORD = "TestPointPass1"
 PASSWORD_HASH = hash_password(PASSWORD)
 
 BASE = "/api/projects/{project_id}/test-points"
+ANALYSES = BASE + "/analyses"
+POINTS = BASE + "/points"
 
 
 def make_user(db: Session, *, global_role: str = "user") -> User:
@@ -331,8 +333,10 @@ def fenced_response(content: str) -> str:
 
 
 __all__ = [
+    "ANALYSES",
     "BASE",
     "PASSWORD",
+    "POINTS",
     "add_member",
     "build_chain",
     "fenced_response",

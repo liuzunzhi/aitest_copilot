@@ -17,12 +17,13 @@
 - [x] 04-baseline (基线管理、快照、标签) —— **已完成（含 T67 收尾）**
 - [x] 05-increment-analysis (增量分析) —— **第一期（T68~T70）+ 第二期（T71~T78）+ 第三期 T79~T83 全部完成**
 - [x] 06-real-llm (真实大模型接入与提示词模板管理) —— **T84-PDF ~ T87 全部完成，L2 真实联调已跑通**
-- [ ] 07-test-points (测试点分析) —— **T99 + T100 完成（建表 + 迁移 0022；上下文组装 + 引擎）；T101~T104 待做**
+- [ ] 07-test-points (测试点分析) —— **T99 + T100 + T101 完成（建表 + 迁移 0022；上下文组装 + 引擎；权限搬迁 + 服务层 + 11 个接口）；T102~T104 待做**
 
 ## 3. 当前冲刺任务（⚠️ 务必先做这个）
 
-**当前目标**：07 测试点分析 —— **T99 + T100 已完成**（建表 + 迁移 `0022`；
-上下文组装 + 纯引擎 + Mock 前缀分支），**下一步 T101（服务层 + 接口 + 留痕）**。
+**当前目标**：07 测试点分析 —— **T99 + T100 + T101 已完成**（建表 + 迁移 `0022`；
+上下文组装 + 纯引擎；权限搬迁 + 服务层 + 11 个接口 + 审计 + 留痕），
+**下一步 T102（引用保护 + 04 待复核标记）**。
 
 > **07 期红线（用户 2026-11-19 裁决）**：
 > - **不做 Skill 模式**（PRD 2.5）；**不做用例分析**（08 期）；
@@ -208,7 +209,7 @@
 
 | 项 | 值 |
 |---|---|
-| 后端全量 pytest | **919 passed**（串行；07 期 T100 后，基线 864 + T99 的 12 + T100 的 43） |
+| 后端全量 pytest | **958 passed**（串行；07 期 T101 后，基线 864 + T99 的 12 + T100 的 43 + T101 的 39） |
 | e2e | **40 passed**（含增量分析第一期 2 条 + 第二期 3 条 + 第三期 2 条 + PDF 1 条 + 系统设置 2 条 + 来源筛选 1 条），一条命令 `.\.venv\Scripts\python.exe scripts\run_e2e.py`（8001/5174 + `aitest_copilot_e2e`） |
 | 前端构建 | `npm run build`（`web/` 目录，端口 5173，代理到 8000） |
 | 开跑前自检 | `.\.venv\Scripts\python.exe scripts\dev_check.py`（跑 e2e 时加 `--expect-db e2e`） |
@@ -543,6 +544,45 @@ e2e 全量 **37 passed**（零回归）；`npm run build` 通过。
 - **`AppError` 基类加 `__test__ = False`**：否则 `TestPointInvalid` 这类
   `Test*` 开头的**错误类**也会被 pytest 当成测试类收集
   （`PytestCollectionWarning`）。基类上一处，全期免疫。
+
+## 5.7 07 期 · T101 完成情况（2026-11-19）
+
+**做完了什么**：权限函数搬迁（05 → `app/common/permissions.py`）+ 服务层 +
+11 个接口 + 审计 + 运行留痕。
+
+- [x] `app/common/permissions.py`（新增）：5 个权限函数，**函数体不改**。
+- [x] 05 的 `service.py`：保留**同名同签名**的别名，5 个失效 import 已清理。
+- [x] `app/test_points/service.py` + `schemas.py` + `router.py`：11 个接口
+  （6 条路径），`app/main.py` 注册。
+- [x] 运行留痕 `record_run(task_type='test_point')`，`calls` **跑前记基线、跑完相减**。
+- [x] 审计：`test_point.analysis.create` / `.delete` / `test_point.review` /
+  `test_point.point.*`；`test_audit_coverage.py` 的 `SCENARIOS` 补 1 条。
+- [x] `tests/test_points/`：39 条（flow 15 + 权限 7 + 留痕 4 + 手工评审 12 + 审计覆盖 1）。
+
+**验证结果**：后端全量 **958 passed**（串行，exit 0）；e2e 全量 **40 passed**（零回归）；
+`npm run build` 通过；05 / 06 定向回归全绿。
+
+**实现要点**：
+
+- **05 的别名必须继续生效**：`_ensure_project` / `_ensure_writable_project` /
+  `_ensure_admin` / `_ensure_member` / `ensure_readable` 全部保留原名原签名。
+  **唯一的行为变化是错误文案**——搬迁前 05 硬编码「不可发起增量分析」，
+  现在由 `action` 参数传入，05 传「发起增量分析」，文案**逐字节一致**
+  （e2e 有断言盯着那句文案）。
+- **校验顺序有专门的用例盯着**：项目不存在 + 非成员 → 404；
+  归档项目 + member → **409**（归档优先于角色）；
+  member + 停用模板 → **403**（角色优先于模板）。
+- **写接口与读接口的越权错误码不一样**：读接口非成员 → `NOT_PROJECT_MEMBER`，
+  写接口非成员 → `NOT_PROJECT_ADMIN`。**这是刻意的**——区分「非成员」与
+  「角色不符」会泄露项目是否存在（05 的 `ensure_admin` 注释里明写了这条）。
+- **留痕的 calls 必须是「本次任务」的**：`provider.calls` 是累计的，
+  跑前记基线、跑完相减。用例连跑两次生成，断言两条留痕的 `call_count`
+  都是 **1**（而不是 1 和 2）。
+- **踩坑：pydantic 会把多余字段悄悄丢掉**。`PointUpdate` 只声明 4 个字段，
+  默认 `extra='ignore'` 会把 `{"status": "approved"}` 在校验阶段就丢掉，
+  接口返回 200——用户以为改了，其实什么都没改。
+  **修法**：`ConfigDict(extra="allow")` 让多余字段活到服务层判 400。
+  （不用 `forbid`：那会变成 422，而 spec 要求 400 `TEST_POINT_INVALID`。）
 
 ## 6. 待办（不属当前冲刺，等用户点头再做）
 

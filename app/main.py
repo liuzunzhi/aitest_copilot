@@ -14,6 +14,7 @@ from app.incremental.router import router as incremental_router
 from app.llm_admin.router import admin_router as llm_admin_router
 from app.llm_admin.router import templates_router as prompt_templates_router
 from app.projects.router import router as projects_router
+from app.test_points.router import router as test_points_router
 from app.users.router import router as users_router
 
 app = FastAPI(title="AI 辅助测试平台", version=__version__)
@@ -28,6 +29,7 @@ app.include_router(users_router)
 app.include_router(baselines_router)
 app.include_router(incremental_router)
 app.include_router(incremental_links_router)
+app.include_router(test_points_router)
 app.include_router(llm_admin_router)
 app.include_router(prompt_templates_router)
 

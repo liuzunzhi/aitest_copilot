@@ -83,7 +83,7 @@
     - `tests/test_points/test_mock_prefix.py`——既有分支零影响。
   - 前台：本期无页面。
 
-- [ ] **T101 · 服务层 + 接口 + 留痕 + 权限搬迁**
+- [x] **T101 · 服务层 + 接口 + 留痕 + 权限搬迁**（2026-11-19 完成）
   - 内容：
     - `app/common/permissions.py`（新增）：从 05 搬 5 个权限函数
       （`_ensure_project` / `_ensure_writable_project` / `_ensure_admin` /
@@ -103,26 +103,22 @@
   - 验证：
     - `tests/test_points/test_generate_flow.py`——发起生成全链路；
     - `tests/test_points/test_permissions.py`——权限矩阵 + 归档项目；
-    - `tests/test_points/test_run_log.py`——留痕（成功 / 失败两条路径）。
+    - `tests/test_points/test_run_log.py`——留痕（成功 / 失败两条路径）；
+    - `tests/test_points/test_manual_and_review.py`——评审 + 手工增删改；
+    - `tests/common/test_audit_coverage.py` 的 `SCENARIOS` 补 1 条：
+      `test_point.analysis.create`。
   - 前台：本期无页面。
 
-- [ ] **T102 · 评审 + 手工增删改 + 引用保护 + 04 待复核标记**
-  - 内容：
-    - `service.review_point`：通过 / 驳回；已评审 → 409；审计 `test_point.review`，
-      `after_data` 含 `self_approved`。
-    - `service.create_manual_point` / `update_point` / `delete_point`：
-      `source_type='manual'`、`analysis_id=NULL`；更新只接受 4 个字段；
-      删除是**物理删除**。
-    - `service.delete_analysis`：有 `approved` 测试点 → 409；否则连带删。
+- [ ] **T102 · 引用保护 + 04 待复核标记**
+  - 评审与手工增删改的**服务层与接口已在 T101 落地**（便于 T101 一次交付完整闭环）；
+  - 本期剩余：
     - `app/baselines/references.py`：加 `_test_point_references` 解析器 + 注册
       （表探测保护）。
     - **`app/baselines/service.py` 的 `clear_label()`**：清除成功后把引用它的测试点
       标 `needs_review=1` + `needs_review_reason` + `needs_review_at`
       （**表探测**：表不存在就跳过）。
-  - 产出：AC-147 / AC-148 / AC-149 / AC-150 / AC-151 可断言。
+  - 产出：AC-149 / AC-150 / AC-151 可断言。
   - 验证：
-    - `tests/test_points/test_review.py`——评审流程；
-    - `tests/test_points/test_manual.py`——手工增删改；
     - `tests/test_points/test_needs_review.py`——标签清除 → 待复核（**内容不变**）；
     - `tests/baselines/` 全量回归（04 的 `clear_label` 改了）。
   - 前台：本期无页面。
@@ -163,7 +159,7 @@
 |---|---|---|---|---|---|
 | T99 | **12 passed**（新增） | **876 passed**（串行，exit 0） | 通过 | **40 passed**（零回归） | —（本期无页面） |
 | T100 | **43 passed**（新增） | **919 passed**（串行，exit 0） | 通过 | **40 passed**（零回归） | —（本期无页面） |
-| T101 | | | — | | —（本期无页面） |
+| T101 | **39 passed**（新增） | **958 passed**（串行，exit 0） | 通过 | **40 passed**（零回归） | —（本期无页面） |
 | T102 | | | — | | —（本期无页面） |
 | T103 | | | | | `.screenshots/T103/` |
 | T104 | | | | | |
@@ -303,3 +299,75 @@ Mock 默认响应的 `target_id=123` 不在真实清单里 → 全被当越界�
 `AppError` 基类上加 `__test__ = False`——否则 `TestPointInvalid`
 这类 `Test*` 开头的**错误类**也会被 pytest 当成测试类收集
 （`PytestCollectionWarning`）。基类上一处，全期免疫。
+
+## T101 实现要点（2026-11-19）
+
+**做完了什么**：权限函数搬迁（05 → `app/common/permissions.py`）+ 服务层 +
+11 个接口 + 审计 + 运行留痕。
+
+**验证结果**：后端全量 **958 passed**（串行，exit 0）；e2e 全量 **40 passed**（零回归）；
+`npm run build` 通过；05 / 06 定向回归全绿（权限搬迁零影响）。
+
+### 权限函数搬迁：05 的别名必须继续生效
+
+05 的 `service.py` 里保留**同名同签名的别名**：
+
+```python
+def _ensure_project(session, project_id) -> Project:
+    return permissions.ensure_project(session, project_id)
+
+def _ensure_writable_project(session, project_id) -> Project:
+    return permissions.ensure_writable_project(session, project_id, action=_ACTION)
+```
+
+**唯一的行为变化是错误文案**：搬迁前 05 硬编码「不可发起增量分析」，
+现在由 `action` 参数传入——05 传「发起增量分析」，文案**逐字节一致**
+（e2e 有断言盯着「只有项目管理员可以发起增量分析」这句）。
+
+搬迁后 05 里 5 个 import 变成未使用（`NotProjectAdmin` / `NotProjectMember` /
+`ProjectArchived` / `ProjectNotFound` / `SYSTEM_ADMIN` / `ProjectMember`），
+已清理。
+
+### 校验顺序有专门的用例盯着
+
+| 场景 | 期望 | 钉住了什么 |
+|---|---|---|
+| 项目不存在 + 非成员 | 404 | 项目不存在优先 |
+| 归档项目 + member | **409** | 归档优先于角色 |
+| member + 停用模板 | **403** | 角色优先于模板 |
+
+### 写接口与读接口的越权错误码**不一样**
+
+- 读接口非成员 → `NOT_PROJECT_MEMBER`
+- 写接口非成员 → `NOT_PROJECT_ADMIN`
+
+**这是刻意的**：区分「非成员」与「角色不符」会泄露项目是否存在
+（05 的 `ensure_admin` 注释里明写了这条）。我第一版测试按读接口的直觉
+写成了 `NOT_PROJECT_MEMBER`，被 05 的既有用例打回——**代码是对的，
+期望值错了**。
+
+### 留痕的 calls 必须「跑前记基线、跑完相减」
+
+`provider.calls` 是**累计**的。直接取 `len(calls)` 会把历史调用算进来。
+`test_ac_154_call_count_is_per_task_not_cumulative` 连续跑两次生成，
+断言两条留痕的 `call_count` 都是 **1**（而不是 1 和 2）。
+
+### 踩到的坑：pydantic 会把多余字段**悄悄丢掉**
+
+`PointUpdate` 只声明 4 个字段，但 pydantic 默认 `extra='ignore'`——
+传 `{"status": "approved"}` 会在**校验阶段**就被丢掉，
+接口返回 200，用户以为改了状态，其实什么都没改。
+
+**修法**：`model_config = ConfigDict(extra="allow")` 让多余字段**活到服务层**，
+服务层用 `payload.model_extra` 抓出来判 400。
+
+> 不用 `extra='forbid'`：那会变成 **422**（pydantic 的默认行为），
+> 而 spec 要求的是 400 `TEST_POINT_INVALID`（与 01–05 的既有口径一致）。
+
+### 审计覆盖清单补了 1 条
+
+`tests/common/test_audit_coverage.py` 的 `SCENARIOS` 加
+`test_point.analysis.create`——新增写操作而忘了写审计时，这份清单会缺项。
+
+> 造数时踩了个坑：手写 JSON 字面量**漏了闭合的 `}`**，
+> 被 `TEST_POINT_INVALID` 当场抓出。改用 `json.dumps` 生成，一劳永逸。
