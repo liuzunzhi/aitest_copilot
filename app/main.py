@@ -5,6 +5,7 @@ from fastapi import FastAPI
 from app import __version__
 from app.admin.applications_router import router as admin_applications_router
 from app.applications.router import router as applications_router
+from app.automation.router import router as automation_router
 from app.auth.router import router as auth_router
 from app.baselines.router import router as baselines_router
 from app.common.errors import install_error_handlers
@@ -32,6 +33,7 @@ app.include_router(incremental_router)
 app.include_router(incremental_links_router)
 app.include_router(test_points_router)
 app.include_router(test_cases_router)
+app.include_router(automation_router)
 app.include_router(llm_admin_router)
 app.include_router(prompt_templates_router)
 
