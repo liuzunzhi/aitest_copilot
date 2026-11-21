@@ -420,6 +420,68 @@ def seed_second_pass_rows(
         session.close()
 
 
+def seed_todo_counts(
+    project_id: int,
+    *,
+    baseline_reviews: int = 0,
+    test_points: int = 0,
+    test_cases: int = 0,
+    created_by: int = 1,
+) -> None:
+    """给工作台待办计数造数（T110.5 · AC-193）。
+
+    三项待办的行结构各不相同，且各有必填列（审核记录要 `status`、
+    测试点要 `target_*`、用例要 `test_point_name` 与 `target_*`），
+    所以分三段 INSERT 而不是拼一条通用语句。
+
+    只造数——三项的状态变更仍走真实接口。
+    """
+    session = _session()
+    try:
+        for _ in range(baseline_reviews):
+            session.execute(
+                text(
+                    "INSERT INTO baseline_revisions (project_id, status, structure_json,"
+                    " module_count, function_count, feature_point_count, label_count,"
+                    " created_at) VALUES (:project_id, 'submitted', NULL, 0, 0, 0, 0, NOW(3))"
+                ),
+                {"project_id": project_id},
+            )
+        for index in range(test_points):
+            session.execute(
+                text(
+                    "INSERT INTO test_points (project_id, analysis_id, name, target_type,"
+                    " target_id, target_name, priority, status, source_type, created_by,"
+                    " created_at, updated_at) VALUES (:project_id, NULL, :name, 'function',"
+                    " 1, '功能', 'medium', 'pending', 'llm', :created_by, NOW(3), NOW(3))"
+                ),
+                {
+                    "project_id": project_id,
+                    "name": f"待评审测试点-{index}",
+                    "created_by": created_by,
+                },
+            )
+        for index in range(test_cases):
+            session.execute(
+                text(
+                    "INSERT INTO test_cases (project_id, analysis_id, test_point_id,"
+                    " test_point_name, title, case_type, priority, target_type, target_id,"
+                    " target_name, status, source_type, created_by, created_at, updated_at)"
+                    " VALUES (:project_id, NULL, 1, '待评审测试点', :title, 'functional',"
+                    " 'medium', 'function', 1, '功能', 'pending', 'llm', :created_by,"
+                    " NOW(3), NOW(3))"
+                ),
+                {
+                    "project_id": project_id,
+                    "title": f"待评审用例-{index}",
+                    "created_by": created_by,
+                },
+            )
+        session.commit()
+    finally:
+        session.close()
+
+
 def create_user(global_role: str = "user") -> dict:
     """直接在 e2e 库里造一个可登录用户（用户名带 uuid，不撞已有数据）。"""
     payload = {

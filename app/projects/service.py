@@ -23,6 +23,8 @@ from app.models.application import ProjectApplication
 from app.models.baseline import BaselineRevision
 from app.models.document import Document
 from app.models.project import Project, ProjectMember
+from app.models.test_case import TestCase
+from app.models.test_point import TestPoint
 from app.models.user import User
 
 CLOSED_REASON_ARCHIVED = "project_archived"
@@ -345,6 +347,53 @@ def get_overview(session: Session, *, project_id: int) -> dict[str, object]:
     }
 
 
+def get_todos(session: Session, *, project_id: int) -> dict[str, int]:
+    """工作台待办计数（AC-193）。
+
+    三项构成「基线产出 → 评审 → 用例」的主链路待办：
+    待审核基线 / 待评审测试点 / 待评审用例。
+
+    **只统计本项目**——三个查询各自带 `project_id` 条件，项目隔离是硬要求。
+
+    另外两项 PRD 2.3.1 也列了（「待审批的项目加入申请」属 02、
+    「待确认的文档版本」属 03），但它们与测试主链路无关，登记到后续期。
+    """
+    pending_baseline_reviews = session.execute(
+        select(func.count())
+        .select_from(BaselineRevision)
+        .where(
+            BaselineRevision.project_id == project_id,
+            BaselineRevision.status == "submitted",
+        )
+    ).scalar_one()
+    pending_test_point_reviews = session.execute(
+        select(func.count())
+        .select_from(TestPoint)
+        .where(
+            TestPoint.project_id == project_id,
+            TestPoint.status == "pending",
+        )
+    ).scalar_one()
+    pending_test_case_reviews = session.execute(
+        select(func.count())
+        .select_from(TestCase)
+        .where(
+            TestCase.project_id == project_id,
+            TestCase.status == "pending",
+        )
+    ).scalar_one()
+    return {
+        "pending_baseline_reviews": pending_baseline_reviews,
+        "pending_test_point_reviews": pending_test_point_reviews,
+        "pending_test_case_reviews": pending_test_case_reviews,
+        "total": (
+            pending_baseline_reviews
+            + pending_test_point_reviews
+            + pending_test_case_reviews
+        ),
+    }
+
+
 def archive_project(
     session: Session, *, project_id: int, actor: User | None = None
 ) -> None:
@@ -415,6 +464,7 @@ __all__ = [
     "archive_project",
     "create_project",
     "get_overview",
+    "get_todos",
     "list_members",
     "remove_member",
     "update_member_role",

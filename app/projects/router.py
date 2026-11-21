@@ -16,6 +16,7 @@ from app.common.deps import (
     require_system_admin,
 )
 from app.common.errors import NotProjectAdmin
+from app.common.permissions import ensure_readable
 from app.models.project import ProjectMember
 from app.models.user import User
 from app.projects import apply_service, query_service, service
@@ -75,6 +76,15 @@ class ProjectOverviewOut(BaseModel):
     document_count: int
     baseline_count: int
     latest_execution: dict | None
+
+
+class TodosOut(BaseModel):
+    """工作台待办计数（AC-193）。"""
+
+    pending_baseline_reviews: int
+    pending_test_point_reviews: int
+    pending_test_case_reviews: int
+    total: int
 
 
 class UserBriefOut(BaseModel):
@@ -204,6 +214,28 @@ def get_overview(
     _: User = Depends(require_project_member_or_system_admin),
 ) -> ProjectOverviewOut:
     return ProjectOverviewOut(**service.get_overview(session, project_id=project_id))
+
+
+@router.get(
+    "/{project_id}/todos",
+    response_model=TodosOut,
+    summary="工作台待办计数",
+)
+def get_todos(
+    project_id: int,
+    session: Session = Depends(get_db),
+    user: User = Depends(current_user),
+) -> TodosOut:
+    """待审核基线 / 待评审测试点 / 待评审用例的计数（AC-193）。
+
+    成员可读——待办是团队共享的工作队列，不是管理员专属。
+
+    用 `ensure_readable` 而不是本文件其它路由的 `require_project_member_or_system_admin`：
+    后者对**不存在的项目**也返回 403（查成员表查不到就报不是成员），
+    而待办接口要区分「项目不存在」(404) 与「不是成员」(403)。
+    """
+    ensure_readable(session, project_id=project_id, actor=user)
+    return TodosOut(**service.get_todos(session, project_id=project_id))
 
 
 @router.get(

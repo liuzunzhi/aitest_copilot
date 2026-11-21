@@ -21,12 +21,13 @@ import { useLocation, useParams } from 'react-router-dom'
 import {
   addMember,
   fetchOverview,
+  fetchTodos,
   listMembers,
   listProjectApplications,
   removeMember,
   updateMemberRole,
 } from '../api'
-import type { Application, Member, Overview } from '../api'
+import type { Application, Member, Overview, Todos } from '../api'
 import { errorMessage } from '../api/client'
 import { useAuth } from '../auth/AuthProvider'
 import ProjectBaselineSnapshots from './ProjectBaselineSnapshots'
@@ -36,6 +37,7 @@ import ProjectDocumentsTab from './ProjectDocumentsTab'
 import ProjectIncrementalTab from './ProjectIncrementalTab'
 import ProjectTestCasesTab from './ProjectTestCasesTab'
 import ProjectTestPointsTab from './ProjectTestPointsTab'
+import ProjectTodoCard from './ProjectTodoCard'
 
 const PROJECT_ROLE_LABELS: Record<string, string> = {
   project_admin: '项目管理员',
@@ -70,8 +72,11 @@ export default function ProjectDetailPage() {
   const projectName = routeState?.name
 
   const [overview, setOverview] = useState<Overview | null>(null)
+  const [todos, setTodos] = useState<Todos | null>(null)
   // 文档变更后自增，驱动基线 Tab 重载（Tabs 切走不卸载）
   const [baselineKey, setBaselineKey] = useState(0)
+  // Tabs 改为受控：待办卡片的数字要能跳到指定 Tab
+  const [activeTab, setActiveTab] = useState('overview')
   const [members, setMembers] = useState<Member[]>([])
   const [applications, setApplications] = useState<Application[]>([])
   const [loading, setLoading] = useState(false)
@@ -102,6 +107,15 @@ export default function ProjectDetailPage() {
     }
   }, [projectId, message])
 
+  const reloadTodos = useCallback(async () => {
+    try {
+      setTodos(await fetchTodos(projectId))
+    } catch {
+      // 待办是辅助信息，取不到时静默降级为空计数，不打断页面
+      setTodos(null)
+    }
+  }, [projectId])
+
   const reloadMembers = useCallback(async () => {
     try {
       setMembers(await listMembers(projectId))
@@ -122,9 +136,10 @@ export default function ProjectDetailPage() {
 
   useEffect(() => {
     void reloadOverview()
+    void reloadTodos()
     void reloadMembers()
     void reloadApplications()
-  }, [reloadOverview, reloadMembers, reloadApplications])
+  }, [reloadOverview, reloadTodos, reloadMembers, reloadApplications])
 
   async function submitAddMember() {
     const values = await form.validateFields()
@@ -244,6 +259,8 @@ export default function ProjectDetailPage() {
       </Typography.Title>
 
       <Tabs
+        activeKey={activeTab}
+        onChange={setActiveTab}
         items={[
           {
             key: 'overview',
@@ -260,6 +277,7 @@ export default function ProjectDetailPage() {
                     {overview?.latest_execution ? '已有执行记录' : '暂无'}
                   </Descriptions.Item>
                 </Descriptions>
+                <ProjectTodoCard todos={todos} onNavigate={setActiveTab} />
               </Card>
             ),
           },

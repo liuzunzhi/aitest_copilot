@@ -22,6 +22,14 @@ export interface Overview {
   latest_execution: unknown | null
 }
 
+/** 工作台待办计数（PRD 2.3.1）。三项构成测试主链路的待评审队列。 */
+export interface Todos {
+  pending_baseline_reviews: number
+  pending_test_point_reviews: number
+  pending_test_case_reviews: number
+  total: number
+}
+
 export interface Application {
   id: number
   project?: { id: number; name: string }
@@ -106,6 +114,11 @@ export async function archiveProject(projectId: number): Promise<void> {
 
 export async function fetchOverview(projectId: number): Promise<Overview> {
   const { data } = await client.get<Overview>(`/projects/${projectId}/overview`)
+  return data
+}
+
+export async function fetchTodos(projectId: number): Promise<Todos> {
+  const { data } = await client.get<Todos>(`/projects/${projectId}/todos`)
   return data
 }
 
