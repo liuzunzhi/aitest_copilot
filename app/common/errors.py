@@ -819,6 +819,72 @@ class TestPointTargetOutOfBaseline(AppError):
     code = "TEST_POINT_TARGET_OUT_OF_BASELINE"
 
 
+# ------------------------------------------------- 测试用例分析（AC-159~180）
+
+
+class TestCaseAnalysisNotFound(AppError):
+    """AC-159：生成记录不存在或不属于该项目。"""
+
+    status_code = 404
+    code = "TEST_CASE_ANALYSIS_NOT_FOUND"
+
+
+class TestCaseNotFound(AppError):
+    """AC-168：用例不存在或不属于该项目。"""
+
+    status_code = 404
+    code = "TEST_CASE_NOT_FOUND"
+
+
+class TestCaseTemplateInvalid(AppError):
+    """AC-160：模板不存在、已停用或 `task_type` 不是 `test_case`。"""
+
+    status_code = 400
+    code = "TEST_CASE_TEMPLATE_INVALID"
+
+
+class TestCaseInputEmpty(AppError):
+    """AC-161：筛选后没有可用的已评审测试点——没有依据，不许发起。"""
+
+    status_code = 400
+    code = "TEST_CASE_INPUT_EMPTY"
+
+
+class TestCasePointNotFound(AppError):
+    """AC-160：指定测试点不存在、不属于本项目或未评审通过（严格校验）。"""
+
+    status_code = 400
+    code = "TEST_CASE_POINT_NOT_FOUND"
+
+
+class TestCaseInvalid(AppError):
+    """AC-163~165：模型输出结构不合法（整次失败）或请求带了不可改字段。"""
+
+    status_code = 400
+    code = "TEST_CASE_INVALID"
+
+
+class TestCaseStepInvalid(AppError):
+    """AC-169：步骤数组不合法（空 / action 为空 / 超过 100 步）。"""
+
+    status_code = 400
+    code = "TEST_CASE_STEP_INVALID"
+
+
+class TestCaseReviewStateInvalid(AppError):
+    """AC-167：已评审过的用例不能重复评审。"""
+
+    status_code = 409
+    code = "TEST_CASE_REVIEW_STATE_INVALID"
+
+
+class TestCaseAnalysisHasApproved(AppError):
+    """AC-170：这次生成已产出评审通过的用例，不允许连带删除。"""
+
+    status_code = 409
+    code = "TEST_CASE_ANALYSIS_HAS_APPROVED"
+
+
 def install_error_handlers(app: FastAPI) -> None:
     """把 AppError 统一渲染成 {"code","message",**extra}。"""
 
@@ -926,6 +992,15 @@ __all__ = [
     "SnapshotReferenced",
     "TemplateDisabled",
     "TemplateNotFound",
+    "TestCaseAnalysisHasApproved",
+    "TestCaseAnalysisNotFound",
+    "TestCaseInputEmpty",
+    "TestCaseInvalid",
+    "TestCaseNotFound",
+    "TestCasePointNotFound",
+    "TestCaseReviewStateInvalid",
+    "TestCaseStepInvalid",
+    "TestCaseTemplateInvalid",
     "TestPointAnalysisHasApproved",
     "TestPointAnalysisNotFound",
     "TestPointInputEmpty",

@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import re
+import time
 import uuid
 
 from playwright.sync_api import Locator, Page, expect
@@ -84,3 +85,21 @@ def expect_form_error(page: Page, text: str) -> None:
 def wait_modal_closed(page: Page) -> None:
     """等弹窗关掉——弹窗的遮罩会挡住底下的树节点。"""
     expect(page.locator(".ant-modal:visible")).to_have_count(0)
+
+
+def wait_drawer_settled(page: Page, anchor: Locator, timeout: float = 5.0) -> None:
+    """等抽屉滑入动画结束。
+
+    antd 的 Drawer 用 `transform: translateX()` 滑入，**动画期间元素已在 DOM 里、
+    Playwright 也认为它「可见」**——此时截图会拍到半截抽屉（右侧被裁掉）。
+
+    这里不猜 antd 的内部类名，直接盯住抽屉里的锚点：
+    等它完整落在视口内（`x + width <= 视口宽`），说明动画已经走完。
+    """
+    viewport_width = page.viewport_size["width"] if page.viewport_size else 0
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        box = anchor.bounding_box()
+        if box is not None and box["x"] + box["width"] <= viewport_width + 1:
+            return
+        page.wait_for_timeout(100)

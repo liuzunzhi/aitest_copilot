@@ -4,13 +4,14 @@
 
 - `calls: list[LLMRequest]`：每次 `chat` 追加一条，用例据此断言 Prompt 来源；
 - `queue: list[str]`：预设返回队列，为空时按 Prompt 类型返回默认响应；
-- 默认响应分四套：第一遍（`{"conclusions": []}`）、第二遍
+- 默认响应分五套：第一遍（`{"conclusions": []}`）、第二遍
   （`[INCREMENTAL_2B_SYSTEM]` 前缀的 system → `decision=unchanged`）、
   文档推导（`[DERIVE_SYSTEM]` 前缀 → 一个最小三层结构）、
-  测试点生成（`[TEST_POINT_SYSTEM]` 前缀 → 一条最小测试点）。
-  这样 e2e 不预设队列也能跑通第一遍、第二遍、基线推导与测试点生成。
+  测试点生成（`[TEST_POINT_SYSTEM]` 前缀 → 一条最小测试点）、
+  测试用例生成（`[TEST_CASE_SYSTEM]` 前缀 → 一条带步骤的最小用例）。
+  这样 e2e 不预设队列也能跑通第一遍、第二遍、基线推导、测试点生成与用例生成。
 
-**07 期新增的分支只影响 `[TEST_POINT_SYSTEM]` 前缀**——
+**07 / 08 期新增的分支只影响各自的前缀**——
 既有三个分支的行为一个字节没变，05 / 06 的断言不受影响。
 """
 
@@ -66,6 +67,26 @@ TEST_POINT_DEFAULT_RESPONSE = json.dumps(
     },
     ensure_ascii=False,
 )
+TEST_CASE_SYSTEM_PREFIX = "[TEST_CASE_SYSTEM]"
+TEST_CASE_DEFAULT_RESPONSE = json.dumps(
+    {
+        "cases": [
+            {
+                # 输出契约里**没有** `test_point_id`：绑定哪个测试点由服务端
+                # 按「当前正在处理的测试点」决定（spec §5.3）。
+                "title": "mock 生成用例",
+                "case_type": "functional",
+                "priority": "medium",
+                "precondition": "mock 前置条件",
+                "steps": [
+                    {"action": "mock 第一步", "expected": "mock 预期一"},
+                    {"action": "mock 第二步", "expected": "mock 预期二"},
+                ],
+            }
+        ]
+    },
+    ensure_ascii=False,
+)
 
 
 class MockProvider:
@@ -95,6 +116,8 @@ class MockProvider:
             content = DERIVE_DEFAULT_RESPONSE
         elif req.system.startswith(TEST_POINT_SYSTEM_PREFIX):
             content = TEST_POINT_DEFAULT_RESPONSE
+        elif req.system.startswith(TEST_CASE_SYSTEM_PREFIX):
+            content = TEST_CASE_DEFAULT_RESPONSE
         else:
             content = self.default_response
         prompt_tokens = len(req.system) + len(req.user)
@@ -118,6 +141,8 @@ __all__ = [
     "MockProvider",
     "SECOND_PASS_DEFAULT_RESPONSE",
     "SECOND_PASS_SYSTEM_PREFIX",
+    "TEST_CASE_DEFAULT_RESPONSE",
+    "TEST_CASE_SYSTEM_PREFIX",
     "TEST_POINT_DEFAULT_RESPONSE",
     "TEST_POINT_SYSTEM_PREFIX",
 ]

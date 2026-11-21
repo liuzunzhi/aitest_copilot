@@ -173,15 +173,20 @@ def admin_page(
 
 @pytest.fixture
 def shot(request: pytest.FixtureRequest) -> Callable[..., Path]:
-    """截图落到 `.screenshots/<任务号>/<用例名>-<标签>.png`。"""
+    """截图落到 `.screenshots/<任务号>/<用例名>-<标签>.png`。
 
-    def _shot(page: Page, label: str = "final") -> Path:
+    `full_page=False` 用于**抽屉 / 弹窗**场景：抽屉是 `position: fixed`，
+    整页截图会按文档宽度渲染，固定定位的抽屉会被裁掉一截，
+    截图上看不清抽屉内容。
+    """
+
+    def _shot(page: Page, label: str = "final", *, full_page: bool = True) -> Path:
         marker = request.node.get_closest_marker("task")
         folder = str(marker.args[0]) if marker and marker.args else "misc"
         target = SCREENSHOT_ROOT / folder
         target.mkdir(parents=True, exist_ok=True)
         path = target / f"{request.node.name}-{label}.png"
-        page.screenshot(path=str(path), full_page=True)
+        page.screenshot(path=str(path), full_page=full_page)
         return path
 
     return _shot

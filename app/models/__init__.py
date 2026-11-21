@@ -28,6 +28,7 @@ from app.models.incremental import (
 from app.models.llm import LLMProviderConfig, LLMRunLog
 from app.models.project import Project, ProjectMember
 from app.models.system import AuditLog, SystemSetting
+from app.models.test_case import TestCase, TestCaseAnalysis, TestCaseStep
 from app.models.test_point import TestPoint, TestPointAnalysis
 from app.models.token import AccessToken
 from app.models.user import User
@@ -64,6 +65,9 @@ __all__ = [
     "ProjectMember",
     "PromptTemplate",
     "SystemSetting",
+    "TestCase",
+    "TestCaseAnalysis",
+    "TestCaseStep",
     "TestPoint",
     "TestPointAnalysis",
     "User",

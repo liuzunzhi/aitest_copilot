@@ -1740,3 +1740,264 @@ export async function reviewTestPoint(
   )
   return data
 }
+
+/* ------------------------------------------------------ 测试用例分析（08） */
+
+export type TestCaseAnalysisStatus = 'pending' | 'running' | 'succeeded' | 'failed'
+export type TestCaseStatus = 'pending' | 'approved' | 'rejected'
+export type TestCasePriority = 'high' | 'medium' | 'low'
+export type TestCaseType = 'functional' | 'api' | 'ui'
+export type TestCaseSourceType = 'llm' | 'manual'
+
+/** 丢弃明细：只留痕，不写业务表。 */
+export interface TestCaseDiscard {
+  test_point_id: number
+  test_point_name: string
+  title: string
+  code: string
+}
+
+export interface TestCaseStats {
+  test_point_count: number
+  case_count: number
+  step_count: number
+  discarded_count: number
+  discarded: TestCaseDiscard[]
+}
+
+export interface TestCaseAnalysis {
+  id: number
+  project_id: number
+  template_id: number
+  template_name: string | null
+  template_version: number
+  provider: string
+  /** 作为依据的测试点批次；没有则为 null。 */
+  test_point_analysis_id: number | null
+  chapter_ids: number[] | null
+  status: TestCaseAnalysisStatus
+  error_code: string | null
+  error_message: string | null
+  stats: TestCaseStats | null
+  started_at: string | null
+  finished_at: string | null
+  created_by: number
+  created_at: string
+}
+
+export interface TestCaseStep {
+  step_no: number
+  action: string
+  expected: string
+}
+
+export interface TestCase {
+  id: number
+  project_id: number
+  /** 来源生成记录；手工新增为 null。 */
+  analysis_id: number | null
+  test_point_id: number
+  /** 落库快照——测试点后来改名、被删，历史用例仍对得上原文。 */
+  test_point_name: string
+  title: string
+  case_type: TestCaseType
+  priority: TestCasePriority
+  precondition: string | null
+  target_type: string
+  target_id: number
+  target_name: string
+  chapter_id: number | null
+  chapter_title: string | null
+  status: TestCaseStatus
+  reviewed_by: number | null
+  reviewed_at: string | null
+  review_comment: string | null
+  source_type: TestCaseSourceType
+  /** 源测试点变了或被删 → 待复核。读时派生，不落库。 */
+  needs_review: boolean
+  needs_review_reason: string | null
+  needs_review_ack_at: string | null
+  created_by: number
+  created_at: string
+  updated_at: string
+  steps: TestCaseStep[]
+}
+
+export interface TestCaseAnalysisDetail extends TestCaseAnalysis {
+  cases: TestCase[]
+}
+
+export interface TestCaseAnalysisPayload {
+  template_id: number
+  /** 显式指定测试点：严格模式，任一不满足就 400。 */
+  test_point_ids?: number[] | null
+  chapter_ids?: number[] | null
+  target_type?: string | null
+  target_id?: number | null
+  test_point_analysis_id?: number | null
+}
+
+export interface TestCasePayload {
+  test_point_id: number
+  title: string
+  case_type?: TestCaseType
+  priority?: TestCasePriority
+  precondition?: string | null
+  steps?: Array<{ action: string; expected?: string | null }>
+}
+
+/** 手工改：只接受这 4 个字段，传别的会 400 `TEST_CASE_INVALID`。 */
+export interface TestCaseUpdatePayload {
+  title?: string
+  case_type?: TestCaseType
+  priority?: TestCasePriority
+  precondition?: string | null
+}
+
+const TEST_CASES = (projectId: number) => `/projects/${projectId}/test-cases`
+
+export async function listTestCaseAnalyses(
+  projectId: number,
+  params?: { page?: number; page_size?: number },
+): Promise<Page<TestCaseAnalysis>> {
+  const { data } = await client.get<Page<TestCaseAnalysis>>(
+    `${TEST_CASES(projectId)}/analyses`,
+    { params },
+  )
+  return data
+}
+
+/** 发起生成。后端同步跑完才返回，响应直接带上产出的用例。 */
+export async function createTestCaseAnalysis(
+  projectId: number,
+  payload: TestCaseAnalysisPayload,
+): Promise<TestCaseAnalysisDetail> {
+  const { data } = await client.post<TestCaseAnalysisDetail>(
+    `${TEST_CASES(projectId)}/analyses`,
+    payload,
+  )
+  return data
+}
+
+export async function fetchTestCaseAnalysis(
+  projectId: number,
+  analysisId: number,
+): Promise<TestCaseAnalysisDetail> {
+  const { data } = await client.get<TestCaseAnalysisDetail>(
+    `${TEST_CASES(projectId)}/analyses/${analysisId}`,
+  )
+  return data
+}
+
+/** 删除生成记录，连带删除它产出的用例；已有评审通过的用例会 409。 */
+export async function deleteTestCaseAnalysis(
+  projectId: number,
+  analysisId: number,
+): Promise<void> {
+  await client.delete(`${TEST_CASES(projectId)}/analyses/${analysisId}`)
+}
+
+export async function listTestCases(
+  projectId: number,
+  params?: {
+    status?: TestCaseStatus
+    test_point_id?: number
+    target_type?: string
+    target_id?: number
+    analysis_id?: number
+    needs_review?: boolean
+    page?: number
+    page_size?: number
+  },
+): Promise<Page<TestCase>> {
+  const { data } = await client.get<Page<TestCase>>(`${TEST_CASES(projectId)}/cases`, {
+    params,
+  })
+  return data
+}
+
+export async function createTestCase(
+  projectId: number,
+  payload: TestCasePayload,
+): Promise<TestCase> {
+  const { data } = await client.post<TestCase>(`${TEST_CASES(projectId)}/cases`, payload)
+  return data
+}
+
+export async function fetchTestCase(projectId: number, caseId: number): Promise<TestCase> {
+  const { data } = await client.get<TestCase>(`${TEST_CASES(projectId)}/cases/${caseId}`)
+  return data
+}
+
+export async function updateTestCase(
+  projectId: number,
+  caseId: number,
+  payload: TestCaseUpdatePayload,
+): Promise<TestCase> {
+  const { data } = await client.patch<TestCase>(
+    `${TEST_CASES(projectId)}/cases/${caseId}`,
+    payload,
+  )
+  return data
+}
+
+export async function deleteTestCase(projectId: number, caseId: number): Promise<void> {
+  await client.delete(`${TEST_CASES(projectId)}/cases/${caseId}`)
+}
+
+/** 整体覆盖步骤——序号由服务端按数组顺序重排。 */
+export async function replaceTestCaseSteps(
+  projectId: number,
+  caseId: number,
+  steps: Array<{ action: string; expected?: string | null }>,
+): Promise<TestCase> {
+  const { data } = await client.put<TestCase>(
+    `${TEST_CASES(projectId)}/cases/${caseId}/steps`,
+    { steps },
+  )
+  return data
+}
+
+export async function reviewTestCase(
+  projectId: number,
+  caseId: number,
+  payload: { action: 'approve' | 'reject'; comment?: string | null },
+): Promise<TestCase> {
+  const { data } = await client.post<TestCase>(
+    `${TEST_CASES(projectId)}/cases/${caseId}/review`,
+    payload,
+  )
+  return data
+}
+
+/** 确认已复核：刷新源测试点快照，之后不再提示。 */
+export async function ackTestCase(projectId: number, caseId: number): Promise<TestCase> {
+  const { data } = await client.post<TestCase>(
+    `${TEST_CASES(projectId)}/cases/${caseId}/ack`,
+  )
+  return data
+}
+
+/** 导出 Excel：下载要带 Bearer 头，走 XHR 取 blob。 */
+export async function exportTestCases(
+  projectId: number,
+  params?: {
+    status?: TestCaseStatus
+    test_point_id?: number
+    target_type?: string
+    target_id?: number
+    analysis_id?: number
+  },
+): Promise<{ blob: Blob; fileName: string }> {
+  const response = await client.get(`${TEST_CASES(projectId)}/cases/export`, {
+    params,
+    responseType: 'blob',
+  })
+  const disposition = String(response.headers['content-disposition'] ?? '')
+  const encoded = disposition.match(/filename\*=utf-8''([^;]+)/i)?.[1]
+  const plain = disposition.match(/filename="?([^";]+)"?/i)?.[1]
+  return {
+    blob: response.data as Blob,
+    fileName: encoded ? decodeURIComponent(encoded) : (plain ?? '测试用例.xlsx'),
+  }
+}

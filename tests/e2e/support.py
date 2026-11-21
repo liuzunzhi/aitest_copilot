@@ -83,6 +83,19 @@ def cleanup_e2e_data(name_prefix: str = "e2e-") -> dict[str, int]:
     )
     statements = [
         (
+            "test_case_steps",
+            "DELETE FROM test_case_steps WHERE case_id IN ("
+            "SELECT id FROM test_cases WHERE project_id IN (" + in_projects + "))",
+        ),
+        (
+            "test_cases",
+            f"DELETE FROM test_cases WHERE project_id IN ({in_projects})",
+        ),
+        (
+            "test_case_analyses",
+            f"DELETE FROM test_case_analyses WHERE project_id IN ({in_projects})",
+        ),
+        (
             "test_points",
             f"DELETE FROM test_points WHERE project_id IN ({in_projects})",
         ),
@@ -91,8 +104,8 @@ def cleanup_e2e_data(name_prefix: str = "e2e-") -> dict[str, int]:
             f"DELETE FROM test_point_analyses WHERE project_id IN ({in_projects})",
         ),
         (
-            # 留痕带 project_id；不清会让 `task_type='test_point'` 的数据挡住
-            # `0022` 降级时重建旧 CHECK（T104 迁移往返实测）。
+            # 留痕带 project_id；不清会让 `task_type='test_point'` / `'test_case'`
+            # 的数据挡住 `0022` / `0023` 降级时重建旧 CHECK（迁移往返实测）。
             "llm_run_logs",
             f"DELETE FROM llm_run_logs WHERE project_id IN ({in_projects})",
         ),
@@ -291,7 +304,7 @@ def seed_chapter_links(version_id: int, links: list[dict]) -> None:
 
 
 def seed_test_points(
-    analysis_id: int,
+    analysis_id: int | None,
     project_id: int,
     rows: list[dict],
     *,
@@ -303,6 +316,9 @@ def seed_test_points(
     发起生成只会得到 `succeeded` + 0 条测试点；
     前台用例又要核对「生成 → 列表 → 评审通过」的展示与操作，
     所以按真实表结构直接写 e2e 库。只造数——评审仍走真实 `review` 接口。
+
+    `analysis_id` 传 `None` 表示「没有来源批次」——该列有外键，
+    塞 0 会直接撞 1452。
 
     `rows` 每项：{name, target_type, target_id, target_name, priority?,
     precondition?, verification?, chapter_id?, chapter_title?, status?}
@@ -344,7 +360,8 @@ def seed_test_points(
     return inserted
 
 
-def seed_second_pass_rows(    analysis_id: int,
+def seed_second_pass_rows(
+    analysis_id: int,
     *,
     decisions: list[dict] | None = None,
     conflicts: list[dict] | None = None,

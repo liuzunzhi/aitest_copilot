@@ -131,6 +131,16 @@ const CODE_TEXT: Record<string, string> = {
   TEST_POINT_REVIEW_STATE_INVALID: '该测试点已评审过，不能重复评审',
   TEST_POINT_ANALYSIS_HAS_APPROVED: '这次生成含评审通过的测试点，不允许连带删除',
   TEST_POINT_INVALID: '测试点请求不合法',
+  /* 测试用例分析（08） */
+  TEST_CASE_ANALYSIS_NOT_FOUND: '测试用例生成记录不存在',
+  TEST_CASE_NOT_FOUND: '测试用例不存在',
+  TEST_CASE_TEMPLATE_INVALID: '提示词模板不可用：必须启用且类型为「测试用例生成」',
+  TEST_CASE_INPUT_EMPTY: '没有评审通过的测试点，无法生成用例',
+  TEST_CASE_POINT_NOT_FOUND: '测试点不存在、不属于本项目或未评审通过',
+  TEST_CASE_INVALID: '测试用例请求不合法',
+  TEST_CASE_STEP_INVALID: '步骤不合法：至少一步、操作不能为空、不超过 100 步',
+  TEST_CASE_REVIEW_STATE_INVALID: '该用例已评审过，不能重复评审',
+  TEST_CASE_ANALYSIS_HAS_APPROVED: '这次生成含评审通过的用例，不允许连带删除',
 }
 
 /**
