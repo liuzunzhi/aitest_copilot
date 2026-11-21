@@ -19,11 +19,11 @@
 - [x] 06-real-llm (真实大模型接入与提示词模板管理) —— **T84-PDF ~ T87 全部完成，L2 真实联调已跑通**
 - [x] 07-test-points (测试点分析) —— **T99 ~ T104 全部完成**（建表 + 迁移 `0022`；上下文组装 + 引擎；权限搬迁 + 服务层 + 11 个接口；引用保护 + 待复核标记；前端「测试点」Tab；收尾与文档回填）
 - [x] 08-test-case-analysis (测试用例分析) —— **T105 ~ T110 全部完成**（建表 + 迁移 `0023`；上下文组装 + 引擎；服务层 + 13 个接口；评审 / 手工 CRUD / 步骤覆盖 / 待复核派生 / Excel 导出；前端「测试用例」Tab；收尾与文档回填）
-- [ ] 09-automation (自动化执行与测试报告) —— **进行中**（规格已定稿；T110.5 工作台待办计数已完成）
+- [ ] 09-automation (自动化执行与测试报告) —— **进行中**（规格已定稿；T110.5 工作台待办计数、T111 数据层与枚举修正、T112 扫描器与入库服务已完成）
 
 ## 3. 当前冲刺任务（⚠️ 务必先做这个）
 
-**当前目标**：09 自动化执行与测试报告 —— **T110.5 已完成**，下一步 **T111**（数据层 + 枚举修正）。
+**当前目标**：09 自动化执行与测试报告 —— **T110.5 / T111 / T112 已完成**，下一步 **T113**（执行器 + 三条安全线）。
 
 **任务顺序**：`T110.5 → T111 → T112 → T113 → T114 → T115 → T116`
 规格与方案见 `specs/09-automation/`（AC-181 ~ AC-196）。
@@ -55,6 +55,45 @@
 >   `npm run build` 通过；截图 `.screenshots/T110.5/`（3 张）。
 > - **仍欠**：PRD 2.3.1 的另两项待办——「待审批的项目加入申请」（02）、
 >   「待确认的文档版本」（03）——登记到后续期。
+
+### T111 + T112 已完成（数据层与枚举修正 / 扫描器与入库服务）
+
+> **T111（数据层）**：`app/models/automation.py` 三张表 + 迁移 `0024`
+> （`automation_assets` / `automation_runs` / `automation_run_items`）
+> + 8 个错误类 + 2 个配置项（`automation_root` / `automation_exec_timeout_seconds`）。
+>
+> - **枚举修正**：`priority_changed` → `baseline_adjusted`（PRD：基线已调整）、
+>   `duplicate_label` → `backtrace_override`（PRD：回溯覆盖）。
+>   这两个旧值**在 PRD 里根本不存在**，而 PRD 要求的两类**无法表达**——
+>   是能力缺失，不是命名风格问题。存量用两条 UPDATE 就地改写，
+>   `downgrade` **反向改回去**（否则降级后代码只认旧枚举名，历史数据会被判非法）。
+>   `CASCADE_CLEAR_REASON='target_deleted'` 与 `apply.CLEAR_REASON='misjudged'` **不动**。
+> - **枚举归一**：原先 `service.py` 与 `schemas.py` 各写一份 `CLEAR_REASONS`，迟早漂移。
+>   收敛到 `app/baselines/constants.py`——**不能**让 `schemas.py` 反向 import `service.py`
+>   （`service.py` 已 import `schemas.py`，反向依赖会形成**循环导入**），
+>   所以常量放在无依赖的独立文件里。
+> - **验证**：两库 `0024 → 0023 → 0024` 往返干净，head 均 `0024`；
+>   **降级后 `clear_reason` 逐字节还原为旧值**（造存量数据实跑确认，
+>   不是只看 alembic 版本号）；后端全量 **1117 passed**（零回归）。
+>
+> **T112（扫描器 + 入库服务）**：`app/automation/`（`scanner.py` / `service.py` /
+> `schemas.py` / `router.py`）+ `app/main.py` 注册路由；5 个接口、3 条路径。
+>
+> - **扫描器是纯函数**（不碰数据库、不碰配置）→ 路径安全与规则匹配可脱离运行时验证。
+> - **路径安全是红线**：`resolve()` + `is_relative_to(root)` 双检，
+>   **绝对路径单独判**（Windows 上 `root / abs` 会退化成 root 内的相对拼接，
+>   `is_relative_to` 挡不住）。判定基准是 resolve 后的实际路径——
+>   `sub/../sub2` 解析后仍在 root 内即放行，`../../etc` 越界即拒。
+> - **扫描只出清单不写表**（PRD 2.4.6「由人工确认后入库」），
+>   入库是另一个动作；**入库时服务端重扫重算**置信度与用例数，不采信前端传值。
+> - **遍历用 `os.walk` 原地剪枝**（`rglob` 不支持按目录剪枝，否则 `node_modules`
+>   里的文件也会被计数、进而撞上文件数上限）；单文件只读前 64KB；上限 2000 个文件。
+> - **验证**：`tests\automation` **85 passed**（T111 的 47 + T112 新增 38）；
+>   后端全量 **1202 passed**（1117 + 85），exit 0，只增不减；`npm run build` 通过；
+>   红线实测上游目录（`test_points` / `incremental` / `test_cases` / `llm` / `baselines`）零改动。
+> - **两处实现决定**（与 spec 的措辞略有出入，已在此登记）：
+>   ① `directory` 传空串 = 扫整个 root（spec 未规定空串；2000 文件上限仍兜底）；
+>   ② 响应里的 `root` 只给**相对展示名**，绝不返回绝对路径（泄露服务器目录结构）。
 
 > **08 期红线（用户裁决）**：
 > - **不做 Skill 模式**（PRD 2.5）；**不做 2.4.6 自动化执行、2.4.7 测试报告**；
@@ -239,12 +278,12 @@
 
 | 项 | 值 |
 |---|---|
-| 后端全量 pytest | **1117 passed**（串行；09 期 T110.5 收尾，基线 1107 + 新增 10） |
+| 后端全量 pytest | **1202 passed**（串行；09 期 T112 收尾，基线 1117 + 新增 85） |
 | e2e | **51 passed**（增量分析第一期 2 + 第二期 3 + 第三期 2 + PDF 1 + 系统设置 2 + 来源筛选 1 + 测试点 2 + 测试用例 4 + Tab 核对 2 + **待办计数 3**），一条命令 `.\.venv\Scripts\python.exe scripts\run_e2e.py`（8001/5174 + `aitest_copilot_e2e`） |
 | 前端构建 | `npm run build`（`web/` 目录，端口 5173，代理到 8000） |
 | 开跑前自检 | `.\.venv\Scripts\python.exe scripts\dev_check.py`（跑 e2e 时加 `--expect-db e2e`） |
 | 账号 | `admin` / `Admin12345` |
-| 迁移 head | **`0023`**（06 期 T84 建 `0017`；`0018` 免审核开关；`0019` 第一遍模板修正；04 补期 `0020` 推导 / `0021` 分点审核；07 期 T99 建 `0022` 测试点；08 期 T105 建 `0023` 测试用例） |
+| 迁移 head | **`0024`**（06 期 T84 建 `0017`；`0018` 免审核开关；`0019` 第一遍模板修正；04 补期 `0020` 推导 / `0021` 分点审核；07 期 T99 建 `0022` 测试点；08 期 T105 建 `0023` 测试用例；09 期 T111 建 `0024` 自动化三表 + 清除原因枚举修正） |
 | 项目详情 Tab | **9 个**（概览 / 成员 / 文档 / 版本快照 / 基线管理 / 申请 / 增量分析 / 测试点 / 测试用例） |
 | 截图目录 | 仓库根 `.screenshots/`（`E2E_SCREENSHOT_DIR` 可覆盖） |
 | 运行时依赖 | `pdfplumber>=0.11`（T84-PDF 新增）；`cryptography>=43`（T84 新增）、`httpx>=0.28`（T84 从 dev 移入）；**`openpyxl>=3.1`（08 期新增，仅用于 Excel 导出）** |
@@ -725,6 +764,40 @@ MySQL 方言不会把 SQLAlchemy 的 `server_onupdate` 渲染成 `ON UPDATE`，
 
 **第三个决定**：输出契约里**没有测试点 id**，绑定哪个点由服务端按「当前测试点」决定。
 06 期「模型照抄示例 id」的坑从结构上消失——模板示例里一个 id 都没有。
+
+## 5.12 09 期 · T110.5 ~ T112（2026-11-21）
+
+**做完了什么**：09 期前半程——数据层、枚举修正、扫描入库。
+
+- [x] T110.5：`GET /api/projects/{id}/todos` 三项待办计数 + 概览 Tab「我的待办」卡片。
+- [x] T111：`app/models/automation.py` 三张表 + 迁移 `0024` + 8 个错误类 +
+      2 个配置项；**清除原因枚举修正**（`priority_changed` → `baseline_adjusted`、
+      `duplicate_label` → `backtrace_override`）；枚举收敛到
+      `app/baselines/constants.py`（避免 `schemas` ↔ `service` 循环导入）。
+- [x] T112：`app/automation/`（`scanner.py` 纯函数 / `service.py` / `schemas.py` /
+      `router.py`）+ 5 个接口（`POST /scan`、`GET /assets`、`POST /assets`、
+      `GET /assets/{id}`、`PATCH /assets/{id}`）；`tests\automation` 共 **85 条**。
+
+**验证结果**：后端全量 **1202 passed**（串行，exit 0，只增不减）；
+`tests\automation` **85 passed**；`npm run build` 通过；
+两库 head 均 **`0024`**、`0024 → 0023 → 0024` 往返干净，
+降级后 `clear_reason` 逐字节还原为旧值；e2e 仍 **51 passed**（本期无前端改动）；
+红线实测上游目录零改动。
+
+**本期最关键的一个设计决定**：**扫描器做成纯函数**。
+`scan_dir` / `resolve_scan_dir` 的签名里根本没有 `session`——
+只要拿不到 Session，它就**不可能**写表，「扫描不写表」这条 PRD 要求
+就从「靠自觉」变成「结构上做不到」。
+
+**第二个决定**：**绝对路径必须单独判**。
+`Path.resolve()` + `is_relative_to(root)` 双检挡住了 `../../etc`，
+但挡不住 `C:\Windows`——Windows 上 `root / "C:\\Windows"` 会退化成
+`root/C:\Windows`（仍在 root 内），`is_relative_to` 照样放行。
+少判这一条，`POST /scan` 就是任意文件读取漏洞。
+
+**第三个决定**：**入库时服务端重扫重算**置信度与识别到的用例数，
+不采信前端传的值。前端传的值只是扫描时的快照（文件可能已改），
+更重要的是不能让前端决定置信度——否则「随便写个 0.99」就能进库。
 
 ## 6. 待办（不属当前冲刺，等用户点头再做）
 
