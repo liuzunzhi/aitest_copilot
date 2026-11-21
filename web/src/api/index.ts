@@ -351,8 +351,8 @@ export type ClearReason =
   | 'requirement_done'
   | 'requirement_cancelled'
   | 'misjudged'
-  | 'priority_changed'
-  | 'duplicate_label'
+  | 'baseline_adjusted'
+  | 'backtrace_override'
   | 'other'
 
 export interface BaselineModule {

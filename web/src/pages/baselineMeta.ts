@@ -16,13 +16,17 @@ export const LABEL_TYPE_OPTIONS = (Object.keys(LABEL_TYPE_META) as LabelType[]).
   label: LABEL_TYPE_META[type].label,
 }))
 
-/** 清除原因 → 中文说明（6 类枚举，后端强校验）。 */
+/** 清除原因 → 中文说明（6 类枚举，后端强校验）。
+ *
+ * 09 期 T111 修正：`priority_changed` / `duplicate_label` 在 PRD 2.4.2 里
+ * 根本不存在，改为 `baseline_adjusted`（基线已调整）/ `backtrace_override`（回溯覆盖）。
+ */
 export const CLEAR_REASON_META: Record<ClearReason, string> = {
   requirement_done: '需求已实现',
   requirement_cancelled: '需求已取消',
   misjudged: '之前判断有误',
-  priority_changed: '优先级变化',
-  duplicate_label: '标签重复',
+  baseline_adjusted: '基线已调整',
+  backtrace_override: '回溯覆盖',
   other: '其他',
 }
 

@@ -9,8 +9,7 @@ from typing import Generic, TypeVar
 
 from pydantic import BaseModel, ConfigDict, Field
 
-# 标签类型：新增 / 变更 / 受影响 / 无变化
-LABEL_TYPES = ("new", "changed", "affected", "unchanged")
+from app.baselines.constants import CLEAR_REASONS, LABEL_TYPES
 
 # 来源追溯字段：只读，不允许从任何写接口写入（AC-63）
 TRACE_FIELDS = (
@@ -24,15 +23,17 @@ TRACE_FIELDS = (
 
 T = TypeVar("T")
 
-# 清除原因 6 类（PRD 2.4.2「人工清除」）
-CLEAR_REASONS = (
-    "requirement_done",
-    "requirement_cancelled",
-    "misjudged",
-    "priority_changed",
-    "duplicate_label",
-    "other",
-)
+# 清除原因 6 类（PRD 2.4.2「人工清除」）——**只有一处定义**：
+# 从 `app.baselines.constants` 导入，不在本文件重复写一份。
+#
+# 09 期 T111 之前这里与服务层各写了一份，两处迟早漂移。
+# 枚举值同时从「priority_changed / duplicate_label」改为
+# 「baseline_adjusted / backtrace_override」——对齐 PRD 的 6 类原因
+# （原值在 PRD 里根本不存在，而 PRD 的「基线已调整」「回溯覆盖」无法表达）。
+#
+# 注意**不能**改成 `from app.baselines.service import CLEAR_REASONS`：
+# `service.py` 已经 import 了本模块（取 `trace_fields_in`），
+# 反向依赖会形成循环导入。常量因此放在无依赖的 `constants.py`。
 
 
 class Page(BaseModel, Generic[T]):
