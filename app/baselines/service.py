@@ -17,6 +17,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.baselines import derive as derive_engine
+from app.baselines.constants import CLEAR_REASONS, LABEL_TYPES
 from app.baselines.references import snapshot_references
 from app.baselines.schemas import trace_fields_in
 from app.common.audit import write_audit
@@ -84,17 +85,19 @@ from app.models.project import Project, ProjectMember
 from app.models.test_point import TestPoint
 from app.models.user import User
 
-LABEL_TYPES = ("new", "changed", "affected", "unchanged")
-
-# 清除原因 6 类（PRD 2.4.2「人工清除」）
-CLEAR_REASONS = (
-    "requirement_done",
-    "requirement_cancelled",
-    "misjudged",
-    "priority_changed",
-    "duplicate_label",
-    "other",
-)
+# 清除原因 6 类（PRD 2.4.2「人工清除」）与标签类型 4 类
+# ——**全项目只有这一处定义**：`app/baselines/constants.py`。
+# `schemas.py` 也从那里导入，不重复定义。
+#
+# 09 期 T111 修正：原值 `priority_changed`（优先级变化）与 `duplicate_label`
+# （标签重复）**在 PRD 里根本不存在**，而 PRD 要求的「基线已调整」「回溯覆盖」
+# 两类**无法表达**——这是能力缺失，不是命名风格问题。
+#
+#   priority_changed  → baseline_adjusted  （PRD：基线已调整）
+#   duplicate_label   → backtrace_override （PRD：回溯覆盖）
+#
+# 之所以不放在本模块：`service.py` import 了 `schemas.py`，
+# 让 `schemas.py` 反向 import 本模块会形成**循环导入**。
 
 
 def _now() -> datetime:

@@ -885,6 +885,66 @@ class TestCaseAnalysisHasApproved(AppError):
     code = "TEST_CASE_ANALYSIS_HAS_APPROVED"
 
 
+class AutomationScanPathInvalid(AppError):
+    """AC-182：扫描目录越界 / 是绝对路径 / 含 `..` 穿越 / 不存在。
+
+    这是**安全红线**：扫描目录必须落在 `AUTOMATION_ROOT` 内，
+    否则 `POST /scan` 就是一个任意文件读取漏洞。
+    """
+
+    status_code = 400
+    code = "AUTOMATION_SCAN_PATH_INVALID"
+
+
+class AutomationScanTooLarge(AppError):
+    """AC-183：扫描的文件数超过上限（默认 2000），避免误扫整个磁盘。"""
+
+    status_code = 400
+    code = "AUTOMATION_SCAN_TOO_LARGE"
+
+
+class AutomationAssetNotFound(AppError):
+    """AC-184：资产不存在或不属于该项目。"""
+
+    status_code = 404
+    code = "AUTOMATION_ASSET_NOT_FOUND"
+
+
+class AutomationAssetInvalid(AppError):
+    """AC-184：入库参数不合法（框架非法 / 路径为空）。"""
+
+    status_code = 400
+    code = "AUTOMATION_ASSET_INVALID"
+
+
+class AutomationFrameworkNotExecutable(AppError):
+    """AC-187：选了 Playwright 资产要执行——本期只执行 Pytest。"""
+
+    status_code = 400
+    code = "AUTOMATION_FRAMEWORK_NOT_EXECUTABLE"
+
+
+class AutomationRunNotFound(AppError):
+    """AC-191：执行记录不存在或不属于该项目。"""
+
+    status_code = 404
+    code = "AUTOMATION_RUN_NOT_FOUND"
+
+
+class AutomationRunInputEmpty(AppError):
+    """AC-187：`asset_ids` 为空——没有资产可执行。"""
+
+    status_code = 400
+    code = "AUTOMATION_RUN_INPUT_EMPTY"
+
+
+class AutomationExecFailed(AppError):
+    """AC-185：执行器启动失败（进程拉不起来）。"""
+
+    status_code = 500
+    code = "AUTOMATION_EXEC_FAILED"
+
+
 def install_error_handlers(app: FastAPI) -> None:
     """把 AppError 统一渲染成 {"code","message",**extra}。"""
 
@@ -911,6 +971,14 @@ __all__ = [
     "ApplicationNotPending",
     "ApplyCooldown",
     "ApplyDisabled",
+    "AutomationAssetInvalid",
+    "AutomationAssetNotFound",
+    "AutomationExecFailed",
+    "AutomationFrameworkNotExecutable",
+    "AutomationRunInputEmpty",
+    "AutomationRunNotFound",
+    "AutomationScanPathInvalid",
+    "AutomationScanTooLarge",
     "BaselineDeriveNotFound",
     "BaselineDeriveStatusInvalid",
     "BaselineRevisionRequired",

@@ -82,6 +82,19 @@ def cleanup_e2e_data(name_prefix: str = "e2e-") -> dict[str, int]:
         "WHERE p.name LIKE :prefix"
     )
     statements = [
+        # 09 期自动化执行三表：按外键依赖倒序（明细 → 记录 → 资产）
+        (
+            "automation_run_items",
+            f"DELETE FROM automation_run_items WHERE project_id IN ({in_projects})",
+        ),
+        (
+            "automation_runs",
+            f"DELETE FROM automation_runs WHERE project_id IN ({in_projects})",
+        ),
+        (
+            "automation_assets",
+            f"DELETE FROM automation_assets WHERE project_id IN ({in_projects})",
+        ),
         (
             "test_case_steps",
             "DELETE FROM test_case_steps WHERE case_id IN ("

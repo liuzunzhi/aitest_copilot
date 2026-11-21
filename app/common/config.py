@@ -47,6 +47,15 @@ class Settings(BaseSettings):
         description="大模型 API Key 的加密主密钥",
     )
 
+    # 自动化资产的根目录（09 期）。扫描目录必须落在它之内——
+    # 服务端用 Path.resolve() 校验，越界直接拒绝（防目录穿越 / 任意文件读取）。
+    # 相对项目根或绝对路径都可以；库里只存相对该目录的相对路径。
+    automation_root: str = Field(default="var/automation", min_length=1)
+
+    # 单次自动化执行的超时秒数（09 期）。超时后进程被 kill，
+    # 防止一次同步请求把后端永久挂起。
+    automation_exec_timeout_seconds: int = Field(default=300, gt=0, le=3600)
+
 
 @lru_cache
 def get_settings() -> Settings:
