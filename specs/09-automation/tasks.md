@@ -319,6 +319,31 @@
 **AC**：AC-195、AC-196
 **提交**：`docs(progress): 09 期自动化执行与测试报告收官`
 
+**T116 补充记录（收尾）**
+
+- **新增 `scripts/check_migration_roundtrip.py`**（收尾脚本，可复用到后续期）：
+  两库各跑一遍 `0024 → 0023 → 0024`，**造存量数据**（用旧枚举名写两行标签）
+  再逐字节比对。
+  **只看 alembic 版本号不算验证**——「迁移跑通了」不等于「数据还原了」。
+
+- **踩坑：e2e 库跑完前台用例会被清空**，一个项目都不剩。
+  `baseline_labels.revision_id` 有外键 → 没有基线版本就造不出标签 →
+  脚本得自己补最小前置数据（一个项目 + 一个基线版本），收尾再一并删掉。
+  （开发库有真实数据，不受这个影响。）
+
+- **踩坑（第一次写这个脚本时连踩两次）**：
+  ① `baseline_labels` 的必填列比想的多（`project_id` 不能省）；
+  ② `baseline_revisions.status` 的 CHECK 只认 `submitted` / `approved` / `rejected`——
+  写 `draft` 被 MySQL 3819 拒了。**造数也得照着真实的 CHECK 写。**
+
+- **红线 diff 的基准要用对**：`0dd7549`（08 期收尾）才是 09 期的起点。
+  用 `75e5ea5`（09 期中期的 docs 提交）当基准会**漏掉** T111/T112 的改动，
+  diff 看起来「全空」——那是**假阳性**，不是真的零改动。
+
+- **执行器三线复核**：`app/automation/runner.py` 第 246 / 250 / 252 行分别是
+  `capture_output=True` / `timeout=timeout` / `shell=False`，
+  全文**无** `stdout.read(`、**无** `PIPE`。
+
 ## 3. AC → 任务 / 用例映射
 
 | AC | 任务 | 测试位置（`test_ac_<号>_*`） |
@@ -345,7 +370,7 @@
 | T113 | `tests\automation` **110 passed**（85 + 新增 25）；`pytest tests\automation -k "ac_185 or ac_186 or ac_188" -q` **20 passed**（AC-185 4 + AC-186 10 + AC-188 6） | **1227 passed**（1202 + 25），exit 0，只增不减 | `npm run build` 通过 | 不涉及 | 不涉及 | 不涉及（纯执行层） | 通过 |
 | T114 | `tests\automation` **141 passed**（110 + 新增 31：`test_run_flow.py` 20 + `test_permissions.py` 11）；`pytest tests\automation -k "ac_187 or ac_188 or ac_189 or ac_190 or ac_191 or ac_192" -q` **47 passed** | **1259 passed**（1227 + 32），exit 0，只增不减 | `npm run build` 通过 | 不涉及 | 不涉及 | 不涉及（纯接口） | 通过 |
 | T115 | `tests\automation` **141 passed**（未动任何既有期望值） | **1259 passed**（1259 + 0，串行，exit 0，零回归） | `npm run build` 通过 | e2e 全量 **56 passed**（51 + 新增 5）；`tests/e2e/test_automation_ui.py` **5 passed** | 不涉及 | `.screenshots/T115/` **9 张**，文件名含 AC-194 | 通过 |
-| T116 | 09 定向 + 04~08 定向 | 待回填 | 待回填 | 待回填 | 两库 `0024 → 0023 → 0024` 干净，head 均 `0024` | `.screenshots/T116/` | 待回填 |
+| T116 | 09 定向（automation + projects）**301 passed**；04~08 定向 **685 passed** | **1259 passed**（1259 + 0，串行，exit 0，454.96s，零回归） | `npm run build` 通过 | e2e 全量 **58 passed**（192.48s；56 + 收官核对 2） | 两库 `0024 → 0023 → 0024` 干净，head 均 `0024`；**降级后 `clear_reason` 逐字节还原**为旧值（`scripts/check_migration_roundtrip.py` 造存量数据实跑） | `.screenshots/T115/` 9 张 + `.screenshots/T116/` **15 张** | 通过 |
 
 **T110.5 补充记录**
 
@@ -544,17 +569,21 @@
 - e2e 全量：**≥ 56 passed**（T115 起 ≥ 56）
 - 迁移 head：两库均为 `0024`；`0024 → 0023 → 0024` 干净
 - 04 / 05 / 06 / 07 / 08 定向回归：**0 failed**
-- 既有 1107 条测试：**零期望值改动**
+- 既有 1107 条测试：**零期望值改动**（09 期收官时全量 1259 passed）
 
 ## 5. 完成定义（DoD）
 
 对齐验证约定 §2 的五条，逐条落到本期：
 
-- [ ] 每个任务开跑前 `dev_check.py` 通过
-- [ ] 该任务的 `pytest -k ac_XXX` 通过
-- [ ] 全量 pytest 通过，数量 ≥ 1107 且只增不减
-- [ ] Playwright 前台核对通过，截图含 AC 编号
-- [ ] AC-181 ~ AC-196 全部有测试或前台证据
-- [ ] 两库迁移往返干净，head `0024`；降级后枚举还原彻底
-- [ ] 红线 diff 复核：上游模块零改动；执行器三线在位
-- [ ] `PROGRESS.md`、`验证约定.md`、收官总结已更新
+- [x] 每个任务开跑前 `dev_check.py` 通过
+- [x] 该任务的 `pytest -k ac_XXX` 通过
+- [x] 全量 pytest 通过，数量 ≥ 1259 且只增不减（**1259 passed**，exit 0）
+- [x] Playwright 前台核对通过，截图含 AC 编号（`.screenshots/T115/` 9 张，含 AC-194）
+- [x] AC-181 ~ AC-196 全部有测试或前台证据（AC 矩阵见 §3 与收官总结 §6）
+- [x] 两库迁移往返干净，head `0024`；降级后枚举**逐字节还原**
+      （`scripts/check_migration_roundtrip.py` 造存量数据实跑）
+- [x] 红线 diff 复核：上游模块零改动（`0dd7549..HEAD` 实测）；执行器三线在位
+- [x] `PROGRESS.md`、`验证约定.md`、收官总结已更新
+
+**09 期收官（2026-11-22）**。主链路完整贯通：
+`文档 → 基线 → 增量分析 → 测试点 → 测试用例 → 自动化资产 → 执行报告`

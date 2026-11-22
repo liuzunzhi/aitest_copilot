@@ -1,0 +1,49 @@
+docs(progress): 09 期自动化执行与测试报告收官
+
+09 期收官。主链路至此完整贯通：
+  文档 → 基线 → 增量分析 → 测试点 → 测试用例 → 自动化资产 → 执行报告
+
+【做了什么】
+- 新增 scripts/check_migration_roundtrip.py：两库各跑一遍 0024 → 0023 → 0024，
+  **造存量数据**（用旧枚举名写两行标签）再逐字节比对。
+- 新增 tests/e2e/test_t116_closing_ui.py（2 条前台核对）：
+  ① 10 个 Tab 逐个点开，每个都断言内容区真的渲染出来了；
+  ② 「自动化执行」完整走一遍：扫描 → 入库 → 关联 → 执行 → 报告。
+- 新增 specs/09-automation/收官总结.md（交付清单 / 数据模型 / 关键设计 /
+  接口一览 / AC 矩阵 / 验证结果 / 红线复核 / 踩坑 / Backlog）。
+- 回填 PROGRESS.md（§3 09 期完成 / §4 现状 / §5.16 T116 小节）、
+  specs/验证约定.md（§1 现状 / §7 变更记录）、
+  specs/09-automation/tasks.md（§4 验证记录表 + T116 补充记录 + DoD 勾选）。
+
+【为什么新增迁移往返脚本】
+只看 alembic 版本号**不算验证**——「迁移跑通了」不等于「数据还原了」。
+0024 的另一半是清除原因枚举修正，downgrade 必须把存量值逐字节改回旧名，
+否则降级后 04 的清除标签接口会把历史数据判成非法原因。
+所以脚本造存量数据实跑，比对降级后的 clear_reason 是不是旧值。
+
+【验证结果（全部实跑，非引用）】
+- 后端全量 pytest（串行）：1259 passed, 56 deselected, exit 0（454.96s）
+- e2e 全量：58 passed（192.48s；56 + 收官核对 2）
+- 04/05/06/07/08 定向回归：685 passed（177.96s），0 failed
+- 09 定向（automation + projects）：301 passed（152.12s）
+- 迁移往返：开发库 + e2e 库均 0024 → 0023 → 0024 干净，head 均 0024，
+  降级后 clear_reason 逐字节还原为旧值
+- 红线 diff（0dd7549..HEAD，即 08 期收尾 → 现在）：
+  app/test_points / app/incremental / app/test_cases / app/llm / app/documents
+  全部零改动；app/baselines 只有枚举修正（+59 / -22）
+- 执行器三线在位：runner.py 第 246/250/252 行分别是
+  capture_output=True / timeout=timeout / shell=False，全文无 stdout.read(、无 PIPE
+- 零真实 socket：tests\automation 无 requests / urlopen / aiohttp / socket.socket
+- dev_check.py 全 [ OK ]，两库 head 均 0024
+- 截图 .screenshots/T116/ 15 张（文件名含 AC-194 / AC-196）
+
+【踩坑】
+- e2e 库跑完前台用例会被清空，一个项目都不剩。baseline_labels.revision_id
+  有外键 → 没有基线版本就造不出标签 → 脚本得自己补最小前置数据
+  （一个项目 + 一个基线版本），收尾再一并删掉。开发库有真实数据，不受影响。
+- 造数也得照着真实的 CHECK 写：baseline_labels 的必填列比想的多
+  （project_id 不能省）；baseline_revisions.status 只认
+  submitted / approved / rejected，写 draft 被 MySQL 3819 拒了。
+- 红线 diff 的基准要用对：0dd7549（08 期收尾）才是 09 期的起点。
+  用 75e5ea5（09 期中期的 docs 提交）当基准会漏掉 T111/T112 的改动，
+  diff 看起来「全空」——那是假阳性，不是真的零改动。
