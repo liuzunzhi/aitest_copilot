@@ -52,6 +52,8 @@ __all__ = [
     "ExecResult",
     "TIMEOUT_ERROR_PREFIX",
     "aggregate_result",
+    "find_summary_line",
+    "first_failure_summary",
     "parse_pytest_summary",
     "run_pytest",
 ]
@@ -261,7 +263,7 @@ def run_pytest(
     return ExecResult(proc.returncode, proc.stdout + proc.stderr, None)
 
 
-def _find_summary_line(text: str) -> str | None:
+def find_summary_line(text: str) -> str | None:
     """找出 pytest 的统计行。
 
     **按形状挑**（末尾带 `in <时长>`），而不是「含 passed/failed 就算」——
@@ -278,6 +280,22 @@ def _find_summary_line(text: str) -> str | None:
     return None
 
 
+def first_failure_summary(output: str) -> str | None:
+    """取第一条失败摘要（**不解析 traceback 详情**）。
+
+    只取 pytest 的统计行（`1 failed, 2 passed in 0.45s`）——
+    明细的 `error` 要能一眼看出「这个文件有多少条没过」。
+
+    统计行里没有 failed / error → `None`（这个文件全过了）。
+    """
+    summary = find_summary_line(output or "")
+    if summary is None:
+        return None
+    if "failed" in summary or "error" in summary:
+        return summary
+    return None
+
+
 def parse_pytest_summary(output: str) -> dict[str, int | None]:
     """解析 pytest 摘要行，返回 `{total, passed, failed, skipped, error}`。
 
@@ -287,7 +305,7 @@ def parse_pytest_summary(output: str) -> dict[str, int | None]:
       原始文本由调用方原样保留在日志里，**不抛错**）。
     """
     text = output or ""
-    summary = _find_summary_line(text)
+    summary = find_summary_line(text)
     if summary is None:
         return {"total": None}
 

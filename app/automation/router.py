@@ -1,4 +1,4 @@
-"""自动化执行路由（09-automation T112）。
+"""自动化执行路由（09-automation T112 / T114）。
 
 前缀 `/api/projects/{project_id}/automation`：
 
@@ -7,6 +7,9 @@
 - `POST   /assets`         人工确认批量入库（从扫描结果采纳）
 - `GET    /assets/{id}`    资产详情
 - `PATCH  /assets/{id}`    改关联用例 / 归档 / 刷新用例数
+- `POST   /runs`           触发执行（**项目管理员**，同步跑完返回）
+- `GET    /runs`           执行记录列表（分页）
+- `GET    /runs/{id}`      单次报告（明细 + 追溯链 + 统计 + 日志）
 
 **权限在服务层判定**（与 04 / 05 / 07 / 08 一致）：
 「归档先判、角色后判」的顺序只有一个出处——`app/common/permissions.py`。
@@ -26,6 +29,9 @@ from app.automation.schemas import (
     AssetsCreate,
     AssetsCreateOut,
     Page,
+    RunCreate,
+    RunOut,
+    RunReportOut,
     ScanOut,
     ScanRequest,
 )
@@ -131,4 +137,64 @@ def update_asset(
             actor=user,
             payload=payload,
         )
+    )
+
+
+# --------------------------------------------------------------- 执行（T114）
+
+
+@router.post("/runs", response_model=RunOut)
+def create_run(
+    project_id: int,
+    payload: RunCreate,
+    session: Session = Depends(get_db),
+    user: User = Depends(current_user),
+) -> RunOut:
+    """触发执行（**项目管理员**）。
+
+    同步跑完才返回——执行 pytest = 任意代码执行，风险等级与
+    「发起生成」同级，所以限项目管理员（成员只能看报告）。
+    """
+    return RunOut(
+        **service.execute_run(
+            session,
+            project_id=project_id,
+            actor=user,
+            asset_ids=payload.asset_ids,
+        )
+    )
+
+
+@router.get("/runs", response_model=Page[RunOut])
+def list_runs(
+    project_id: int,
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=50, ge=1, le=200),
+    session: Session = Depends(get_db),
+    user: User = Depends(current_user),
+) -> Page[RunOut]:
+    """执行记录列表，新记录在前。列表**不带明细与日志**。"""
+    service.ensure_readable(session, project_id=project_id, actor=user)
+    result = service.list_runs(
+        session, project_id=project_id, page=page, page_size=page_size
+    )
+    return Page[RunOut](
+        items=[RunOut(**item) for item in result["items"]],
+        total=result["total"],
+        page=result["page"],
+        page_size=result["page_size"],
+    )
+
+
+@router.get("/runs/{run_id}", response_model=RunReportOut)
+def get_run_report(
+    project_id: int,
+    run_id: int,
+    session: Session = Depends(get_db),
+    user: User = Depends(current_user),
+) -> RunReportOut:
+    """单次报告：明细 + 追溯链 + 统计 + 日志。"""
+    service.ensure_readable(session, project_id=project_id, actor=user)
+    return RunReportOut(
+        **service.get_run_report(session, project_id=project_id, run_id=run_id)
     )

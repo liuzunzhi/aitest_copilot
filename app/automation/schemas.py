@@ -1,4 +1,4 @@
-"""自动化执行的请求 / 响应模型（09-automation T112）。
+"""自动化执行的请求 / 响应模型（09-automation T112 / T114）。
 
 列表复用 `app.baselines.schemas.Page`，与 04 / 07 / 08 同一形态。
 
@@ -20,9 +20,14 @@ __all__ = [
     "AssetsCreate",
     "AssetsCreateOut",
     "Page",
+    "RunCreate",
+    "RunItemOut",
+    "RunOut",
+    "RunReportOut",
     "ScanRequest",
     "ScanOut",
     "ScannedAssetOut",
+    "TraceabilityOut",
 ]
 
 
@@ -153,3 +158,79 @@ class AssetPatch(BaseModel):
     linked_case_id: int | None = None
     status: str | None = None
     detected_cases: int | None = None
+
+
+# --------------------------------------------------------------- 执行（T114）
+
+
+class RunCreate(BaseModel):
+    """触发执行。
+
+    `asset_ids` 为空 → 服务层 400 `AUTOMATION_RUN_INPUT_EMPTY`。
+    **必填且不给默认值**——pydantic 的 `Field(...)` 让缺字段直接 422，
+    不给「忘了传就当空数组」的机会（空数组同样是 400，错误码更明确）。
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    asset_ids: list[int] = Field(...)
+
+
+class TraceabilityOut(BaseModel):
+    """一条明细的追溯链。
+
+    字段全部来自 08 已落库的用例快照（`test_point_name` / `target_name` /
+    `chapter_title`）——**读快照，不联表**，也不受上游删除影响。
+
+    `source_case_deleted` = 关联的用例已被 08 物理删除 →
+    此时 `case_title` 仍显示**执行时**的快照值。
+    """
+
+    linked_case_id: int | None = None
+    case_title: str | None = None
+    test_point_name: str | None = None
+    target_name: str | None = None
+    chapter_title: str | None = None
+    source_case_deleted: bool = False
+
+
+class RunItemOut(BaseModel):
+    """一条执行明细（粒度是**资产**，不是 pytest 的测试函数）。"""
+
+    asset_id: int
+    file_path: str | None = None
+    framework: str | None = None
+    result: str
+    duration_ms: int | None = None
+    error: str | None = None
+    traceability: TraceabilityOut
+
+
+class RunOut(BaseModel):
+    """一次执行记录。
+
+    `status` 表达「系统是否正常完成执行」：
+    `succeeded` = pytest 进程正常跑完（**哪怕退出码是 1**——
+    那只是「有测试失败」，是业务结果，不是系统错误）；
+    `failed` = 跑不起来（超时 / 启动失败），此时 `error` 非空。
+    """
+
+    id: int
+    project_id: int
+    framework: str
+    status: str
+    exit_code: int | None = None
+    stats: dict | None = None
+    error: str | None = None
+    started_at: datetime | None = None
+    finished_at: datetime | None = None
+    created_by: int
+    created_at: datetime
+    items: list[RunItemOut] = Field(default_factory=list)
+
+
+class RunReportOut(RunOut):
+    """单次报告：比列表多一份 `log`（执行输出）。"""
+
+    log: str | None = None
+    duration_ms: int | None = None

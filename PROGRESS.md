@@ -19,11 +19,11 @@
 - [x] 06-real-llm (真实大模型接入与提示词模板管理) —— **T84-PDF ~ T87 全部完成，L2 真实联调已跑通**
 - [x] 07-test-points (测试点分析) —— **T99 ~ T104 全部完成**（建表 + 迁移 `0022`；上下文组装 + 引擎；权限搬迁 + 服务层 + 11 个接口；引用保护 + 待复核标记；前端「测试点」Tab；收尾与文档回填）
 - [x] 08-test-case-analysis (测试用例分析) —— **T105 ~ T110 全部完成**（建表 + 迁移 `0023`；上下文组装 + 引擎；服务层 + 13 个接口；评审 / 手工 CRUD / 步骤覆盖 / 待复核派生 / Excel 导出；前端「测试用例」Tab；收尾与文档回填）
-- [ ] 09-automation (自动化执行与测试报告) —— **进行中**（规格已定稿；T110.5 工作台待办计数、T111 数据层与枚举修正、T112 扫描器与入库服务、T113 执行器已完成）
+- [ ] 09-automation (自动化执行与测试报告) —— **进行中**（规格已定稿；T110.5 工作台待办计数、T111 数据层与枚举修正、T112 扫描器与入库服务、T113 执行器、T114 执行编排与报告已完成）
 
 ## 3. 当前冲刺任务（⚠️ 务必先做这个）
 
-**当前目标**：09 自动化执行与测试报告 —— **T110.5 / T111 / T112 / T113 已完成**，下一步 **T114**（服务层 + 执行接口 + 报告）。
+**当前目标**：09 自动化执行与测试报告 —— **T110.5 / T111 / T112 / T113 / T114 已完成**，下一步 **T115**（前端「自动化执行」Tab + e2e + 验证约定 §5.11）。
 
 **任务顺序**：`T110.5 → T111 → T112 → T113 → T114 → T115 → T116`
 规格与方案见 `specs/09-automation/`（AC-181 ~ AC-196）。
@@ -278,7 +278,7 @@
 
 | 项 | 值 |
 |---|---|
-| 后端全量 pytest | **1227 passed**（串行；09 期 T113 收尾，基线 1202 + 新增 25） |
+| 后端全量 pytest | **1259 passed**（串行；09 期 T114 收尾，基线 1227 + 新增 32） |
 | e2e | **51 passed**（增量分析第一期 2 + 第二期 3 + 第三期 2 + PDF 1 + 系统设置 2 + 来源筛选 1 + 测试点 2 + 测试用例 4 + Tab 核对 2 + **待办计数 3**），一条命令 `.\.venv\Scripts\python.exe scripts\run_e2e.py`（8001/5174 + `aitest_copilot_e2e`） |
 | 前端构建 | `npm run build`（`web/` 目录，端口 5173，代理到 8000） |
 | 开跑前自检 | `.\.venv\Scripts\python.exe scripts\dev_check.py`（跑 e2e 时加 `--expect-db e2e`） |
@@ -308,6 +308,10 @@
 4. **Windows 上不能用 `os.kill(pid, 0)` 查进程是否存活**——它会真的去终止进程。
    正确做法：`ctypes` 调 `OpenProcess` + `GetExitCodeProcess`，
    返回码 `259`（`STILL_ACTIVE`）才算活着。
+5. **全量 pytest 不能用 `-o addopts=`**（09 期 T114 踩到）：
+   平台 `addopts` 里含 `-m 'not e2e'`，覆盖掉它会把 51 条 e2e 一起收进来
+   → 它们要连 8001 端口 → 51 个 error。
+   **要看用例数用 `-m "not e2e"`**，别动 `addopts`。
 
 ## 5. 04 收尾完成情况（2026-11-17）
 
@@ -850,6 +854,54 @@ MySQL 方言不会把 SQLAlchemy 的 `server_onupdate` 渲染成 `ON UPDATE`，
 → 进程已不存在（Windows 走 `OpenProcess` + `GetExitCodeProcess`，
 **不能用 `os.kill(pid, 0)`**——那在 Windows 上会真的去终止进程）；
 ② 样例睡醒后才写 `finished.marker`，文件始终不存在 → 没跑到自然结束。
+
+## 5.14 09 期 · T114 执行编排与报告（2026-11-22）
+
+**做完了什么**：把执行器接进服务层与接口层——**执行 → 记录 → 报告**闭环。
+
+- [x] `app/automation/service.py` 追加：
+      `execute_run`（校验 → 建 run → **逐资产执行 + 逐资产 commit** → 汇总 → 审计）、
+      `list_runs`、`get_run_report`。
+- [x] `app/automation/router.py` 追加：`POST /runs`、`GET /runs`、`GET /runs/{id}`。
+- [x] `app/automation/schemas.py` 追加：`RunCreate` / `RunOut` / `RunReportOut` /
+      `RunItemOut` / `TraceabilityOut`。
+- [x] 审计 `automation.run.execute`（含 `run_id` / `asset_ids` / `stats` / `status`）；
+      `tests/common/test_audit_coverage.py` 的 `SCENARIOS` 补 1 条。
+- [x] `tests/automation/test_run_flow.py`（20 条）+ `test_permissions.py`（11 条）。
+
+**验证结果**：后端全量 **1259 passed**（1227 + 32，串行，exit 0，只增不减）；
+`tests\automation` **141 passed**（110 + 31）；上游定向回归 **685 passed**，0 failed；
+**08 的 `tests\test_cases` 141 passed**——删用例接口仍返回 **204**，没被外键卡住；
+`npm run build` 通过；零真实 socket。
+
+**本期最关键的一个设计决定**：**状态语义靠 `error` 区分，不靠退出码**。
+`status='succeeded'` = pytest 进程**正常跑完**（**哪怕退出码是 1**——
+那只是「有测试失败」，是业务结果，不是系统错误）；
+`status='failed'` = 跑不起来（超时 / 启动失败），此时 `error` 非空。
+实测：1 通过 + 1 失败 → `exit_code=1` / `status='succeeded'` / `error=None`；
+超时 → `status='failed'` / `error` 含「超时」。
+
+**第二个决定**：**追溯链的 N+1 有专门的回归断言**。
+`get_run_report` 用一次 `IN` 批量取关联用例，循环里只查内存。
+断言不靠「代码里看着像一次 IN」，而是用 SQLAlchemy 事件钩子**数 SELECT 条数**——
+3 条明细时查用例表**必须恰好 1 次**（N+1 的话会是 3 次）。
+
+**第三个决定**：**明细快照 `case_title`**。08 的删用例是**物理删除**，
+所以执行时把用例名快照进 `automation_run_items.case_title`——
+用例删后报告仍可读（`source_case_deleted=true`），
+且 **08 的删用例接口仍返回 204**（`linked_case_id` 不建外键）。
+
+**踩坑：同名私有函数覆盖了 T112 的 `_cases_by_id`**。
+T112 的 `_cases_by_id(session, assets)` 收**资产列表**，
+T114 我先写了个同名的 `_cases_by_id(session, case_ids)` 收**用例 id 集合**——
+Python 里后定义的那个**静默覆盖**前面的，T112 的资产列表接口当场炸成
+`ArgumentError: Object <AutomationAsset> is not legal as a SQL literal value`。
+修法：T114 改用 `_cases_by_ids`（复数），两个函数各司其职。
+**同名私有函数是最容易踩的隐形雷**——它不报错，只是把别人的行为换掉。
+
+**踩坑：全量 pytest 不能用 `-o addopts=`**。平台的 `addopts` 里含
+`-m 'not e2e'`，覆盖掉它就会把 51 条 e2e 一起收进来 → 它们要连 8001 端口
+→ 51 个 error。**要看用例数用 `-m "not e2e"`**。
 
 ## 6. 待办（不属当前冲刺，等用户点头再做）
 

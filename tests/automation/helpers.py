@@ -16,6 +16,7 @@ PASSWORD_HASH = hash_password(PASSWORD)
 BASE = "/api/projects/{project_id}/automation"
 ASSETS = BASE + "/assets"
 SCAN = BASE + "/scan"
+RUNS = BASE + "/runs"
 
 
 def make_user(db: Session, *, global_role: str = "user") -> User:
@@ -108,16 +109,43 @@ def pytest_file(cases: int = 2) -> str:
     return body
 
 
+def mixed_pytest_file() -> str:
+    """1 个通过 + 1 个失败 → 退出码 1。"""
+    return (
+        "def test_ok():\n"
+        "    assert True\n"
+        "\n"
+        "\n"
+        "def test_bad():\n"
+        "    assert 1 == 2\n"
+    )
+
+
+def skipped_pytest_file() -> str:
+    """全部跳过。"""
+    return (
+        "import pytest\n"
+        "\n"
+        "\n"
+        "@pytest.mark.skip(reason='demo')\n"
+        "def test_skipped():\n"
+        "    assert True\n"
+    )
+
+
 __all__ = [
     "ASSETS",
     "BASE",
     "PASSWORD",
+    "RUNS",
     "SCAN",
     "add_member",
     "login",
     "make_case",
     "make_project",
     "make_user",
+    "mixed_pytest_file",
     "pytest_file",
     "seed_root",
+    "skipped_pytest_file",
 ]

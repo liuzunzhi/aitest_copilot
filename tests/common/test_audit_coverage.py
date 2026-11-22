@@ -1070,6 +1070,52 @@ def _prompt_template_update(client: TestClient, db: Session, monkeypatch) -> Non
     assert response.status_code == 200, response.text
 
 
+def _automation_run_execute(client: TestClient, db: Session, monkeypatch) -> None:
+    """09 期 T114：触发一次自动化执行（走真实接口，真跑一次 pytest）。"""
+    import sys
+    import tempfile
+    from pathlib import Path
+
+    from app.automation.schemas import AssetCreateItem, AssetsCreate
+    from app.automation.service import confirm_assets
+
+    root = Path(tempfile.mkdtemp(prefix="audit-auto-"))
+    (root / "test_audit.py").write_text(
+        "def test_ok():\n    assert True\n", encoding="utf-8"
+    )
+    monkeypatch.setenv("AUTOMATION_ROOT", str(root))
+    get_settings.cache_clear()
+
+    user = _user(db)
+    project = _project(db)
+    _join(db, project, user, "project_admin")
+    headers = _headers(client, user)
+
+    created = confirm_assets(
+        db,
+        project_id=project.id,
+        actor=user,
+        payload=AssetsCreate(
+            assets=[
+                AssetCreateItem(
+                    file_path="test_audit.py",
+                    name="test_audit.py",
+                    framework="pytest",
+                )
+            ]
+        ),
+    )
+    asset_id = created["items"][0]["asset_id"]
+
+    response = client.post(
+        f"/api/projects/{project.id}/automation/runs",
+        json={"asset_ids": [asset_id]},
+        headers=headers,
+    )
+    assert response.status_code == 200, response.text
+    assert sys.executable  # 执行器用的就是当前解释器
+
+
 SCENARIOS = {
     "register.submit": _register,
     "login.success": _login_success,
@@ -1124,6 +1170,7 @@ SCENARIOS = {
     "llm.provider.update": _llm_provider_update,
     "prompt_template.update": _prompt_template_update,
     "test_point.analysis.create": _test_point_analysis_create,
+    "automation.run.execute": _automation_run_execute,
 }
 
 

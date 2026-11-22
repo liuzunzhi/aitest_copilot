@@ -343,7 +343,7 @@
 | T111 | `tests\automation` 全绿 | **1117 passed**，exit 0 | `npm run build` 通过 | 不涉及 | 两库 `0024 → 0023 → 0024` 干净，head 均 `0024`；降级后 `clear_reason` 只剩旧值 | 不涉及 | 通过 |
 | T112 | `tests\automation` **85 passed**（AC-182/183/184/189/190 全绿） | **1202 passed**（1117 + 85），exit 0，只增不减 | `npm run build` 通过 | 不涉及 | 不涉及 | 不涉及（纯接口） | 通过 |
 | T113 | `tests\automation` **110 passed**（85 + 新增 25）；`pytest tests\automation -k "ac_185 or ac_186 or ac_188" -q` **20 passed**（AC-185 4 + AC-186 10 + AC-188 6） | **1227 passed**（1202 + 25），exit 0，只增不减 | `npm run build` 通过 | 不涉及 | 不涉及 | 不涉及（纯执行层） | 通过 |
-| T114 | 待回填 | 待回填 | 不涉及 | 不涉及 | 不涉及 | 不涉及 | 待回填 |
+| T114 | `tests\automation` **141 passed**（110 + 新增 31：`test_run_flow.py` 20 + `test_permissions.py` 11）；`pytest tests\automation -k "ac_187 or ac_188 or ac_189 or ac_190 or ac_191 or ac_192" -q` **47 passed** | **1259 passed**（1227 + 32），exit 0，只增不减 | `npm run build` 通过 | 不涉及 | 不涉及 | 不涉及（纯接口） | 通过 |
 | T115 | 待回填 | 待回填 | 待回填 | 待回填 | 不涉及 | `.screenshots/T115/` | 待回填 |
 | T116 | 09 定向 + 04~08 定向 | 待回填 | 待回填 | 待回填 | 两库 `0024 → 0023 → 0024` 干净，head 均 `0024` | `.screenshots/T116/` | 待回填 |
 
@@ -417,6 +417,61 @@
   （1 通过 1 失败）→ `exit_code=1`、`error=None`、输出完整读出
   （440 字符，含 traceback 与统计行）、耗时 2.23s 不挂起、
   统计解析 `{total:2, passed:1, failed:1}`、聚合结果 `failed`。
+
+**T114 补充记录（执行编排与报告）**
+
+- **状态语义靠 `error` 区分，不靠退出码**（spec §4.2）：
+  `status='succeeded'` = pytest 进程**正常跑完**（**哪怕退出码是 1**——
+  那只是「有测试失败」，是业务结果）；`status='failed'` = 跑不起来
+  （超时 / 启动失败），此时 `error` 非空。
+  实测：1 通过 + 1 失败 → `exit_code=1` / `status='succeeded'` / `error=None`；
+  超时 → `status='failed'` / `error` 含「超时」。
+
+- **`stats` 按资产维度**（total/passed/failed/skipped 都按资产算），
+  **与明细行数始终一致**——函数级计数只进 `log`。
+  口径混在一张统计里用户会困惑（plan §6.3）。
+
+- **追溯链一次 `IN` 批量取**（防 N+1）：`get_run_report` 用
+  `_cases_by_ids()` 一次查出所有关联用例，建 `{case_id: 用例}` 映射，
+  **循环里只查内存**。
+  **这条有专门的回归断言**：`test_ac_191_report_query_uses_single_batch_load`
+  用 SQLAlchemy 事件钩子数 SELECT 条数——3 条明细时查用例表**必须恰好 1 次**
+  （N+1 的话会是 3 次）。比「代码里看着像一次 IN」可靠得多。
+
+- **明细快照 `case_title`**：08 的删用例是**物理删除**，
+  所以执行时把用例名**快照**进 `automation_run_items.case_title`。
+  用例删后报告仍可读，`source_case_deleted=true`。
+
+- **执行器自己再校验路径**：越界 / 绝对路径 → `AutomationScanPathInvalid`，
+  **不执行**（执行器是最后一道闸）。
+
+- **逐资产 commit**：某个资产超时/失败不影响后续资产继续跑
+  （与 05 的「逐章节落库」同一思路）。
+
+- **校验顺序沿用全平台口径**：项目 404 → 归档 409 → 角色 403 → 业务 400。
+  归档**先于**角色判——普通成员在归档项目里也看到 409 而不是 403
+  （`test_ac_190_archive_check_precedes_role_check`）。
+
+- **踩坑：同名私有函数覆盖了 T112 的 `_cases_by_id`**。
+  T112 的 `_cases_by_id(session, assets)` 收的是**资产列表**，
+  T114 我先写了个同名的 `_cases_by_id(session, case_ids)` 收**用例 id 集合**——
+  Python 里后定义的那个**静默覆盖**前面的，T112 的资产列表接口当场炸成
+  `ArgumentError: Object <AutomationAsset> is not legal as a SQL literal value`。
+  **修法**：T114 改用 `_cases_by_ids`（复数），两个函数各司其职。
+  这个坑的教训：**同名私有函数是最容易踩的隐形雷**——
+  它不报错，只是把别人的行为换掉。
+
+- **踩坑：全量 pytest 不能用 `-o addopts=`**。
+  平台的 `addopts` 里含 `-m 'not e2e'`，覆盖掉它就会把 51 条 e2e 一起收进来，
+  它们要连 8001 端口 → 51 个 error。**要看用例数时用 `-m "not e2e"`**，
+  别动 `addopts`。
+
+- **前台等价核对**（无界面）：`/docs` 走一遍「扫描 → 入库 → 执行 → 报告」→
+  `exit_code=1` / `status='succeeded'` / `error=None` /
+  `stats={total:1, failed:1, passed:0, skipped:0}` /
+  明细含 `result='failed'` + `error='1 failed, 1 passed in 0.37s'` +
+  完整 `traceability` 六字段 / `log` 449 字符 / `duration_ms=1825` /
+  执行记录列表 `total=1`。
 
 **基线口径（不可下调）**
 
