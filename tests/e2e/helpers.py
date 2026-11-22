@@ -48,8 +48,18 @@ def pick_select_option(page: Page, label: str, option: str) -> None:
     多选 Select 选完不会自己收起，dropdown 浮在 Modal 之上会挡住按钮；
     但单选的 dropdown 选完就关了，这时再按 Esc 会把整个 Modal 也关掉，
     所以只在 dropdown 还开着的时候才收。
+
+    **先等 Select 可用再点**：有些 Select 的选项是**异步加载**的
+    （比如「模板」下拉要等 `listAvailablePromptTemplates` 回来才不 disabled）。
+    Select 处于 disabled 时点击是**静默无效**的——dropdown 永远不开，
+    后面等选项就会超时。这是个**已存在的竞态**，机器一慢就暴露
+    （T115 加了会真起 pytest 子进程的 e2e 用例后跑过一次）。
+    所以这里先等 `.ant-select-disabled` 消失再点。
     """
-    page.locator(".ant-form-item", has_text=label).locator(".ant-select").first.click()
+    select = page.locator(".ant-form-item", has_text=label).locator(".ant-select").first
+    # 等选项异步加载完（disabled 期间点击无效）
+    expect(select).not_to_have_class(re.compile(r"ant-select-disabled"))
+    select.click()
     page.locator(
         ".ant-select-dropdown:visible .ant-select-item-option", has_text=option
     ).first.click()

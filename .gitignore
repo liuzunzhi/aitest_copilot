@@ -23,6 +23,10 @@ test-results/
 # 上传的文档原文（03-documents）
 var/uploads/
 
+# 自动化资产根目录（09-automation）——用户放自己的测试脚本的地方，
+# 不该进版本库（e2e 也会往这里写样例文件）
+var/automation/
+
 # 脚本起的服务日志（scripts/run_e2e.py）
 var/*.log
 

@@ -9,6 +9,7 @@
 
 import os
 import json
+import shutil
 import uuid
 from pathlib import Path
 
@@ -24,7 +25,36 @@ ADMIN_USERNAME = os.getenv("E2E_ADMIN_USERNAME", "admin")
 ADMIN_PASSWORD = os.getenv("E2E_ADMIN_PASSWORD", "Admin12345")
 USER_PASSWORD = "E2ePassw0rd1"
 
+# 自动化资产的根目录（09 期 T115）。
+#
+# **e2e 后端的 cwd 是仓库根**（`scripts/run_e2e.py` 用 `cwd=ROOT` 起 uvicorn），
+# 而后端把 `AUTOMATION_ROOT`（默认 `var/automation`）按 cwd 解析成绝对路径——
+# 所以扫描扫的就是仓库里的这个目录。不往这儿写样例文件，扫描永远返回空清单。
+AUTOMATION_ROOT = Path(__file__).resolve().parents[2] / "var" / "automation"
+
 _engine: Engine | None = None
+
+
+def write_automation_samples(directory: str, files: dict[str, str]) -> Path:
+    """往自动化根目录写样例资产文件，返回该子目录的绝对路径。
+
+    `files` 每项：`{相对文件名: 文件内容}`。
+
+    **样例文件不该留在版本库里**——`var/automation/` 已加进 `.gitignore`，
+    用例收尾时再把子目录删掉（见 `remove_automation_samples`）。
+    """
+    target = AUTOMATION_ROOT / directory
+    target.mkdir(parents=True, exist_ok=True)
+    for relative, content in files.items():
+        path = target / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content, encoding="utf-8")
+    return target
+
+
+def remove_automation_samples(directory: str) -> None:
+    """删掉样例子目录（含 pytest 跑出来的 `__pycache__`）。"""
+    shutil.rmtree(AUTOMATION_ROOT / directory, ignore_errors=True)
 
 
 def _e2e_dsn() -> str:

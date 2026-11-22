@@ -141,6 +141,15 @@ const CODE_TEXT: Record<string, string> = {
   TEST_CASE_STEP_INVALID: '步骤不合法：至少一步、操作不能为空、不超过 100 步',
   TEST_CASE_REVIEW_STATE_INVALID: '该用例已评审过，不能重复评审',
   TEST_CASE_ANALYSIS_HAS_APPROVED: '这次生成含评审通过的用例，不允许连带删除',
+  /* 自动化执行（09） */
+  AUTOMATION_SCAN_PATH_INVALID: '扫描目录不存在或超出允许范围',
+  AUTOMATION_SCAN_TOO_LARGE: '扫描文件数超过上限，请缩小目录范围',
+  AUTOMATION_ASSET_NOT_FOUND: '自动化资产不存在',
+  AUTOMATION_ASSET_INVALID: '自动化资产请求不合法',
+  AUTOMATION_FRAMEWORK_NOT_EXECUTABLE: 'Playwright 执行能力待后续期，本期只执行 Pytest',
+  AUTOMATION_RUN_NOT_FOUND: '执行记录不存在',
+  AUTOMATION_RUN_INPUT_EMPTY: '请选择要执行的自动化资产',
+  AUTOMATION_EXEC_FAILED: '执行器启动失败，请检查运行环境',
 }
 
 /**

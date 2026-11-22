@@ -1,12 +1,13 @@
-"""项目详情页 9 个 Tab 逐个点开（T110 · AC-180）。
+"""项目详情页 10 个 Tab 逐个点开（T110 · AC-180 / T115 · AC-194）。
 
 **为什么要有这条**：08 期给项目详情页加了第 9 个 Tab「测试用例」，
-Tab 从 8 个变 9 个——任何一个 Tab 的渲染报错都会让整页白屏。
-这条用例逐个点开 9 个 Tab，每个都要断言**内容区真的渲染出来了**
+09 期 T115 又加了第 10 个 Tab「自动化执行」——
+Tab 越多，任何一个 Tab 的渲染报错都会让整页白屏。
+这条用例逐个点开 10 个 Tab，每个都要断言**内容区真的渲染出来了**
 （不是「没报错」），顺带确认 Tab 的顺序没被打乱。
 
-**顺带守一条红线**：08 期前端只碰了「测试用例」Tab，
-其余 8 个 Tab 的内容必须与 07 期一致——这里逐个断言关键锚点还在。
+**顺带守一条红线**：本期前端只碰了「自动化执行」Tab，
+其余 9 个 Tab 的内容必须与 08 期一致——这里逐个断言关键锚点还在。
 """
 
 import pytest
@@ -16,7 +17,7 @@ from tests.e2e.helpers import unique_name as _name
 
 pytestmark = pytest.mark.e2e
 
-# 9 个 Tab 的名字与顺序（概览 / 成员 / 文档 / 版本快照 / 基线管理 / 申请 / 增量分析 / 测试点 / 测试用例）
+# 10 个 Tab 的名字与顺序（概览 / 成员 / 文档 / 版本快照 / 基线管理 / 申请 / 增量分析 / 测试点 / 测试用例 / 自动化执行）
 TAB_NAMES = [
     "概览",
     "成员",
@@ -27,6 +28,7 @@ TAB_NAMES = [
     "增量分析",
     "测试点",
     "测试用例",
+    "自动化执行",
 ]
 
 # 每个 Tab 内容区的锚点（`data-testid`）——用来证明「真的渲染了」。
@@ -40,12 +42,13 @@ TAB_ANCHORS = {
     "增量分析": "incremental-analysis-table",
     "测试点": "test-point-analysis-table",
     "测试用例": "test-case-analysis-table",
+    "自动化执行": "automation-asset-table",
 }
 
 
 @pytest.mark.task("T110")
 def test_ac_180_all_nine_tabs_render(admin_page: Page, api, shot) -> None:
-    """9 个 Tab 逐个点开，每个都断言内容区渲染出来了。"""
+    """10 个 Tab 逐个点开，每个都断言内容区渲染出来了。"""
     project = api.create_project(_name("tabs"))
     admin_page.reload()
     admin_page.get_by_role("row").filter(has_text=project["name"]).get_by_role(
@@ -53,7 +56,7 @@ def test_ac_180_all_nine_tabs_render(admin_page: Page, api, shot) -> None:
     ).click()
 
     tabs = admin_page.get_by_role("tab")
-    # 顺序不能被打乱——「测试用例」必须在「测试点」之后
+    # 顺序不能被打乱——「自动化执行」必须在「测试用例」之后
     expect(tabs).to_have_count(len(TAB_NAMES))
     for index, name in enumerate(TAB_NAMES):
         expect(tabs.nth(index)).to_contain_text(name)

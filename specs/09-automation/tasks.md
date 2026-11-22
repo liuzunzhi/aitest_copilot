@@ -260,13 +260,13 @@
 - `ProjectDetailPage.tsx` 加第 **10** 个 Tab（插在「测试用例」之后）
 - `tests/e2e/test_automation_ui.py`（`test_ac_194_*_ui`，≥ 3 条）、
   `tests/e2e/support.py` 清理列表按外键倒序补三表
-- `specs/验证约定.md`：新增 §5.11（09 前台核对点），§1 现状补「10 个 Tab」
+- `specs/验证约定.md`：新增 §5.12（09 前台核对点；§5.11 已被 T110.5 占用），§1 现状补「10 个 Tab」
 
 **验证**
 
 - `pytest tests\automation -q` 全绿
 - `cd web; npm run build` 通过
-- `python scripts\run_e2e.py` → **≥ 51 passed**（原 48 + 新增 ≥ 3）
+- `python scripts\run_e2e.py` → **≥ 56 passed**（原 51 + 新增 ≥ 3）
 
 **前台核对点（截图 `.screenshots/T115/`，文件名含 AC 编号）**
 
@@ -344,7 +344,7 @@
 | T112 | `tests\automation` **85 passed**（AC-182/183/184/189/190 全绿） | **1202 passed**（1117 + 85），exit 0，只增不减 | `npm run build` 通过 | 不涉及 | 不涉及 | 不涉及（纯接口） | 通过 |
 | T113 | `tests\automation` **110 passed**（85 + 新增 25）；`pytest tests\automation -k "ac_185 or ac_186 or ac_188" -q` **20 passed**（AC-185 4 + AC-186 10 + AC-188 6） | **1227 passed**（1202 + 25），exit 0，只增不减 | `npm run build` 通过 | 不涉及 | 不涉及 | 不涉及（纯执行层） | 通过 |
 | T114 | `tests\automation` **141 passed**（110 + 新增 31：`test_run_flow.py` 20 + `test_permissions.py` 11）；`pytest tests\automation -k "ac_187 or ac_188 or ac_189 or ac_190 or ac_191 or ac_192" -q` **47 passed** | **1259 passed**（1227 + 32），exit 0，只增不减 | `npm run build` 通过 | 不涉及 | 不涉及 | 不涉及（纯接口） | 通过 |
-| T115 | 待回填 | 待回填 | 待回填 | 待回填 | 不涉及 | `.screenshots/T115/` | 待回填 |
+| T115 | `tests\automation` **141 passed**（未动任何既有期望值） | **1259 passed**（1259 + 0，串行，exit 0，零回归） | `npm run build` 通过 | e2e 全量 **56 passed**（51 + 新增 5）；`tests/e2e/test_automation_ui.py` **5 passed** | 不涉及 | `.screenshots/T115/` **9 张**，文件名含 AC-194 | 通过 |
 | T116 | 09 定向 + 04~08 定向 | 待回填 | 待回填 | 待回填 | 两库 `0024 → 0023 → 0024` 干净，head 均 `0024` | `.screenshots/T116/` | 待回填 |
 
 **T110.5 补充记录**
@@ -473,10 +473,75 @@
   完整 `traceability` 六字段 / `log` 449 字符 / `duration_ms=1825` /
   执行记录列表 `total=1`。
 
+**T115 补充记录（前端「自动化执行」Tab）**
+
+- **状态文案分两套，绝不混用**（本期最关键的一条）：
+  执行记录的状态说的是**执行进程**（`执行完成` / `执行失败`），
+  明细的结果说的是**用例**（`通过` / `失败` / `跳过`）。
+  `status='succeeded'` 且 `exit_code=1` 是**正常情况**——
+  pytest 进程跑完了，只是有测试没过，那是**业务结果**不是系统错误。
+  文案取「执行完成」而不是「成功」，就是为了跟用例的「通过」区分开。
+  前台样例文件刻意是「1 通过 + 1 失败」，正是为了把这条口径钉死。
+
+- **写入口只有项目管理员才渲染**：扫描 / 入库 / 改关联 / 触发执行四个按钮，
+  成员与访客**一个都看不到**（不是「渲染了点了报 403」——前端就不给入口），
+  只显示一句「只有项目管理员可以扫描、入库与执行，你可以查看资产与报告」。
+
+- **Playwright 资产的执行按钮置灰 + tooltip**「Playwright 执行能力待后续期」。
+  实现细节：**disabled 的按钮不派发鼠标事件**，
+  Tooltip 必须挂在外层 `<span>` 上才会弹（否则 tooltip 永远不出现）。
+
+- **组件拆分**（验证约定 §4.3 的 400 行阈值）：
+  `ProjectAutomationTab.tsx`（主文件，**只留状态与事件编排**，260 行）
+  + `automationColumns.tsx`（两张表的列定义，纯渲染，202 行）
+  + `AutomationScanModal.tsx`（扫描入库，219 行）
+  + `AutomationLinkModal.tsx`（关联用例，92 行）
+  + `AutomationReportDrawer.tsx`（单次报告，213 行）
+  + `automationMeta.tsx`（展示常量，与 `testCaseMeta.tsx` 同构，110 行）。
+  **第一版主文件是 416 行（超阈值）**，把列定义拆出去才压下来——
+  与 04 期 `ProjectBaselineTree` → `baselineTreeNodes` 同一思路（拆纯渲染，状态留在主文件）。
+
+- **入库时前端传的置信度只是「对照值」**：服务端入库时会**重扫重算**，
+  前端不决定置信度（否则「随便写个 0.99」就能进库）。
+
+- **低置信度（< 0.7）默认不勾选**并标「低置信度，请人工确认」；
+  **已入库的项默认不勾选**（后端按唯一索引会跳过，勾了也是白跑一趟）。
+
+- **踩坑：`e2e 后端的 cwd 是仓库根，所以 `AUTOMATION_ROOT` 指向的就是仓库里的
+  `var/automation`**。不往那儿写样例 pytest 文件，扫描永远返回空清单。
+  样例由 `support.write_automation_samples` 写、`remove_automation_samples` 删；
+  **`var/automation/` 已进 `.gitignore`**（用户放自己测试脚本的地方，不该进版本库）。
+
+- **踩坑（暴露了一个既有竞态）：`helpers.pick_select_option` 在 Select 处于
+  `disabled` 时点击是**静默无效的**。「模板」下拉的选项异步加载，
+  机器一慢就会在加载完成前被点到 → dropdown 永远不开 → 等选项超时。
+  T115 加了会**真起 pytest 子进程**的 e2e 用例后机器变慢，
+  这个**已存在**的竞态被顶了出来（`test_ac_157_generate_review_and_manual_crud_ui` 失败）。
+  **用 `git stash` 对照验证过**：改动前全量 e2e 51 passed，改动后 55 passed + 1 failed。
+  修法：点之前先 `expect(select).not_to_have_class(re.compile(r"ant-select-disabled"))`。
+
+- **`data-testid` 命名**（沿用「区域-动作-目标」，全部带 `automation-` 前缀）：
+  `automation-tab` / `automation-scan-btn` / `automation-scan-modal` /
+  `automation-scan-table` / `automation-scan-confirm-btn` /
+  `automation-asset-table` / `automation-asset-row-{id}` /
+  `automation-asset-link-select` / `automation-run-btn` /
+  `automation-run-table` / `automation-report-drawer` /
+  `automation-report-item-table`。
+  行锚点用 `onRow` 返回 `data-testid`——antd 的 `rowClassName` 只能给 class，
+  而 e2e 要的是 testid。
+
+- **antd 的 `data-testid` 落点有两处要注意**：
+  `Table` 的 `data-testid` 落在**表格容器**上（`rc-table` 用 `pickAttrs` 把
+  `data-*` 摘给 `<table>` 元素）；`rowSelection` 的勾选框要靠
+  `getCheckboxProps` 传 `data-testid`，它会落到真正的 `<input>` 上。
+
+- **验证约定的编号**：`specs/验证约定.md` 的 **§5.11 已被 T110.5 占用**
+  （09 期工作台待办计数），所以 09 期的**自动化执行**前台核对点顺延为 **§5.12**。
+
 **基线口径（不可下调）**
 
-- 后端全量：**≥ 1107 passed**，串行，exit 0，数量只增不减
-- e2e 全量：**≥ 48 passed**（T115 起 ≥ 51）
+- 后端全量：**≥ 1259 passed**，串行，exit 0，数量只增不减
+- e2e 全量：**≥ 56 passed**（T115 起 ≥ 56）
 - 迁移 head：两库均为 `0024`；`0024 → 0023 → 0024` 干净
 - 04 / 05 / 06 / 07 / 08 定向回归：**0 failed**
 - 既有 1107 条测试：**零期望值改动**

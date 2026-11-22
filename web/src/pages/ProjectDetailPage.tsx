@@ -33,6 +33,7 @@ import { useAuth } from '../auth/AuthProvider'
 import ProjectBaselineSnapshots from './ProjectBaselineSnapshots'
 import ProjectBaselineTree from './ProjectBaselineTree'
 import ProjectBaselinesTab from './ProjectBaselinesTab'
+import ProjectAutomationTab from './ProjectAutomationTab'
 import ProjectDocumentsTab from './ProjectDocumentsTab'
 import ProjectIncrementalTab from './ProjectIncrementalTab'
 import ProjectTestCasesTab from './ProjectTestCasesTab'
@@ -357,6 +358,11 @@ export default function ProjectDetailPage() {
             key: 'test-cases',
             label: '测试用例',
             children: <ProjectTestCasesTab projectId={projectId} canWrite={canManage} />,
+          },
+          {
+            key: 'automation',
+            label: <span data-testid="automation-tab">自动化执行</span>,
+            children: <ProjectAutomationTab projectId={projectId} canManage={canManage} />,
           },
         ]}
       />

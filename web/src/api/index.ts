@@ -2014,3 +2014,232 @@ export async function exportTestCases(
     fileName: encoded ? decodeURIComponent(encoded) : (plain ?? '测试用例.xlsx'),
   }
 }
+
+/* ------------------------------------------------------ 自动化执行（09） */
+
+export type AutomationFramework = 'pytest' | 'playwright'
+export type AutomationAssetStatus = 'active' | 'archived'
+export type AutomationScanStatus = 'new' | 'existing'
+export type AutomationRunStatus = 'running' | 'succeeded' | 'failed'
+export type AutomationResult = 'passed' | 'failed' | 'skipped'
+
+/** 扫描清单里的一项（还没入库）。 */
+export interface ScannedAsset {
+  file_path: string
+  name: string
+  framework: AutomationFramework
+  parse_confidence: number
+  detected_cases: number
+  status: AutomationScanStatus
+  existing_asset_id: number | null
+  low_confidence: boolean
+}
+
+/** 扫描结果。`root` 只是**相对展示名**（后端绝不返回绝对路径）。 */
+export interface ScanResult {
+  root: string
+  directory: string
+  scanned_files: number
+  matched: number
+  skipped: number
+  assets: ScannedAsset[]
+}
+
+/** 一个自动化资产。 */
+export interface AutomationAsset {
+  id: number
+  project_id: number
+  name: string
+  file_path: string
+  framework: AutomationFramework
+  source: string
+  parse_confidence: number | null
+  detected_cases: number
+  linked_case_id: number | null
+  /** 关联用例的**当前**名称。 */
+  linked_case_title: string | null
+  /** 关联的用例已被 08 物理删除。 */
+  linked_case_deleted: boolean
+  status: AutomationAssetStatus
+  created_by: number
+  created_at: string
+}
+
+/** 入库结果里的一项。 */
+export interface CreatedAssetItem {
+  file_path: string
+  asset_id: number | null
+  skipped: boolean
+  reason: string | null
+}
+
+export interface AssetsCreateResult {
+  created: number
+  skipped: number
+  items: CreatedAssetItem[]
+}
+
+/** 一条明细的追溯链——全部来自 08 已落库的用例快照。 */
+export interface AutomationTraceability {
+  linked_case_id: number | null
+  case_title: string | null
+  test_point_name: string | null
+  target_name: string | null
+  chapter_title: string | null
+  /** 关联的用例已被 08 物理删除 → 只显示执行时的快照。 */
+  source_case_deleted: boolean
+}
+
+/** 一条执行明细（粒度是**资产**，不是 pytest 的测试函数）。 */
+export interface AutomationRunItem {
+  asset_id: number
+  file_path: string | null
+  framework: AutomationFramework | null
+  result: AutomationResult
+  duration_ms: number | null
+  error: string | null
+  traceability: AutomationTraceability
+}
+
+/** 统计按**资产**维度，与明细行数始终一致。 */
+export interface AutomationRunStats {
+  total: number
+  passed: number
+  failed: number
+  skipped: number
+}
+
+/**
+ * 一次执行记录。
+ *
+ * `status` 表达「系统是否正常完成执行」：
+ * `succeeded` = pytest 进程**正常跑完**（**哪怕 exit_code 是 1**——
+ * 那只是「有测试失败」，是业务结果）；`failed` = 跑不起来，此时 `error` 非空。
+ * **用例结果看 `items[].result`，两者不能混。**
+ */
+export interface AutomationRun {
+  id: number
+  project_id: number
+  framework: AutomationFramework
+  status: AutomationRunStatus
+  exit_code: number | null
+  stats: AutomationRunStats | null
+  error: string | null
+  started_at: string | null
+  finished_at: string | null
+  duration_ms: number | null
+  created_by: number
+  created_at: string
+  items: AutomationRunItem[]
+}
+
+/** 单次报告：比列表多一份 `log`（执行输出）。 */
+export interface AutomationRunReport extends AutomationRun {
+  log: string | null
+}
+
+const AUTOMATION = (projectId: number) => `/projects/${projectId}/automation`
+
+/** 扫描目录。**只出清单，不入库**——入库是另一个动作（人工确认）。 */
+export async function scanAutomationAssets(
+  projectId: number,
+  directory: string,
+): Promise<ScanResult> {
+  const { data } = await client.post<ScanResult>(`${AUTOMATION(projectId)}/scan`, {
+    directory,
+  })
+  return data
+}
+
+export async function listAutomationAssets(
+  projectId: number,
+  params?: {
+    framework?: AutomationFramework
+    status?: AutomationAssetStatus
+    linked_case_id?: number
+    page?: number
+    page_size?: number
+  },
+): Promise<Page<AutomationAsset>> {
+  const { data } = await client.get<Page<AutomationAsset>>(`${AUTOMATION(projectId)}/assets`, {
+    params,
+  })
+  return data
+}
+
+/** 人工确认后批量入库。置信度与用例数由服务端重扫重算，不采信前端传值。 */
+export async function createAutomationAssets(
+  projectId: number,
+  assets: Array<{
+    file_path: string
+    name?: string | null
+    framework: AutomationFramework
+    parse_confidence?: number | null
+    detected_cases?: number | null
+    skip?: boolean
+  }>,
+): Promise<AssetsCreateResult> {
+  const { data } = await client.post<AssetsCreateResult>(`${AUTOMATION(projectId)}/assets`, {
+    assets,
+  })
+  return data
+}
+
+export async function fetchAutomationAsset(
+  projectId: number,
+  assetId: number,
+): Promise<AutomationAsset> {
+  const { data } = await client.get<AutomationAsset>(
+    `${AUTOMATION(projectId)}/assets/${assetId}`,
+  )
+  return data
+}
+
+/** 改资产（项目管理员）：关联 / 解绑用例、归档 / 恢复、刷新用例数。 */
+export async function updateAutomationAsset(
+  projectId: number,
+  assetId: number,
+  payload: {
+    linked_case_id?: number | null
+    status?: AutomationAssetStatus
+    detected_cases?: number | null
+  },
+): Promise<AutomationAsset> {
+  const { data } = await client.patch<AutomationAsset>(
+    `${AUTOMATION(projectId)}/assets/${assetId}`,
+    payload,
+  )
+  return data
+}
+
+/** 触发执行（**项目管理员**）。后端同步跑完才返回。 */
+export async function createAutomationRun(
+  projectId: number,
+  assetIds: number[],
+): Promise<AutomationRun> {
+  const { data } = await client.post<AutomationRun>(`${AUTOMATION(projectId)}/runs`, {
+    asset_ids: assetIds,
+  })
+  return data
+}
+
+export async function listAutomationRuns(
+  projectId: number,
+  params?: { page?: number; page_size?: number },
+): Promise<Page<AutomationRun>> {
+  const { data } = await client.get<Page<AutomationRun>>(`${AUTOMATION(projectId)}/runs`, {
+    params,
+  })
+  return data
+}
+
+/** 单次报告：明细 + 追溯链 + 统计 + 日志。 */
+export async function fetchAutomationRunReport(
+  projectId: number,
+  runId: number,
+): Promise<AutomationRunReport> {
+  const { data } = await client.get<AutomationRunReport>(
+    `${AUTOMATION(projectId)}/runs/${runId}`,
+  )
+  return data
+}
