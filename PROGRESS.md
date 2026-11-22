@@ -19,11 +19,11 @@
 - [x] 06-real-llm (真实大模型接入与提示词模板管理) —— **T84-PDF ~ T87 全部完成，L2 真实联调已跑通**
 - [x] 07-test-points (测试点分析) —— **T99 ~ T104 全部完成**（建表 + 迁移 `0022`；上下文组装 + 引擎；权限搬迁 + 服务层 + 11 个接口；引用保护 + 待复核标记；前端「测试点」Tab；收尾与文档回填）
 - [x] 08-test-case-analysis (测试用例分析) —— **T105 ~ T110 全部完成**（建表 + 迁移 `0023`；上下文组装 + 引擎；服务层 + 13 个接口；评审 / 手工 CRUD / 步骤覆盖 / 待复核派生 / Excel 导出；前端「测试用例」Tab；收尾与文档回填）
-- [ ] 09-automation (自动化执行与测试报告) —— **进行中**（规格已定稿；T110.5 工作台待办计数、T111 数据层与枚举修正、T112 扫描器与入库服务已完成）
+- [ ] 09-automation (自动化执行与测试报告) —— **进行中**（规格已定稿；T110.5 工作台待办计数、T111 数据层与枚举修正、T112 扫描器与入库服务、T113 执行器已完成）
 
 ## 3. 当前冲刺任务（⚠️ 务必先做这个）
 
-**当前目标**：09 自动化执行与测试报告 —— **T110.5 / T111 / T112 已完成**，下一步 **T113**（执行器 + 三条安全线）。
+**当前目标**：09 自动化执行与测试报告 —— **T110.5 / T111 / T112 / T113 已完成**，下一步 **T114**（服务层 + 执行接口 + 报告）。
 
 **任务顺序**：`T110.5 → T111 → T112 → T113 → T114 → T115 → T116`
 规格与方案见 `specs/09-automation/`（AC-181 ~ AC-196）。
@@ -278,7 +278,7 @@
 
 | 项 | 值 |
 |---|---|
-| 后端全量 pytest | **1202 passed**（串行；09 期 T112 收尾，基线 1117 + 新增 85） |
+| 后端全量 pytest | **1227 passed**（串行；09 期 T113 收尾，基线 1202 + 新增 25） |
 | e2e | **51 passed**（增量分析第一期 2 + 第二期 3 + 第三期 2 + PDF 1 + 系统设置 2 + 来源筛选 1 + 测试点 2 + 测试用例 4 + Tab 核对 2 + **待办计数 3**），一条命令 `.\.venv\Scripts\python.exe scripts\run_e2e.py`（8001/5174 + `aitest_copilot_e2e`） |
 | 前端构建 | `npm run build`（`web/` 目录，端口 5173，代理到 8000） |
 | 开跑前自检 | `.\.venv\Scripts\python.exe scripts\dev_check.py`（跑 e2e 时加 `--expect-db e2e`） |
@@ -299,6 +299,15 @@
 2. **MySQL DDL 隐式提交**会破坏 pytest 夹具的外层事务。
    测试里造表必须用**独立引擎**（如内存 SQLite + `StaticPool` + `check_same_thread=False`），
    不能在夹具事务内 `CREATE TABLE`。
+3. **子进程 pytest 会捡到平台自己的 `pyproject.toml`**（09 期 T113 实测踩到）：
+   `AUTOMATION_ROOT` 默认在仓库内，pytest 从工作目录**向上**找配置文件，
+   于是继承平台的 `addopts = "-q -m 'not e2e'"`——
+   `-m 'not e2e'` 会**静默 deselect** 资产里标了 `e2e` 的用例，
+   `-q` 叠成 `-qq` 会让**统计行整个消失**（`-qq` 只输出进度点）。
+   执行器已做配置隔离（见 §5.13），但**自己写子进程 pytest 调用时也要注意**。
+4. **Windows 上不能用 `os.kill(pid, 0)` 查进程是否存活**——它会真的去终止进程。
+   正确做法：`ctypes` 调 `OpenProcess` + `GetExitCodeProcess`，
+   返回码 `259`（`STILL_ACTIVE`）才算活着。
 
 ## 5. 04 收尾完成情况（2026-11-17）
 
@@ -798,6 +807,49 @@ MySQL 方言不会把 SQLAlchemy 的 `server_onupdate` 渲染成 `ON UPDATE`，
 **第三个决定**：**入库时服务端重扫重算**置信度与识别到的用例数，
 不采信前端传的值。前端传的值只是扫描时的快照（文件可能已改），
 更重要的是不能让前端决定置信度——否则「随便写个 0.99」就能进库。
+
+## 5.13 09 期 · T113 执行器（2026-11-21）
+
+**做完了什么**：09 期的**纯执行层**——`app/automation/runner.py` +
+`tests/automation/test_runner.py`（新增 25 条）。
+
+- [x] `run_pytest(exe, root, rel_path, timeout, cwd)`：
+      `timeout=` 强制超时 / `capture_output=True`（内部即 `communic()`）/
+      `shell=False`（参数列表传，不经 shell）；`TimeoutExpired` 被按住不冒泡。
+- [x] `parse_pytest_summary(output)`：按**形状**挑 pytest 的统计行，
+      解析 `passed` / `failed` / `skipped` / `error`；挑不到 → `{'total': None}`（不抛错）。
+- [x] `aggregate_result(counts)`：有失败 → failed；全跳过 → skipped；否则 passed。
+- [x] `exe` / `root` / `timeout` / `cwd` **全部可注入**；越界与绝对路径直接拒。
+
+**验证结果**：后端全量 **1227 passed**（1202 + 25，串行，exit 0，只增不减）；
+`tests\automation` **110 passed**（85 + 25）；上游定向回归 **685 passed**，0 failed；
+`npm run build` 通过；零真实 socket（`tests\automation` 无 `requests` /
+`urlopen` / `aiohttp` / `socket.socket`）。
+
+**本期踩到的真坑（实测发现，不是看文档看出来的）**：
+**平台自己的 pytest 配置会漏进被执行的资产**。
+`AUTOMATION_ROOT` 默认在仓库内（`var/automation`），pytest 从工作目录**向上**找配置文件，
+捡到**平台自己的** `pyproject.toml`（`addopts = "-q -m 'not e2e'"`），后果两条都很隐蔽：
+① `-m 'not e2e'` → 资产里标了 `e2e` 的用例被**静默 deselect**（少跑用例却装作跑完了）；
+② `-q` 与我们自己的 `-q` 叠成 `-qq` → **pytest 的统计行整个消失**，
+计数解析恒为 `{'total': None}`。第一版按 spec 写 `-q` 就是这么翻车的——
+用探针脚本逐个 flag 组合试才定位到根因。
+
+**修法**：配置隔离按「资产有没有自己的 pytest 配置」分流——
+有自己的 → `-c <它>`（**它自己的 `addopts` 照常生效**）；
+没有 → `-o addopts=`。
+不统一用 `-o addopts=` 是因为它会连资产自己的 `addopts` 一起清空
+（这条是被自己的断言抓住的）；不统一用 `-c` 是因为资产没有配置时无从指起。
+
+**死锁用例做了变异测试**：把实现改成「管道 + `wait()` + `read()`」后，
+被**两条独立断言**抓住（90 秒内没返回 / 源码出现 `stdout.read(`）；
+改回正确实现后**零 diff**。——这印证了 plan §10 的判断：
+它是唯一能抓住「有人把 `capture_output=True` 改成管道」的测试。
+
+**「超时即 kill」的两条独立证据**：① 样例写出 PID，执行结束后查该 PID
+→ 进程已不存在（Windows 走 `OpenProcess` + `GetExitCodeProcess`，
+**不能用 `os.kill(pid, 0)`**——那在 Windows 上会真的去终止进程）；
+② 样例睡醒后才写 `finished.marker`，文件始终不存在 → 没跑到自然结束。
 
 ## 6. 待办（不属当前冲刺，等用户点头再做）
 
