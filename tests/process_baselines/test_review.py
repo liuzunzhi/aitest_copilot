@@ -38,15 +38,17 @@
 
 import json
 
+import pytest
 from sqlalchemy import func, select
 
+from app.common.settings import invalidate, set_setting
 from app.models.process_baseline import (
     ProcessBaseline,
     ProcessBaselineLink,
     ProcessBaselineRevision,
     ProcessBaselineStep,
 )
-from app.models.system import AuditLog
+from app.models.system import AuditLog, SystemSetting
 
 from tests.process_baselines.helpers import (
     BASE,
@@ -935,3 +937,79 @@ def test_ac_206_reject_writes_audit(db, client):
     assert logs[0].after_data["revision_id"] == submitted["id"]
     assert logs[0].after_data["comment"] == "步骤写漏了"
     assert logs[0].target_type == "process_baseline_revision"
+
+
+# ---------------------------------------------------------------- 自审开关
+
+
+@pytest.fixture(autouse=True)
+def _restore_self_approval_cache():
+    """自审开关的**进程级缓存**用完要失效。
+
+    `app/common/settings.py` 的 `get_setting` 缓存 60s；
+    用例里把开关改成 False 会把 False 一起缓存住，
+    而外层事务回滚只还原数据库、**还原不了缓存**——
+    后面的用例会读到过期的 False（表现成莫名的 403）。
+    """
+    yield
+    invalidate("allow_baseline_self_approval")
+
+
+def test_ac_209_self_approval_forbidden_when_switch_off(db, client):
+    """开关关掉 → 提交者本人审核 → 403 `SELF_APPROVAL_FORBIDDEN`。
+
+    开关是 `system_settings.allow_baseline_self_approval`（迁移 0018 播种，
+    默认 True）。关掉时提交者不能审自己的提交——**双人复核**的强制口径。
+    """
+    set_setting(db, "allow_baseline_self_approval", False)
+    chain = make_chain(db)
+    headers = login(client, chain["user"])
+    create_scenario(client, chain, headers)
+    submitted = _submit(client, chain, headers)
+
+    response = client.post(
+        REVIEWS.format(project_id=chain["project"].id)
+        + f"/{submitted['id']}/approve",
+        json={},
+        headers=headers,
+    )
+
+    assert response.status_code == 403, response.text
+    assert response.json()["code"] == "SELF_APPROVAL_FORBIDDEN"
+    # 状态没变，也没写审计
+    assert _revision_row(db, submitted["id"]).status == "submitted"
+    assert _audits(db, chain["project"].id, "process_baseline.review.approve") == []
+
+
+def test_ac_209_self_approval_allowed_when_switch_on(db, client):
+    """开关打开 → 自审放行，且审计的 `after_data` 含 `self_approved=true`。
+
+    PRD 要求双人复核，但内部环境常常只有一个管理员账号，
+    规则会变成死锁——所以开关默认 True（迁移 0018 播种）。
+    """
+    # 迁移 0018 播种的默认值是 True——**直接读库**，
+    # 不走 `get_setting`（它有 60s 的进程级缓存，读到的可能是别的用例留下的值）
+    assert db.get(SystemSetting, "allow_baseline_self_approval").value is True
+
+    set_setting(db, "allow_baseline_self_approval", True)
+    chain = make_chain(db)
+    headers = login(client, chain["user"])
+    create_scenario(client, chain, headers)
+    submitted = _submit(client, chain, headers)
+
+    response = client.post(
+        REVIEWS.format(project_id=chain["project"].id)
+        + f"/{submitted['id']}/approve",
+        json={"comment": "单人环境自审放行"},
+        headers=headers,
+    )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["status"] == "approved"
+    assert body["version_no"] == 0
+
+    # 审计里标记 `self_approved`，事后能分辨「双人复核」与「单人兜底」
+    logs = _audits(db, chain["project"].id, "process_baseline.review.approve")
+    assert len(logs) == 1
+    assert logs[0].after_data["self_approved"] is True

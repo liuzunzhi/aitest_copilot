@@ -25,7 +25,7 @@ from app.models.baseline import (
     BaselineModule,
     BaselineRevision,
 )
-from app.models.document import DocumentChapter
+from app.models.document import Document, DocumentChapter, DocumentVersion
 from app.models.incremental import (
     IncrementalAnalysis,
     IncrementalConflict,
@@ -1008,6 +1008,260 @@ def _chapter_link_create(client: TestClient, db: Session, monkeypatch) -> None:
     assert response.status_code == 201, response.text
 
 
+# ------------------------------------------------- 10 流程基线（10 期）场景
+
+
+PROCESS_BASELINES = "/api/projects/{project_id}/process-baselines"
+PROCESS_SCENARIOS = PROCESS_BASELINES + "/scenarios"
+PROCESS_REVIEWS = PROCESS_BASELINES + "/reviews"
+
+
+def _process_baseline_setup(client: TestClient, db: Session):
+    """建项目 + 两个项目管理员（一个提交、一个审核）。
+
+    返回 `(project, 提交人, 提交头, 审核头)`——审核用**另一个人**，
+    更贴近真实的双人复核场景。
+    """
+    user = _user(db)
+    reviewer = _user(db)
+    project = _project(db)
+    _join(db, project, user, "project_admin")
+    _join(db, project, reviewer, "project_admin")
+    return project, user, _headers(client, user), _headers(client, reviewer)
+
+
+def _process_baseline_scenario(
+    client: TestClient,
+    db: Session,
+    project: Project,
+    headers: dict[str, str],
+    *,
+    name: str | None = None,
+    links: list[dict] | None = None,
+) -> int:
+    """建一个流程基线场景，返回场景 id。"""
+    body = {
+        "name": name or f"审计场景-{uuid.uuid4().hex[:8]}",
+        "description": "审计覆盖用的场景",
+        "precondition": "已注册且未锁定",
+        "source_type": "manual",
+        "steps": [
+            {"action": "打开登录页", "expected": "展示登录页"},
+            {"action": "连续输错密码 5 次", "expected": "提示账号已锁定"},
+        ],
+    }
+    if links:
+        body["links"] = links
+    response = client.post(
+        PROCESS_SCENARIOS.format(project_id=project.id),
+        json={"scenarios": [body]},
+        headers=headers,
+    )
+    assert response.status_code == 201, response.text
+    return response.json()["items"][0]["id"]
+
+
+def _process_baseline_scenario_create(
+    client: TestClient, db: Session, monkeypatch
+) -> None:
+    """10 期：批量新建流程基线场景。"""
+    project, _, headers, _ = _process_baseline_setup(client, db)
+    _process_baseline_scenario(client, db, project, headers)
+
+
+def _process_baseline_scenario_update(
+    client: TestClient, db: Session, monkeypatch
+) -> None:
+    """10 期：改流程基线场景。"""
+    project, _, headers, _ = _process_baseline_setup(client, db)
+    scenario_id = _process_baseline_scenario(client, db, project, headers)
+    response = client.patch(
+        PROCESS_SCENARIOS.format(project_id=project.id) + f"/{scenario_id}",
+        json={"description": "改过的描述"},
+        headers=headers,
+    )
+    assert response.status_code == 200, response.text
+
+
+def _process_baseline_scenario_delete(
+    client: TestClient, db: Session, monkeypatch
+) -> None:
+    """10 期：删流程基线场景。"""
+    project, _, headers, _ = _process_baseline_setup(client, db)
+    scenario_id = _process_baseline_scenario(client, db, project, headers)
+    response = client.delete(
+        PROCESS_SCENARIOS.format(project_id=project.id) + f"/{scenario_id}",
+        headers=headers,
+    )
+    assert response.status_code == 204, response.text
+
+
+def _process_baseline_steps_update(
+    client: TestClient, db: Session, monkeypatch
+) -> None:
+    """10 期：整体覆盖流程基线步骤。"""
+    project, _, headers, _ = _process_baseline_setup(client, db)
+    scenario_id = _process_baseline_scenario(client, db, project, headers)
+    response = client.put(
+        PROCESS_SCENARIOS.format(project_id=project.id) + f"/{scenario_id}/steps",
+        json={"steps": [{"action": "新步骤", "expected": "新预期"}]},
+        headers=headers,
+    )
+    assert response.status_code == 200, response.text
+
+
+def _process_baseline_links_update(
+    client: TestClient, db: Session, monkeypatch
+) -> None:
+    """10 期：整体覆盖流程基线关联。"""
+    project, user, headers, _ = _process_baseline_setup(client, db)
+    module = BaselineModule(
+        project_id=project.id,
+        name=f"审计模块-{uuid.uuid4().hex[:6]}",
+        created_by=user.id,
+    )
+    db.add(module)
+    db.flush()
+    function = BaselineFunction(
+        project_id=project.id,
+        module_id=module.id,
+        name=f"审计功能-{uuid.uuid4().hex[:6]}",
+        created_by=user.id,
+    )
+    db.add(function)
+    db.flush()
+    scenario_id = _process_baseline_scenario(client, db, project, headers)
+    response = client.put(
+        PROCESS_SCENARIOS.format(project_id=project.id) + f"/{scenario_id}/links",
+        json={"links": [{"target_type": "function", "target_id": function.id}]},
+        headers=headers,
+    )
+    assert response.status_code == 200, response.text
+
+
+def _process_baseline_derive_run(
+    client: TestClient, db: Session, monkeypatch
+) -> None:
+    """10 期：发起流程基线文档反推（模型侧用 Mock，不产生真实 socket）。"""
+    from app.llm.mock import MockProvider
+    from app.llm.provider import get_provider
+
+    project, user, headers, _ = _process_baseline_setup(client, db)
+
+    document = Document(
+        project_id=project.id,
+        name=f"审计需求-{uuid.uuid4().hex[:6]}",
+        created_by=user.id,
+    )
+    db.add(document)
+    db.flush()
+    version = DocumentVersion(
+        document_id=document.id,
+        version_no=1,
+        status="active",
+        file_name="需求.md",
+        file_path=f"var/uploads/{project.id}/{uuid.uuid4().hex}.md",
+        file_size=128,
+        sha256="d" * 64,
+        chapter_count=1,
+        uploaded_by=user.id,
+    )
+    db.add(version)
+    db.flush()
+    db.add(
+        DocumentChapter(
+            version_id=version.id,
+            parent_id=None,
+            seq=1,
+            level=1,
+            title="4.2 登录失败次数限制",
+            content="账号连续输错密码 5 次后锁定",
+            char_count=12,
+        )
+    )
+    db.flush()
+
+    template = db.scalar(
+        select(PromptTemplate).where(
+            PromptTemplate.task_type == "process_baseline",
+            PromptTemplate.status == "active",
+        )
+    )
+    assert template is not None, "迁移 0025 应播种一条 process_baseline 模板"
+
+    provider = MockProvider()
+    monkeypatch.setitem(
+        fastapi_app.dependency_overrides, get_provider, lambda: provider
+    )
+
+    response = client.post(
+        PROCESS_BASELINES.format(project_id=project.id) + "/derive",
+        json={
+            "document_id": document.id,
+            "document_version_id": version.id,
+            "template_id": template.id,
+        },
+        headers=headers,
+    )
+    assert response.status_code == 200, response.text
+
+
+def _process_baseline_review_submit(
+    client: TestClient, db: Session, monkeypatch
+) -> None:
+    """10 期：提交流程基线审核（**必须有 active 场景**，否则 400 不建快照）。"""
+    project, _, headers, _ = _process_baseline_setup(client, db)
+    _process_baseline_scenario(client, db, project, headers)
+    response = client.post(
+        PROCESS_REVIEWS.format(project_id=project.id) + "/submit",
+        json={},
+        headers=headers,
+    )
+    assert response.status_code == 201, response.text
+
+
+def _process_baseline_review_approve(
+    client: TestClient, db: Session, monkeypatch
+) -> None:
+    """10 期：审核通过流程基线快照（先提交，再由**另一个**管理员通过）。"""
+    project, _, headers, reviewer_headers = _process_baseline_setup(client, db)
+    _process_baseline_scenario(client, db, project, headers)
+    submitted = client.post(
+        PROCESS_REVIEWS.format(project_id=project.id) + "/submit",
+        json={},
+        headers=headers,
+    )
+    assert submitted.status_code == 201, submitted.text
+    response = client.post(
+        PROCESS_REVIEWS.format(project_id=project.id)
+        + f"/{submitted.json()['id']}/approve",
+        json={},
+        headers=reviewer_headers,
+    )
+    assert response.status_code == 200, response.text
+
+
+def _process_baseline_review_reject(
+    client: TestClient, db: Session, monkeypatch
+) -> None:
+    """10 期：驳回流程基线快照（意见必填）。"""
+    project, _, headers, reviewer_headers = _process_baseline_setup(client, db)
+    _process_baseline_scenario(client, db, project, headers)
+    submitted = client.post(
+        PROCESS_REVIEWS.format(project_id=project.id) + "/submit",
+        json={},
+        headers=headers,
+    )
+    assert submitted.status_code == 201, submitted.text
+    response = client.post(
+        PROCESS_REVIEWS.format(project_id=project.id)
+        + f"/{submitted.json()['id']}/reject",
+        json={"comment": "步骤写漏了"},
+        headers=reviewer_headers,
+    )
+    assert response.status_code == 200, response.text
+
+
 # ------------------------------------------------- 06 大模型配置与模板
 
 
@@ -1171,6 +1425,15 @@ SCENARIOS = {
     "prompt_template.update": _prompt_template_update,
     "test_point.analysis.create": _test_point_analysis_create,
     "automation.run.execute": _automation_run_execute,
+    "process_baseline.scenario.create": _process_baseline_scenario_create,
+    "process_baseline.scenario.update": _process_baseline_scenario_update,
+    "process_baseline.scenario.delete": _process_baseline_scenario_delete,
+    "process_baseline.steps.update": _process_baseline_steps_update,
+    "process_baseline.links.update": _process_baseline_links_update,
+    "process_baseline.derive.run": _process_baseline_derive_run,
+    "process_baseline.review.submit": _process_baseline_review_submit,
+    "process_baseline.review.approve": _process_baseline_review_approve,
+    "process_baseline.review.reject": _process_baseline_review_reject,
 }
 
 

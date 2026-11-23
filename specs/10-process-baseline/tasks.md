@@ -579,6 +579,101 @@
 **AC**：AC-207、AC-208、AC-209、AC-210、AC-211
 **提交**：`feat(process-baseline): 权限收口、审计覆盖与欠账断言`
 
+**T121 补充记录（执行情况）**
+
+- **3 个文件**：`tests/process_baselines/test_permissions.py`（新建）/
+  `tests/process_baselines/test_deferred_features.py`（新建）/
+  `tests/process_baselines/test_review.py`（补 2 条自审用例）/
+  `tests/common/test_audit_coverage.py`（**补 9 个场景**）。
+  **`app/process_baselines/service.py` 一个字节没改**——
+  T118 / T120 已经把权限判定顺序统一好了，本期是**验证**而不是**修复**。
+- **新增测试 29 条**：`test_permissions.py` **16 条** +
+  `test_deferred_features.py` **11 条** + `test_review.py` 补 **2 条**；
+  `tests\process_baselines` 由 T120 的 147 条涨到 **176 条**。
+  审计覆盖清单由 57 条涨到 **66 条**（`tests\common`）。
+- **「归档先于角色判」钉成了 3 条**（不只是 1 条）：
+  ① 归档项目 + **项目管理员**调 9 个写接口 → 全 409；
+  ② 归档项目 + **普通成员**调 9 个写接口 → 全 409（**不是 403**）；
+  ③ 归档项目 + 成员读 4 个读接口 → 全 200。
+  写接口**逐个过一遍**（新建 / 改 / 删 / 覆盖步骤 / 覆盖关联 / 反推 /
+  提交 / 通过 / 驳回），读接口 4 个也逐个过一遍。
+- **权限矩阵是「逐接口 × 逐角色」跑的，不是抽样**：
+  member / guest 各跑一遍 4 个读接口（200）与 9 个写接口（403
+  `NOT_PROJECT_ADMIN`）；项目管理员 / 系统管理员各跑一遍 9 个写接口
+  （全通）；非成员读 → 403 `NOT_PROJECT_MEMBER`、
+  非成员写 → 403 `NOT_PROJECT_ADMIN`（**两个码不一样**，
+  区分会泄露项目是否存在）。
+- **「项目不存在 → 404」覆盖读与写各 13 个接口**：
+  4 个读接口 + 9 个写接口全部 404 `PROJECT_NOT_FOUND`。
+  另外单独钉了一条「404 优先于角色」：非成员访问不存在的项目 → 404，不是 403。
+- **「角色优先于业务校验」单独钉了一条**：member + 空步骤 → 403，不是 400
+  （顺序是 404 → 409 → 403 → 400）。
+- **欠账断言做到「三样都查」**（AC-210 / AC-211）：
+  ① **库里查不到表**——`information_schema.tables` 实查（不是查 ORM 元数据）；
+  ② **OpenAPI 里查不到路由**——`app.openapi()['paths']` 逐条扫；
+  ③ **响应体里没有那个字段**——场景列表与详情的 body 里
+  `label_types` / `labels` 都不存在。
+  另外加了一条**行为断言**：`baseline_labels` 真写一次
+  `target_type='scenario'` → 被 CHECK 拒（**3819**）——
+  只查 CHECK 声明字符串是「看声明」，真写一次才是「看行为」。
+- **「快照永久保留」没有停在 OpenAPI 层**：用例走了一遍
+  「提交 → 驳回 → 再提交」，断言**旧快照仍在**（`status='rejected'`、
+  `draft_snapshot` 保留），而不只是「路由表里没有 delete」。
+- **审计覆盖补了 9 个场景**：照抄 04 的造数范式
+  （`_baseline_setup` 建两个 project_admin，一个提交、一个审核）。
+  `derive.run` 造出可反推的上下文（文档 + 生效版本 + 章节 +
+  `task_type='process_baseline'` 的 active 模板），Mock provider
+  用 `monkeypatch.setitem(fastapi_app.dependency_overrides, ...)` 覆盖
+  （照抄 `_test_point_analysis_create` 的手法）——**零真实 socket**。
+  **既有的 4 个 04 场景一条不删、期望值一个不改**。
+- **踩坑：自审开关的**进程级缓存**比事务回滚活得久**。
+  `app/common/settings.py` 的 `get_setting` 缓存 60s；
+  用例里 `set_setting(db, "allow_baseline_self_approval", False)`
+  会把 False 一起缓存住，而**外层事务回滚只还原数据库、还原不了缓存**——
+  后面的用例会读到过期的 False（表现成莫名的 403）。
+  修法：本文件加一个 `autouse` 夹具，用完 `invalidate(...)` 掉那个 key；
+  断言默认值时**直接读库**（`db.get(SystemSetting, ...)`）而不是走 `get_setting`。
+- **踩坑：造数不能靠被测账号**。
+  权限用例里「被测账号」的角色随时会变（member / guest / 归档），
+  靠它造数会自己把自己挡住（第一版就撞了
+  `NOT_PROJECT_ADMIN` 与 `PROCESS_BASELINE_IN_REVIEW`）。
+  改成**另建一个项目管理员专供造数**，被测账号只负责被测。
+- **踩坑：9 个写接口不能顺序调用**。
+  「删场景」会把场景删掉，后面的接口只能撞 404；
+  「审核通过」之后驳回是 409（状态非法），`review.reject` 就永远没有
+  成功落库的机会。
+  改法：造数时建 **4 个场景**（改 / 删 / 覆盖步骤 / 覆盖关联各用一个），
+  审核走「提交 → 通过 → 再提交 → 驳回」两轮——
+  这样 9 个 action 在管理员账号下**各有一次成功**。
+- **红线 diff 实测**（基准 = T120 的 `cfc056c`）：
+  `git diff --stat cfc056c -- app/baselines/ app/incremental/ app/test_points/`
+  `app/test_cases/ app/automation/ app/documents/ app/projects/ app/llm_admin/`
+  `app/llm/ app/models/ migrations/ tests/e2e/ web/` → **全为空**；
+  `app/llm/mock.py` → **为空**；`app/models/project.py` → **为空**（AC-211 欠账）；
+  `app/process_baselines/` → **为空**（权限顺序本来就是对的，没动）。
+- **前台等价核对**（本任务只有接口与测试，走真实 HTTP 栈）：
+  ① `/docs` 的 OpenAPI 里，流程基线前缀下**搜不到**任何
+  标签 / 保留策略 / 清理候选 / 告警路径（命中数 = 0），
+  共 **10 条 path、13 个 method**，`revisions` 上**没有 DELETE**；
+  ② 成员账号调写接口 → **403 `NOT_PROJECT_ADMIN`**；
+  ③ 归档项目里的成员账号调写接口 → **409 `PROJECT_ARCHIVED`**；
+  ④ 归档项目里的成员账号读 → **200**。
+  冒烟数据已清理（开发库与 e2e 库四张表行数均为 0）。
+- **两库 head 均为 `0025`**（本任务不写迁移，**只确认不写**）。
+- **零真实 socket**：`grep -r "requests\|urlopen\|aiohttp\|socket.socket"`
+  `tests\process_baselines` `tests\common` → **无结果**。
+  （第一版用例里把变量命名为 `read_requests` / `write_requests`，
+  被这条 grep 命中了——改成 `read_probes` / `write_probes` 才干净。
+  变量名也会被这条口径卡住，值得记一笔。）
+- **全量回归**：后端 **1444 passed**（1406 + 38），串行，exit 0，486.63s；
+  上游定向（`tests\baselines` / `test_points` / `test_cases` / `automation` /
+  `llm` / `incremental` / `common`）**916 passed**（907 + 9），零回归；
+  `npm run build` 通过（本期**未改动前端**，仅回归确认）。
+- **与 spec 的差异**：无。spec §13 已登记两条欠账
+  （「增量分析支持流程基线打标」/「流程基线快照保留策略 + 被引用即保护 +
+  清理候选 + 告警 + 删除留痕」），用例直接读 spec §13 原文做断言——
+  **spec.md 一个字都没改**（那是 T123 收尾的事）。
+
 ---
 
 ### T122 前端二级子菜单 + 场景管理 + e2e
@@ -722,7 +817,7 @@
 | T118 | `tests\process_baselines` **90 passed**（T117 的 41 + 新增 49；AC-198/199/200/201 全绿）；上游定向（baselines / test_points / test_cases / automation / llm / incremental / common）**907 passed**，零回归 | **1349 passed**（1300 + 49），串行，exit 0，433.94s | `npm run build` 通过（**未改动前端**，仅回归确认） | 不涉及 | 不涉及（本任务不写迁移，两库 head 仍 `0025`） | 不涉及（纯接口，按「前台核对点」走真实 HTTP 栈等价核对） | 通过 |
 | T119 | `tests\process_baselines` **118 passed**（T118 的 90 + 新增 28；AC-202/203 全绿）；上游定向（baselines / test_points / test_cases / automation / llm / incremental / common）**907 passed**，零回归 | **1377 passed**（1349 + 28），串行，exit 0，459.41s | `npm run build` 通过（**未改动前端**，仅回归确认） | 不涉及 | 不涉及（本任务不写迁移，两库 head 仍 `0025`） | 不涉及（纯接口，按「前台核对点」走真实 HTTP 栈等价核对） | 通过 |
 | T120 | `tests\process_baselines` **147 passed**（T119 的 118 + 新增 29；AC-204/205/206 全绿，29 passed / 118 deselected）；上游定向（baselines / test_points / test_cases / automation / llm / incremental / common）**907 passed**，零回归 | **1406 passed**（1377 + 29），串行，exit 0（`1406/1464 collected，58 deselected`） | `npm run build` 通过（**未改动前端**，仅回归确认） | 不涉及 | 不涉及（本任务不写迁移，两库 head 仍 `0025`） | 不涉及（纯接口，按「前台核对点」走真实 HTTP 栈等价核对） | 通过 |
-| T121 | `tests\process_baselines` + `tests\common` 待回填 | 待回填 | `npm run build` 待回填 | 不涉及 | 不涉及 | 不涉及（纯接口） | 待回填 |
+| T121 | `tests\process_baselines` **176 passed**（T120 的 147 + 新增 29；AC-207/208/209/210/211 全绿，29 passed / 147 deselected）；`tests\common\test_audit_coverage.py` **66 passed**（57 + 补 9 个场景）；上游定向（baselines / test_points / test_cases / automation / llm / incremental / common）**916 passed**（907 + 9），零回归 | **1444 passed**（1406 + 38），串行，exit 0，486.63s | `npm run build` 通过（**未改动前端**，仅回归确认） | 不涉及 | 不涉及（本任务不写迁移，两库 head 仍 `0025`） | 不涉及（纯接口，按「前台核对点」走真实 HTTP 栈等价核对） | 通过 |
 | T122 | `tests\process_baselines` 待回填 | 待回填 | `npm run build` 待回填 | e2e 全量待回填（原 58 + 新增 ≥ 2） | 不涉及 | `.screenshots/T122/` 待回填 | 待回填 |
 | T123 | 10 定向 + 04~09 定向 待回填 | 待回填（≥ 1259 passed，串行，exit 0） | `npm run build` 待回填 | e2e 全量待回填（≥ 60 passed） | 两库 `0025 → 0024 → 0025` 待回填；降级后 `task_type` 只剩旧四值 | `.screenshots/T123/` 待回填 | 待回填 |
 
