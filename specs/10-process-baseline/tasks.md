@@ -95,7 +95,8 @@
   （`downgrade` 必须先删模板行再重建旧 CHECK）
 - **两套版本号互不干扰**：同项目里功能基线发 `v1.0` 后，流程基线仍发 `v1.0`
 - `git diff --stat app\llm\mock.py` → 只增一个分支，**既有五个分支的返回值逐字节不变**
-- `git diff --stat app\models\incremental.py` → **只有 2 行**（TASK_TYPES + CHECK 字符串）
+- `git diff --stat app\models\incremental.py` → **只有 2 处**：
+  `TASK_TYPES` 常量 + `ck_ptemplates_task_type` 的 CHECK 字符串（各一处，不含注释）
 - **既有测试零回归**：`pytest tests\baselines tests\llm tests\incremental -q` 全绿
   （既有期望值未用到新枚举值）
 
@@ -105,6 +106,41 @@
 
 **AC**：AC-197、AC-210、AC-211、AC-214
 **提交**：`feat(process-baseline): 建表 0025 与流程基线提示词模板`
+
+**T117 补充记录（执行情况）**
+
+- **迁移往返（两库各跑一遍）**：开发库 `aitest_copilot_v2` 与 e2e 库
+  `aitest_copilot_e2e` 均 `0024 → 0025 → 0024 → 0025` 干净，head 均 `0025`。
+- **降级后逐字节核对**：`prompt_templates` 的 `task_type` 分布回到
+  `[document_parse×1, incremental×2, test_case×1, test_point×1]`，
+  `task_type='process_baseline'` **残留行 = 0**；
+  `ck_ptemplates_task_type` 恢复旧的四值 CHECK；四张新表全部删除。
+  这正是 08 期在 `llm_run_logs` 上踩过的坑（残留行撞 3819）——
+  本期 `downgrade` 里**先删模板行再重建旧 CHECK**，顺序反了就降不回去。
+- **既有 Mock 分支实测未变**：六个前缀（默认 / SECOND_PASS / DERIVE /
+  TEST_POINT / TEST_CASE / PROCESS_BASELINE）逐个实测返回值与常量**逐字节相等**；
+  `git diff` 显示既有分支的 `elif` 与常量**一个字节未改**，只新增了一个分支。
+- **上游零改动实测**：`git diff --stat dbcf339 -- app/baselines/ app/test_points/`
+  `app/incremental/ app/test_cases/ app/automation/ app/models/project.py`
+  `app/documents/ app/projects/ app/llm_admin/` → **全为空**。
+  `app/models/incremental.py` 只改了枚举（`TASK_TYPES` + CHECK 字符串），
+  `app/llm/mock.py` 只加了一个前缀分支——与 spec §11 声明的两处完全一致。
+- **踩坑：09 期留了一条会自伤的 head 断言**。
+  `tests/automation/test_migration.py::test_ac_181_migration_head_is_0024`
+  断言「head **恰好**等于 `0024`」——0025 一落地就必然失败，
+  **往后每一期建新迁移都会再失效一次**。
+  它测的是**全局迁移 head 指针**，不是 09 期的业务行为或错误码，
+  所以改成 `int(row[0]) >= 24`（「0024 已应用」这个事实）——
+  语义更准，且不再随新迁移反复失效。
+  09 期的业务逻辑与错误码断言**一条未动**。
+  （09 期 T111 新建该文件时 08 期并没有 head 断言，所以这是第一次撞上。）
+- **新增测试 41 条**：`tests/process_baselines/test_models.py` **21 条** +
+  `test_migration.py` **20 条**。含两条最关键的防线：
+  ① `test_ac_197_link_target_has_no_foreign_key` —— 用 inspector 断言
+  `process_baseline_links` 的外键**只有** `process_baselines`，
+  `baseline_functions` / `baseline_feature_points` 都不在其中；
+  ② `test_ac_197_version_numbers_are_independent_between_baselines` ——
+  功能基线发 `v1.0` 后流程基线**仍发 `v1.0`**，两套序列互不干扰。
 
 ---
 
@@ -475,7 +511,7 @@
 
 | 任务 | 定向 | 后端全量 | 前端构建 | e2e | 迁移往返 | 截图 | 结论 |
 |---|---|---|---|---|---|---|---|
-| T117 | `tests\process_baselines` 待回填 | 待回填 | `npm run build` 待回填 | 不涉及 | 两库 `0025 → 0024 → 0025` 待回填 | 不涉及（纯后端） | 待回填 |
+| T117 | `tests\process_baselines` **41 passed**（AC-197/210/211 全绿）；`tests\automation` **141 passed**（09 期零回归） | **1300 passed**（1259 + 41），串行，exit 0，463.09s | 未改动前端，**不涉及** | 不涉及 | 两库 `0025 → 0024 → 0025` **干净**，head 均 `0025`；**降级后 `prompt_templates.task_type` 只剩旧四值**、`process_baseline` 残留行 = 0 | 不涉及（纯后端） | 通过 |
 | T118 | `tests\process_baselines` 待回填 | 待回填 | `npm run build` 待回填 | 不涉及 | 不涉及 | 不涉及（纯接口） | 待回填 |
 | T119 | `tests\process_baselines` 待回填 | 待回填 | `npm run build` 待回填 | 不涉及 | 不涉及 | 不涉及（纯接口） | 待回填 |
 | T120 | `tests\process_baselines` 待回填 | 待回填 | `npm run build` 待回填 | 不涉及 | 不涉及 | 不涉及（纯接口） | 待回填 |

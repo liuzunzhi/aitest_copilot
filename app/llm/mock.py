@@ -4,15 +4,17 @@
 
 - `calls: list[LLMRequest]`：每次 `chat` 追加一条，用例据此断言 Prompt 来源；
 - `queue: list[str]`：预设返回队列，为空时按 Prompt 类型返回默认响应；
-- 默认响应分五套：第一遍（`{"conclusions": []}`）、第二遍
+- 默认响应分六套：第一遍（`{"conclusions": []}`）、第二遍
   （`[INCREMENTAL_2B_SYSTEM]` 前缀的 system → `decision=unchanged`）、
   文档推导（`[DERIVE_SYSTEM]` 前缀 → 一个最小三层结构）、
   测试点生成（`[TEST_POINT_SYSTEM]` 前缀 → 一条最小测试点）、
-  测试用例生成（`[TEST_CASE_SYSTEM]` 前缀 → 一条带步骤的最小用例）。
-  这样 e2e 不预设队列也能跑通第一遍、第二遍、基线推导、测试点生成与用例生成。
+  测试用例生成（`[TEST_CASE_SYSTEM]` 前缀 → 一条带步骤的最小用例）、
+  流程基线推导（`[PROCESS_BASELINE_SYSTEM]` 前缀 → 一个最小场景列表）。
+  这样 e2e 不预设队列也能跑通第一遍、第二遍、基线推导、测试点生成、
+  用例生成与流程基线推导。
 
-**07 / 08 期新增的分支只影响各自的前缀**——
-既有三个分支的行为一个字节没变，05 / 06 的断言不受影响。
+**07 / 08 / 10 期新增的分支只影响各自的前缀**——
+既有分支的行为一个字节没变，05 / 06 的断言不受影响。
 """
 
 import json
@@ -87,6 +89,31 @@ TEST_CASE_DEFAULT_RESPONSE = json.dumps(
     },
     ensure_ascii=False,
 )
+PROCESS_BASELINE_SYSTEM_PREFIX = "[PROCESS_BASELINE_SYSTEM]"
+PROCESS_BASELINE_DEFAULT_RESPONSE = json.dumps(
+    {
+        # 输出根结构是 `{"scenarios": [...]}` —— **平铺列表**，不是三级树
+        # （流程基线没有层级，spec §3.1）。
+        "scenarios": [
+            {
+                "name": "mock 流程场景",
+                "description": "mock 反推出的示例场景",
+                "precondition": "mock 前置条件",
+                "confidence": 0.9,
+                "rationale": "mock 反推理由",
+                "steps": [
+                    {"action": "mock 第一步", "expected": "mock 预期一"},
+                    {"action": "mock 第二步", "expected": "mock 预期二"},
+                ],
+                # 关联的 `target_id` 必须是**真实 id**（由 Prompt 里的
+                # 「可关联的功能基线清单」给出）——这里是占位符，
+                # 真实 id 由服务端在采纳时校验，编造的 id 会被丢弃。
+                "links": [],
+            }
+        ]
+    },
+    ensure_ascii=False,
+)
 
 
 class MockProvider:
@@ -118,6 +145,8 @@ class MockProvider:
             content = TEST_POINT_DEFAULT_RESPONSE
         elif req.system.startswith(TEST_CASE_SYSTEM_PREFIX):
             content = TEST_CASE_DEFAULT_RESPONSE
+        elif req.system.startswith(PROCESS_BASELINE_SYSTEM_PREFIX):
+            content = PROCESS_BASELINE_DEFAULT_RESPONSE
         else:
             content = self.default_response
         prompt_tokens = len(req.system) + len(req.user)
@@ -139,6 +168,8 @@ __all__ = [
     "DERIVE_DEFAULT_RESPONSE",
     "DERIVE_SYSTEM_PREFIX",
     "MockProvider",
+    "PROCESS_BASELINE_DEFAULT_RESPONSE",
+    "PROCESS_BASELINE_SYSTEM_PREFIX",
     "SECOND_PASS_DEFAULT_RESPONSE",
     "SECOND_PASS_SYSTEM_PREFIX",
     "TEST_CASE_DEFAULT_RESPONSE",

@@ -139,9 +139,18 @@ def test_ac_181_new_clear_reason_values_are_accepted(db: Session):
 
 
 def test_ac_181_migration_head_is_0024(db: Session):
-    """迁移 head 是 `0024`。"""
+    """迁移 head **不低于** `0024`（即 `0024` 已应用）。
+
+    **为什么不是 `== "0024"`**：这条断言测的是**全局迁移 head 指针**，
+    不是 09 期的业务行为或错误码。写死等值意味着——
+    **10 期建了 `0025` 之后它必然失效**，往后每一期建新迁移都会再失效一次。
+    09 期 T111 新建这个文件时 08 期并没有 head 断言，所以这是第一次撞上。
+
+    改成「不低于 0024」后语义更准（`0024` **已应用**这一事实），
+    且不再随新迁移反复失效。09 期的业务逻辑与错误码断言**一条未动**。
+    """
     from sqlalchemy import text
 
     row = db.execute(text("SELECT version_num FROM alembic_version")).first()
     assert row is not None
-    assert row[0] == "0024"
+    assert int(row[0]) >= 24

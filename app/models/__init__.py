@@ -27,6 +27,12 @@ from app.models.incremental import (
     PromptTemplate,
 )
 from app.models.llm import LLMProviderConfig, LLMRunLog
+from app.models.process_baseline import (
+    ProcessBaseline,
+    ProcessBaselineLink,
+    ProcessBaselineRevision,
+    ProcessBaselineStep,
+)
 from app.models.project import Project, ProjectMember
 from app.models.system import AuditLog, SystemSetting
 from app.models.test_case import TestCase, TestCaseAnalysis, TestCaseStep
@@ -68,6 +74,10 @@ __all__ = [
     "ProjectApplication",
     "ProjectMember",
     "PromptTemplate",
+    "ProcessBaseline",
+    "ProcessBaselineLink",
+    "ProcessBaselineRevision",
+    "ProcessBaselineStep",
     "SystemSetting",
     "TestCase",
     "TestCaseAnalysis",

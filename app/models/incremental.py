@@ -36,7 +36,19 @@ _TABLE_OPTS = {
     "mysql_collate": "utf8mb4_0900_ai_ci",
 }
 
-TASK_TYPES = ("document_parse", "incremental", "test_point", "test_case")
+TASK_TYPES = (
+    "document_parse",
+    "incremental",
+    "test_point",
+    "test_case",
+    # 10 期新增：流程基线的文档反推（PRD 2.4.2「流程基线 · 来源：文档反推」）。
+    # **必须独立成一个类型**：复用 `document_parse` 会让 04 的推导下拉里
+    # 混进流程基线模板，而 04 的服务端只校验 `task_type == 'document_parse'`
+    # （`app/baselines/service.py:2416-2420`）——选错不报错，
+    # 解析器会拿到 `{"scenarios": [...]}` 直接根结构校验失败，
+    # 报错信息完全指不到真因。
+    "process_baseline",
+)
 TEMPLATE_STATUSES = ("active", "disabled")
 ANALYSIS_STATUSES = ("pending", "running", "succeeded", "failed")
 SPLIT_GRANULARITIES = ("chapter",)
@@ -59,7 +71,8 @@ class PromptTemplate(Base):
     __table_args__ = (
         Index("uk_ptemplates_type_name", "task_type", "name", unique=True),
         CheckConstraint(
-            "task_type IN ('document_parse','incremental','test_point','test_case')",
+            "task_type IN "
+            "('document_parse','incremental','test_point','test_case','process_baseline')",
             name="ck_ptemplates_task_type",
         ),
         CheckConstraint(

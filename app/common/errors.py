@@ -945,6 +945,78 @@ class AutomationExecFailed(AppError):
     code = "AUTOMATION_EXEC_FAILED"
 
 
+class ProcessBaselineNotFound(AppError):
+    """AC-198：场景不存在或不属于该项目。"""
+
+    status_code = 404
+    code = "PROCESS_BASELINE_NOT_FOUND"
+
+
+class ProcessBaselineInvalid(AppError):
+    """AC-201：场景本身不合法。
+
+    覆盖：名称为空 / 超长、非法 `status` / `source_type`、
+    没有可提交审核的场景、文档推导来源三元组不自洽或缺失。
+    """
+
+    status_code = 400
+    code = "PROCESS_BASELINE_INVALID"
+
+
+class ProcessBaselineDuplicateName(AppError):
+    """AC-198：同项目已有同名场景。"""
+
+    status_code = 409
+    code = "PROCESS_BASELINE_DUPLICATE_NAME"
+
+
+class ProcessBaselineStepInvalid(AppError):
+    """AC-199：步骤数组不合法（空 / `action` 为空 / 超过 100 步）。
+
+    与 08 的 `TestCaseStepInvalid` 同一语义、同一「整组拒」口径，
+    但用**独立的错误码**——两套基线是两个子系统，前端要能分开处理。
+    """
+
+    status_code = 400
+    code = "PROCESS_BASELINE_STEP_INVALID"
+
+
+class ProcessBaselineLinkInvalid(AppError):
+    """AC-200：关联不合法。
+
+    覆盖：`target_type` 非法、目标不存在 / 不属于本项目 / 已归档、
+    同一次提交里重复关联同一目标。
+    """
+
+    status_code = 400
+    code = "PROCESS_BASELINE_LINK_INVALID"
+
+
+class ProcessBaselineRevisionNotFound(AppError):
+    """AC-205：快照不存在或不属于该项目。"""
+
+    status_code = 404
+    code = "PROCESS_BASELINE_REVISION_NOT_FOUND"
+
+
+class ProcessBaselineReviewStatusInvalid(AppError):
+    """AC-206：快照状态不允许当前操作（对已通过 / 已驳回的快照再审核）。"""
+
+    status_code = 409
+    code = "PROCESS_BASELINE_REVIEW_STATUS_INVALID"
+
+
+class ProcessBaselineInReview(AppError):
+    """AC-204：项目内已有审核中的快照。
+
+    两种触发：① 重复提交审核；② **审核期间编辑场景被锁定**——
+    提交即冻结的前提是「提交后不能改」，否则冻结内容会漂移（spec §3.8）。
+    """
+
+    status_code = 409
+    code = "PROCESS_BASELINE_IN_REVIEW"
+
+
 def install_error_handlers(app: FastAPI) -> None:
     """把 AppError 统一渲染成 {"code","message",**extra}。"""
 
@@ -1046,6 +1118,14 @@ __all__ = [
     "PromptTemplateInvalid",
     "PromptTemplateNameTaken",
     "PromptTemplateNotFound",
+    "ProcessBaselineDuplicateName",
+    "ProcessBaselineInReview",
+    "ProcessBaselineInvalid",
+    "ProcessBaselineLinkInvalid",
+    "ProcessBaselineNotFound",
+    "ProcessBaselineReviewStatusInvalid",
+    "ProcessBaselineRevisionNotFound",
+    "ProcessBaselineStepInvalid",
     "RateLimited",
     "ReasonRequired",
     "ReviewCommentRequired",
