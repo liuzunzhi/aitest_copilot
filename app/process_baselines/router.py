@@ -1,4 +1,4 @@
-"""流程基线的路由（10-process-baseline T118）。
+"""流程基线的路由（10-process-baseline T118 / T119）。
 
 前缀 `/api/projects/{project_id}/process-baselines`：
 
@@ -9,6 +9,7 @@
 - `DELETE /scenarios/{id}`      删场景（物理删除，级联步骤与关联）
 - `PUT    /scenarios/{id}/steps` **整体覆盖**步骤
 - `PUT    /scenarios/{id}/links` **整体覆盖**关联
+- `POST   /derive`              文档反推（**不写表**，返回候选 + 统计）
 
 **权限在服务层判定**（与 04 / 05 / 07 / 08 一致）：
 「归档先判、角色后判」的顺序只有一个出处——`app/common/permissions.py`。
@@ -19,10 +20,13 @@ from sqlalchemy.orm import Session
 
 from app.common.db import get_db
 from app.common.deps import current_user
+from app.llm.provider import LLMProvider, get_provider
 from app.models.user import User
 
 from app.process_baselines import service
 from app.process_baselines.schemas import (
+    DeriveRequest,
+    DeriveResponse,
     LinksReplace,
     Page,
     ScenarioBatchCreate,
@@ -167,6 +171,33 @@ def replace_links(
             project_id=project_id,
             scenario_id=scenario_id,
             actor=user,
+            payload=payload,
+        )
+    )
+
+
+@router.post("/derive", response_model=DeriveResponse)
+def run_derive(
+    project_id: int,
+    payload: DeriveRequest,
+    session: Session = Depends(get_db),
+    user: User = Depends(current_user),
+    provider: LLMProvider = Depends(get_provider),
+) -> DeriveResponse:
+    """文档反推（项目管理员）。**同步**执行，响应直接带候选与统计。
+
+    **不写表**：三张业务表行数不变——候选只是临时草稿，
+    用户勾选后走 `POST /scenarios` 批量采纳。
+    """
+    return DeriveResponse(
+        **service.run_derive(
+            session,
+            project_id=project_id,
+            actor=user,
+            document_id=payload.document_id,
+            document_version_id=payload.document_version_id,
+            template_id=payload.template_id,
+            provider=provider,
             payload=payload,
         )
     )

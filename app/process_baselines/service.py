@@ -1,4 +1,4 @@
-"""流程基线的服务层（10-process-baseline T118）。
+"""流程基线的服务层（10-process-baseline T118 / T119）。
 
 **固定校验顺序**（spec §7，与 04 / 05 / 07 / 08 / 09 一致）：
 
@@ -7,7 +7,7 @@
 校验阶段失败**不建行**：不会留下「校验没过却有一条记录」的脏数据。
 **失败操作不写审计**（校验在建行之前）。
 
-四条关键语义：
+五条关键语义：
 
 1. **批量新建整批拒**：5 条里第 3 条校验失败 → 全部不落库（spec §5.1）。
 2. **步骤整体覆盖**：先校验整组再删旧插新，校验不过旧步骤原样保留（spec §5.2）。
@@ -15,6 +15,8 @@
    （不采信客户端传值，spec §5.3）。
 4. **来源追溯只读**：手工来源六列强制置 NULL；文档推导来源三元组必填且自洽；
    `PATCH` 传了追溯字段也不写（spec §5.1 / AC-201）。
+5. **反推不写表**：`run_derive` 只返回候选 + 统计，三张表行数不变
+   （引擎签名里没有 `session`，spec §5.4 / AC-202）。
 """
 
 from datetime import datetime, timezone
@@ -25,15 +27,27 @@ from sqlalchemy.orm import Session
 
 from app.common import permissions
 from app.common.audit import write_audit
+from app.common.config import get_settings
 from app.common.errors import (
+    DocumentNotFound,
+    DocumentVersionNotAnalyzable,
+    DocumentVersionNotFound,
     ProcessBaselineDuplicateName,
     ProcessBaselineInvalid,
     ProcessBaselineLinkInvalid,
     ProcessBaselineNotFound,
     ProcessBaselineStepInvalid,
+    PromptTemplateInvalid,
 )
-from app.models.baseline import BaselineFeaturePoint, BaselineFunction
+from app.documents import service as documents_service
+from app.llm.provider import LLMProvider
+from app.models.baseline import (
+    BaselineFeaturePoint,
+    BaselineFunction,
+    BaselineModule,
+)
 from app.models.document import Document, DocumentChapter, DocumentVersion
+from app.models.incremental import PromptTemplate
 from app.models.process_baseline import (
     SOURCE_TYPES,
     STATUSES,
@@ -44,7 +58,9 @@ from app.models.process_baseline import (
 )
 from app.models.user import User
 
+from app.process_baselines import derive as derive_engine
 from app.process_baselines.schemas import (
+    DeriveRequest,
     LinksReplace,
     ScenarioBatchCreate,
     ScenarioUpdate,
@@ -79,6 +95,12 @@ _ACTION_UPDATE = "修改流程基线场景"
 _ACTION_DELETE = "删除流程基线场景"
 _ACTION_STEPS = "修改流程基线步骤"
 _ACTION_LINKS = "修改流程基线关联"
+_ACTION_DERIVE = "发起流程基线文档反推"
+
+# 反推模板的 task_type——选错模板会静默产出错误结构（spec §11）。
+DERIVE_TASK_TYPE = "process_baseline"
+# 文档推导来源的生成方式（与 04 同名同义）。
+DERIVE_SOURCE_METHOD = "baseline_reverse"
 
 
 def _now() -> datetime:
@@ -934,3 +956,255 @@ def replace_links(
     )
     session.commit()
     return _scenario_out(session, scenario)
+
+
+# ---------------------------------------------------------------- 文档反推
+
+
+def _render_existing_scenarios(session: Session, project_id: int) -> list[str]:
+    """已有流程基线场景的**名称**清单（防重复抽取）。
+
+    只给名称、不给 id：这份清单的用途是告诉模型「这些已经存在」。
+    排序稳定，保证同一份 Prompt 可复现。
+    """
+    rows = session.scalars(
+        select(ProcessBaseline.name)
+        .where(
+            ProcessBaseline.project_id == project_id,
+            ProcessBaseline.status == "active",
+        )
+        .order_by(ProcessBaseline.id)
+    ).all()
+    return list(rows)
+
+
+def _render_linkable_targets(session: Session, project_id: int) -> list[dict]:
+    """可关联的功能基线清单（模块 → 功能 → 功能点，**带 id**）。
+
+    这份清单**不能省**：模型要产出关联就得知道有哪些目标可选、id 是多少。
+    不给它就会自己编 `target_id`——06 期 L2 联调翻车就是这么来的，
+    编造的 id 全被当成越界丢弃，结论一条不剩（spec §3.10）。
+
+    只列**在用**目标：归档的目标关联不了（`_resolve_links` 会拒）。
+    """
+    modules = session.scalars(
+        select(BaselineModule)
+        .where(
+            BaselineModule.project_id == project_id,
+            BaselineModule.status == "active",
+        )
+        .order_by(BaselineModule.sort_order, BaselineModule.id)
+    ).all()
+    if not modules:
+        return []
+
+    module_ids = [module.id for module in modules]
+    functions = session.scalars(
+        select(BaselineFunction)
+        .where(
+            BaselineFunction.project_id == project_id,
+            BaselineFunction.status == "active",
+            BaselineFunction.module_id.in_(module_ids),
+        )
+        .order_by(BaselineFunction.id)
+    ).all()
+    if not functions:
+        return []
+
+    points = session.scalars(
+        select(BaselineFeaturePoint)
+        .where(
+            BaselineFeaturePoint.project_id == project_id,
+            BaselineFeaturePoint.status == "active",
+            BaselineFeaturePoint.function_id.in_([f.id for f in functions]),
+        )
+        .order_by(BaselineFeaturePoint.id)
+    ).all()
+
+    module_names = {module.id: module.name for module in modules}
+    points_by_function: dict[int, list[BaselineFeaturePoint]] = {}
+    for point in points:
+        points_by_function.setdefault(point.function_id, []).append(point)
+
+    targets: list[dict] = []
+    for function in functions:
+        targets.append(
+            {
+                "module_name": module_names.get(function.module_id, ""),
+                "target_type": "function",
+                "target_id": function.id,
+                "target_name": function.name,
+            }
+        )
+        for point in points_by_function.get(function.id, []):
+            targets.append(
+                {
+                    "module_name": module_names.get(function.module_id, ""),
+                    "target_type": "feature_point",
+                    "target_id": point.id,
+                    "target_name": point.name,
+                }
+            )
+    return targets
+
+
+def _load_derive_document(
+    session: Session, *, project_id: int, document_id: int
+) -> Document:
+    document = session.scalar(
+        select(Document).where(
+            Document.id == document_id, Document.project_id == project_id
+        )
+    )
+    if document is None:
+        raise DocumentNotFound("文档不存在")
+    return document
+
+
+def _load_derive_version(
+    session: Session, *, document_id: int, version_id: int
+) -> DocumentVersion:
+    version = session.scalar(
+        select(DocumentVersion).where(
+            DocumentVersion.id == version_id,
+            DocumentVersion.document_id == document_id,
+        )
+    )
+    if version is None:
+        raise DocumentVersionNotFound("版本不存在")
+    return version
+
+
+def _load_derive_template(session: Session, template_id: int) -> PromptTemplate:
+    """模板必须是**本类型 + 在用**的。
+
+    选错类型不会报错、只会静默产出错误结构——所以类型也要校验。
+    """
+    template = session.get(PromptTemplate, template_id)
+    if (
+        template is None
+        or template.task_type != DERIVE_TASK_TYPE
+        or template.status != "active"
+    ):
+        raise PromptTemplateInvalid(
+            "提示词模板不存在、未启用或类型不是流程基线推导"
+        )
+    return template
+
+
+def run_derive(
+    session: Session,
+    *,
+    project_id: int,
+    actor: User,
+    document_id: int,
+    document_version_id: int,
+    template_id: int,
+    provider: LLMProvider,
+    payload: DeriveRequest | None = None,
+) -> dict:
+    """发起一次文档反推（同步跑完）。
+
+    编排顺序（spec §5.4）：
+
+    1. 项目 404 → 归档 409 → 角色 403；
+    2. 文档 / 版本校验（**版本必须是生效版本**）；
+    3. 模板校验：存在 + `task_type='process_baseline'` + `status='active'`；
+    4. 取章节（复用 `documents_service.list_chapters`）；
+    5. 组两份清单；
+    6. 调引擎；
+    7. **返回候选 + 统计，不写表**。
+
+    **反推不写表**：`process_baselines` / `process_baseline_steps` /
+    `process_baseline_links` 三张表行数全部不变（AC-202）。
+    引擎签名里没有 `session`——「不写表」是结构上的保证，不是靠自觉。
+
+    `payload` 是**原始请求体**（路由层传进来），只为判多余字段——
+    入参模型是 `extra="allow"`，多余字段要活到服务层才能被判 400
+    （pydantic 默认的 `ignore` 会把它们悄悄丢掉）。
+    直接调用本函数而不传 `payload` 时跳过这一步（三个 id 已经显式传了）。
+    """
+    _ensure_admin(session, project_id=project_id, actor=actor, action=_ACTION_DERIVE)
+    if payload is not None:
+        _reject_unknown(payload)
+
+    document = _load_derive_document(
+        session, project_id=project_id, document_id=document_id
+    )
+    version = _load_derive_version(
+        session, document_id=document_id, version_id=document_version_id
+    )
+    if version.status != "active":
+        raise DocumentVersionNotAnalyzable("只有生效版本的文档可以反推流程基线")
+
+    template = _load_derive_template(session, template_id)
+
+    limit = get_settings().incremental_max_input_chars
+    chapters = documents_service.list_chapters(
+        session,
+        project_id=project_id,
+        document_id=document_id,
+        version_id=document_version_id,
+    )
+    existing_scenarios = _render_existing_scenarios(session, project_id)
+    linkable_targets = _render_linkable_targets(session, project_id)
+
+    result = derive_engine.run_derive(
+        provider=provider,
+        template=template,
+        document_name=document.name,
+        version_no=version.version_no,
+        chapters=chapters,
+        existing_scenarios=existing_scenarios,
+        linkable_targets=linkable_targets,
+        max_chars=limit,
+    )
+
+    stats = {
+        "chapter_count": result.chapter_count,
+        "processed_count": result.processed_count,
+        "candidate_count": result.candidate_count,
+        "skipped_chapters": result.skipped_chapters,
+    }
+
+    write_audit(
+        session,
+        "process_baseline.derive.run",
+        actor_id=actor.id,
+        actor_role=actor.global_role,
+        project_id=project_id,
+        target_type="process_baseline_derive",
+        target_id=None,
+        after_data={
+            "document_id": document_id,
+            "document_version_id": document_version_id,
+            "template_id": template_id,
+            "provider": getattr(provider, "name", "mock"),
+            "stats": stats,
+        },
+    )
+    session.commit()
+
+    return {
+        "chapter_count": result.chapter_count,
+        "processed_count": result.processed_count,
+        "candidate_count": result.candidate_count,
+        "skipped_chapters": result.skipped_chapters,
+        "scenarios": [
+            {
+                "name": scenario.name,
+                "description": scenario.description,
+                "precondition": scenario.precondition,
+                "confidence": scenario.confidence,
+                "rationale": scenario.rationale,
+                "source_chapter_id": scenario.source_chapter_id,
+                "source_chapter_title": scenario.source_chapter_title,
+                "steps": [
+                    {"action": action, "expected": expected}
+                    for action, expected in scenario.steps
+                ],
+                "links": list(scenario.links),
+            }
+            for scenario in result.scenarios
+        ],
+    }

@@ -19,6 +19,11 @@ from pydantic import BaseModel, ConfigDict, Field
 from app.baselines.schemas import Page
 
 __all__ = [
+    "DeriveRequest",
+    "DeriveResponse",
+    "DerivedLink",
+    "DerivedStep",
+    "DerivedScenario",
     "LinkInput",
     "LinksReplace",
     "LinkOut",
@@ -200,3 +205,75 @@ class ScenarioCreatedOut(BaseModel):
 
     created: int
     items: list[ScenarioCreatedItem] = Field(default_factory=list)
+
+
+# ---------------------------------------------------------------- 文档反推
+
+
+class DeriveRequest(BaseModel):
+    """发起反推的请求体——**三个选择器**（照抄 04 的 `DeriveRunRequest`）。
+
+    **版本必须是生效版本**（`status='active'`）——非生效版本的正文不可信。
+
+    `extra="allow"`：多余字段要活到服务层才能被判 400
+    （pydantic 默认的 `ignore` 会把它们悄悄丢掉，接口返回 200，
+    用户以为改了，其实什么都没改）。
+    """
+
+    model_config = ConfigDict(extra="allow")
+
+    document_id: int
+    document_version_id: int
+    template_id: int
+
+
+class DerivedStep(BaseModel):
+    """候选场景里的一步操作。"""
+
+    action: str
+    expected: str = ""
+
+
+class DerivedLink(BaseModel):
+    """候选场景里的一条关联建议。
+
+    `target_name` 由**服务端按清单重查**写入（模型给的名字不采信）。
+    """
+
+    target_type: str
+    target_id: int
+    target_name: str = ""
+
+
+class DerivedScenario(BaseModel):
+    """一个候选场景（**尚未落库**，所以没有 `id`）。
+
+    用户勾选后走 `POST /scenarios` 采纳——条目里带上
+    `source_document_id` / `source_version_id` / `source_chapter_id`
+    与 `source_chapter_title`，服务端做自洽校验（spec §5.1）。
+    """
+
+    name: str
+    description: str | None = None
+    precondition: str | None = None
+    confidence: float | None = None
+    rationale: str | None = None
+    source_chapter_id: int | None = None
+    source_chapter_title: str | None = None
+    steps: list[DerivedStep] = Field(default_factory=list)
+    links: list[DerivedLink] = Field(default_factory=list)
+
+
+class DeriveResponse(BaseModel):
+    """反推响应（**不写表**）。
+
+    `skipped_chapters` 记被跳过的章节与原因
+    （`empty_content` = 正文为空，不调模型；
+    `no_structured_content` = 模型没抽出东西）。
+    """
+
+    chapter_count: int = 0
+    processed_count: int = 0
+    candidate_count: int = 0
+    skipped_chapters: list[dict] = Field(default_factory=list)
+    scenarios: list[DerivedScenario] = Field(default_factory=list)

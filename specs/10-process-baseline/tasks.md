@@ -320,6 +320,79 @@
 **AC**：AC-202、AC-203
 **提交**：`feat(process-baseline): 文档反推引擎与候选采纳`
 
+**T119 补充记录（执行情况）**
+
+- **1 个接口落地**：`POST /api/projects/{project_id}/process-baselines/derive`
+  （同步执行，项目管理员）。OpenAPI 实测路径与 spec §7 一致
+  （本任务后共 5 条 path、8 个 method）。
+- **5 个文件**：`app/process_baselines/derive.py`（新建，纯函数引擎）/
+  `schemas.py`（追加 5 个模型）/ `service.py`（追加 `run_derive` + 两份清单渲染）/
+  `router.py`（追加 1 条路由）/ `tests/process_baselines/test_derive.py`（新建）。
+  **不写迁移、不加表**（两库 head 仍 `0025`）。
+- **新增测试 28 条**：`tests\process_baselines` 由 T118 的 90 条涨到 **118 条**。
+- **「不写表」是结构性的，不是靠自觉**：引擎 `run_derive` 的签名里
+  **没有 `session`**（用例用 `inspect.signature` 断言参数集**逐个列出**，
+  不靠肉眼）；反推前后三张表行数**逐张比对**（`process_baselines` /
+  `process_baseline_steps` / `process_baseline_links`）。
+- **「只丢一处」的三个口径各有断言**（本期最容易被写成「整次失败」的三处）：
+  ① 候选 `name` 为空 / 超长（> 128）→ **只丢该候选**，其余正常返回；
+  ② 步骤 `action` 为空 → **只丢该步骤**，候选与其余步骤保留；
+  ③ 关联 `target_id` 不在可关联清单里 → **只丢该条关联**，
+  候选与其步骤照常返回。
+  反过来，**坏 JSON / 根结构不是 `{"scenarios": [...]}` → 整次失败**
+  （502 `LLM_OUTPUT_INVALID`），**失败不写审计**。
+- **「可关联的功能基线清单（带 id）」这一段钉死了**（spec §3.10 的要害）：
+  Prompt 里断言同时出现「已有流程基线场景清单」与
+  「可关联的功能基线目标（target_id 取自这里）」，且清单里能查到
+  `功能#<真实id> 用户扫码登录` 与 `功能点#<真实id> 展示扫码二维码`。
+  另加一条断言：同一份文档**两次反推的 Prompt 逐字节相同**（可复现），
+  清单按**模块分组**渲染（模块头只出现一次）。
+- **同名场景跨章节合并**：步骤**保留首次出现**（不追加），
+  `source_chapter_id` / `source_chapter_title` 取第一次出现；
+  关联则**取并集**（按 `(target_type, target_id)` 去重）——
+  步骤是有序列表，追加会重复；关联是集合，互相覆盖掉才是丢信息。
+- **既有五个 Mock 分支「一个字节不变」做成了可执行断言**：
+  用例把五个既有常量（`DEFAULT_RESPONSE` / `SECOND_PASS_*` / `DERIVE_*` /
+  `TEST_POINT_*` / `TEST_CASE_*`）的**字面量逐字节写死**比对，
+  再逐个分支调 `MockProvider.chat` 断言返回值与常量**逐字节相等**。
+  `git diff --stat 983189e -- app/llm/mock.py` → **为空**。
+- **踩坑：反推请求的多余字段，pydantic 默认是「静默丢弃」不是「拒绝」**。
+  最初把 `DeriveRequest` 写成不带 `extra` 的模型，多余字段被 pydantic 的
+  `ignore` 悄悄丢掉、接口返回 200——这与平台「入参一律 `extra="allow"`，
+  让多余字段活到服务层判 400」的约定相反。
+  改成 `extra="allow"` + 服务层 `_reject_unknown` → 400
+  `PROCESS_BASELINE_INVALID`（用例断言 `provider.calls == []`：
+  请求没被受理就不该调模型）。
+- **踩坑：`_render_linkable_targets` 第一版按「相邻同模块」判断模块头**，
+  但功能 id 是**全局自增**的——同一模块的两个功能可能不连号，
+  中间夹着别的模块的功能，就会出现重复的模块头。
+  改成**按模块分组渲染**（`dict` 保序），并加一条断言：
+  两个模块 → Prompt 里 `- 模块：` **恰好出现 2 次**。
+- **踩坑：引擎侧 `MAX_NAME_LEN=128` 与服务侧 `MAX_NAME_LEN=255` 是两套口径**
+  （前者更严，是引擎的输出契约；后者是 DB 列宽）。
+  两者**不互相 import**——引擎比库严，采纳时不会超列宽。
+  `precondition` 引擎侧也截到 1000，否则采纳时会被服务侧的
+  `MAX_PRECONDITION_LEN=1000` 拒掉。
+- **红线 diff 实测**：`git diff --stat 983189e -- app/baselines/ app/incremental/`
+  `app/test_points/ app/test_cases/ app/automation/ app/documents/ app/projects/`
+  `app/llm_admin/ app/llm/ app/models/ migrations/ tests/e2e/ web/` → **全为空**。
+  本任务对上游**零改动**（连 `app/llm/mock.py` 一个字都没动）。
+- **既有 e2e 与前端零改动**：`npm run build` 通过（本期不碰前端，仅回归确认）。
+- **前台等价核对**（本任务只有接口，走真实 HTTP 栈 + 三张表行数断言）：
+  `POST /derive` → 200，候选**带步骤**（2 个候选各 2 步），
+  **三张表行数 `(0,0,0) → (0,0,0)` 不变** → 勾选 2 个 → `POST /scenarios`
+  → 201、`created=2`、两行 `source_type='document_derived'` 且追溯三元组
+  `(文档, 版本, 章节)` 与请求一致、`source_chapter_title` 是章节标题快照
+  → `PUT /scenarios/{id}/links` → 关联的 `target_name` 是**服务端重查的真名**
+  （请求里传「前端乱传的名字」也被覆盖）→ 审计三条
+  `process_baseline.derive.run` / `.scenario.create` / `.links.update` 均有落库
+  → 冒烟数据已清理（开发库三表归零）。
+- **零真实 socket**：`grep -r "requests\|urlopen\|aiohttp\|socket.socket"`
+  `tests\process_baselines` → 无结果。
+- **全量回归**：后端 **1377 passed**（1349 + 28），串行，exit 0，459.41s；
+  上游定向（`tests\baselines` / `test_points` / `test_cases` / `automation` /
+  `llm` / `incremental` / `common`）**907 passed**，零回归。
+
 ---
 
 ### T120 审核与快照（提交冻结 / 通过转正 / 驳回）
@@ -571,7 +644,7 @@
 |---|---|---|---|---|---|---|---|
 | T117 | `tests\process_baselines` **41 passed**（AC-197/210/211 全绿）；`tests\automation` **141 passed**（09 期零回归） | **1300 passed**（1259 + 41），串行，exit 0，463.09s | 未改动前端，**不涉及** | 不涉及 | 两库 `0025 → 0024 → 0025` **干净**，head 均 `0025`；**降级后 `prompt_templates.task_type` 只剩旧四值**、`process_baseline` 残留行 = 0 | 不涉及（纯后端） | 通过 |
 | T118 | `tests\process_baselines` **90 passed**（T117 的 41 + 新增 49；AC-198/199/200/201 全绿）；上游定向（baselines / test_points / test_cases / automation / llm / incremental / common）**907 passed**，零回归 | **1349 passed**（1300 + 49），串行，exit 0，433.94s | `npm run build` 通过（**未改动前端**，仅回归确认） | 不涉及 | 不涉及（本任务不写迁移，两库 head 仍 `0025`） | 不涉及（纯接口，按「前台核对点」走真实 HTTP 栈等价核对） | 通过 |
-| T119 | `tests\process_baselines` 待回填 | 待回填 | `npm run build` 待回填 | 不涉及 | 不涉及 | 不涉及（纯接口） | 待回填 |
+| T119 | `tests\process_baselines` **118 passed**（T118 的 90 + 新增 28；AC-202/203 全绿）；上游定向（baselines / test_points / test_cases / automation / llm / incremental / common）**907 passed**，零回归 | **1377 passed**（1349 + 28），串行，exit 0，459.41s | `npm run build` 通过（**未改动前端**，仅回归确认） | 不涉及 | 不涉及（本任务不写迁移，两库 head 仍 `0025`） | 不涉及（纯接口，按「前台核对点」走真实 HTTP 栈等价核对） | 通过 |
 | T120 | `tests\process_baselines` 待回填 | 待回填 | `npm run build` 待回填 | 不涉及 | 不涉及 | 不涉及（纯接口） | 待回填 |
 | T121 | `tests\process_baselines` + `tests\common` 待回填 | 待回填 | `npm run build` 待回填 | 不涉及 | 不涉及 | 不涉及（纯接口） | 待回填 |
 | T122 | `tests\process_baselines` 待回填 | 待回填 | `npm run build` 待回填 | e2e 全量待回填（原 58 + 新增 ≥ 2） | 不涉及 | `.screenshots/T122/` 待回填 | 待回填 |
