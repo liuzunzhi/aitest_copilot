@@ -206,6 +206,64 @@
 **AC**：AC-198、AC-199、AC-200、AC-201
 **提交**：`feat(process-baseline): 场景 CRUD、步骤覆盖与关联功能基线`
 
+**T118 补充记录（执行情况）**
+
+- **7 个接口全部落地**（前缀 `/api/projects/{project_id}/process-baselines`）：
+  `GET/POST /scenarios` · `GET/PATCH/DELETE /scenarios/{id}` ·
+  `PUT /scenarios/{id}/steps` · `PUT /scenarios/{id}/links`。
+  OpenAPI 实测路径与 spec §7 一致（4 条 path、7 个 method）。
+- **新增测试 49 条**：`test_scenarios.py` **25 条** + `test_steps.py` **10 条** +
+  `test_links.py` **14 条**；`tests\process_baselines` 由 T117 的 41 条
+  涨到 **90 条**。
+- **三种「整批拒 / 整组拒」口径各有断言**（本期最容易被写成半截状态的三处）：
+  ① 批量新建 5 条里第 3 条校验失败 → `process_baselines` **零新增行**；
+  ② 步骤空数组 / 101 步 / 某步 `action` 空白 → **旧步骤行数与内容逐字节不变**；
+  ③ 关联目标不存在 / 跨项目 / 已归档 / 同批重复 → **链接行零新增**。
+- **服务端重查名称这条钉死了**：请求里传
+  `target_name="前端乱传的名字"`，落库与响应都是库里的真名
+  「用户扫码登录」——与 09 的「入库时服务端重扫重算」同一思路。
+- **04 物理删功能后链接仍可读**（走 04 的**真实删除接口**，不是直接改库）：
+  链接行仍在，`target_deleted=true`，`target_name` 仍是删除前的名称快照，
+  且**04 的删功能接口仍返回成功**（不因流程基线的链接行变 500）。
+  另加一条 `information_schema` 断言：`process_baseline_links` 的外键
+  **只有** `process_baselines` 一道，指向 `baseline_functions` /
+  `baseline_feature_points` 的都不在。
+- **来源追溯只读钉死**：手工来源传了六列 → 服务端**强制置 NULL**（读回来全 null）；
+  `PATCH` 传 `source_document_id` / `source_chapter_title` / `source_method`
+  → **服务端不写**，读回来仍是原值；文档推导来源三元组缺失 / 版本与文档对不上 /
+  章节属别的项目 → 400 `PROCESS_BASELINE_INVALID` 且**整批不落库**。
+- **踩坑：spec 写「04 的删功能接口仍返回 204」，实际是 `200 + DeleteResponse`**
+  （`app/baselines/router.py` 的 `delete_function`）。用例断言**真实契约**
+  并在 docstring 里注明差异——AC-200 的要害是「不 500」，不是状态码。
+  顺带确认 04 **没有** `status_code=204` 的路由（`grep` 全空）。
+- **顺手补了一个会变 500 的洞**：改成别的场景的名字会撞唯一键
+  `uk_pbaselines_project_name`，裸写会抛 MySQL 的 1062 给前端。
+  改法照抄 04 的 `_guarded_update`——**属性修改放在 SAVEPOINT 内部**，
+  冲突落成 409 `PROCESS_BASELINE_DUPLICATE_NAME`，且**原场景一行都没改坏**
+  （属性回滚靠 SAVEPOINT，ORM 才会把值还原）。
+- **列表页只给计数不给全量**：`step_count` / `link_count` 用两个聚合查询一次算出，
+  全量 `steps` / `links` 只在详情里给——避免列表页按场景数放大查询次数。
+  详情里目标存活判定也是**一次 `IN` 批量查**（`_live_targets`），不做 N+1。
+- **红线 diff 实测**：`git diff --stat db03e74 -- app/baselines/ app/test_points/`
+  `app/incremental/ app/test_cases/ app/automation/ app/models/project.py`
+  `app/llm/mock.py app/models/incremental.py app/documents/ app/projects/`
+  `app/llm_admin/` → **全为空**。本任务对上游的改动**只有**
+  `app/main.py` 加一行路由注册。
+- **既有 e2e 与前端零改动**：`git diff --stat db03e74 -- tests/e2e/test_tabs_ui.py`
+  `tests/e2e/test_t116_closing_ui.py tests/e2e/test_automation_ui.py web/package.json`
+  → **为空**；`npm run build` 通过（本期不碰前端）。
+- **前台等价核对**（本任务只有接口，按 tasks.md 的「前台核对点」走真实 HTTP 栈）：
+  批量建场景 → 201（三表 `1/2/1`）→ 改名称 → `version_no` 1→2 → 覆盖步骤 →
+  `step_no=[1,2,3]` → 覆盖关联 → `target_name` 被服务端重查覆盖 →
+  04 删功能 → 200 且链接仍在、标「目标已删除」（三表 `1/3/1`）→
+  删场景 → 204（三表 `0/0/0`）。冒烟数据已清理（开发库三表归零）。
+- **两库 head 均为 `0025`**（本任务不写迁移）；`0025` 的往返由 T117 实跑过。
+- **零真实 socket**：`grep -r "requests\|urlopen\|aiohttp\|socket.socket"`
+  `tests\process_baselines` → 无结果。
+- **全量回归**：后端 **1349 passed**（1300 + 49），串行，exit 0，433.94s；
+  上游定向（`tests\baselines` / `test_points` / `test_cases` / `automation` /
+  `llm` / `incremental` / `common`）**907 passed**，零回归。
+
 ---
 
 ### T119 反推引擎 + 候选采纳
@@ -512,7 +570,7 @@
 | 任务 | 定向 | 后端全量 | 前端构建 | e2e | 迁移往返 | 截图 | 结论 |
 |---|---|---|---|---|---|---|---|
 | T117 | `tests\process_baselines` **41 passed**（AC-197/210/211 全绿）；`tests\automation` **141 passed**（09 期零回归） | **1300 passed**（1259 + 41），串行，exit 0，463.09s | 未改动前端，**不涉及** | 不涉及 | 两库 `0025 → 0024 → 0025` **干净**，head 均 `0025`；**降级后 `prompt_templates.task_type` 只剩旧四值**、`process_baseline` 残留行 = 0 | 不涉及（纯后端） | 通过 |
-| T118 | `tests\process_baselines` 待回填 | 待回填 | `npm run build` 待回填 | 不涉及 | 不涉及 | 不涉及（纯接口） | 待回填 |
+| T118 | `tests\process_baselines` **90 passed**（T117 的 41 + 新增 49；AC-198/199/200/201 全绿）；上游定向（baselines / test_points / test_cases / automation / llm / incremental / common）**907 passed**，零回归 | **1349 passed**（1300 + 49），串行，exit 0，433.94s | `npm run build` 通过（**未改动前端**，仅回归确认） | 不涉及 | 不涉及（本任务不写迁移，两库 head 仍 `0025`） | 不涉及（纯接口，按「前台核对点」走真实 HTTP 栈等价核对） | 通过 |
 | T119 | `tests\process_baselines` 待回填 | 待回填 | `npm run build` 待回填 | 不涉及 | 不涉及 | 不涉及（纯接口） | 待回填 |
 | T120 | `tests\process_baselines` 待回填 | 待回填 | `npm run build` 待回填 | 不涉及 | 不涉及 | 不涉及（纯接口） | 待回填 |
 | T121 | `tests\process_baselines` + `tests\common` 待回填 | 待回填 | `npm run build` 待回填 | 不涉及 | 不涉及 | 不涉及（纯接口） | 待回填 |
