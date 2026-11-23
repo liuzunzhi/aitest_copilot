@@ -28,6 +28,10 @@ __all__ = [
     "LinksReplace",
     "LinkOut",
     "Page",
+    "ReviewDecision",
+    "ReviewSubmit",
+    "RevisionDetail",
+    "RevisionOut",
     "ScenarioBatchCreate",
     "ScenarioCreate",
     "ScenarioCreatedItem",
@@ -277,3 +281,59 @@ class DeriveResponse(BaseModel):
     candidate_count: int = 0
     skipped_chapters: list[dict] = Field(default_factory=list)
     scenarios: list[DerivedScenario] = Field(default_factory=list)
+
+
+# ---------------------------------------------------------------- 审核与快照
+
+
+class ReviewSubmit(BaseModel):
+    """提交审核的请求体（照抄 04 的 `ReviewSubmit`）。"""
+
+    model_config = ConfigDict(extra="allow")
+
+    comment: str | None = Field(default=None, max_length=500)
+
+
+class ReviewDecision(BaseModel):
+    """审核结论的请求体（照抄 04 的 `ReviewDecision`）。
+
+    **本期不做分点审核**（spec §3.7）——所以**没有 `items` 字段**：
+    04 的 `items` 是分点决策，流程基线只做「整体通过 / 整体驳回」。
+    """
+
+    model_config = ConfigDict(extra="allow")
+
+    comment: str | None = Field(default=None, max_length=500)
+
+
+class RevisionOut(BaseModel):
+    """一份快照（列表项）。
+
+    `version_no` 在审核中 / 已驳回时为 **NULL**——驳回不占版本号。
+    三个计数描述的是**快照内容**，不是「当前库里有几个」。
+    """
+
+    id: int
+    project_id: int
+    version_no: int | None = None
+    status: str
+    scenario_count: int = 0
+    step_count: int = 0
+    link_count: int = 0
+    submitted_by: int | None = None
+    submitted_at: datetime | None = None
+    reviewed_by: int | None = None
+    reviewed_at: datetime | None = None
+    review_comment: str | None = None
+    created_at: datetime
+
+
+class RevisionDetail(RevisionOut):
+    """快照详情。
+
+    **同时给 `draft_snapshot` 与 `structure_json` 的原文**——
+    AC-205 要断言两者**逐字节相同**，接口得能拿到这两份原文。
+    """
+
+    draft_snapshot: str | None = None
+    structure_json: str | None = None

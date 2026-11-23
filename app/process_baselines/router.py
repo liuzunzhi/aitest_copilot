@@ -10,6 +10,11 @@
 - `PUT    /scenarios/{id}/steps` **整体覆盖**步骤
 - `PUT    /scenarios/{id}/links` **整体覆盖**关联
 - `POST   /derive`              文档反推（**不写表**，返回候选 + 统计）
+- `POST   /reviews/submit`      提交审核（**提交即冻结** `draft_snapshot`）
+- `POST   /reviews/{id}/approve` 审核通过（`structure_json` 原样转正 + 版本号）
+- `POST   /reviews/{id}/reject` 审核驳回（意见必填，不占版本号）
+- `GET    /revisions`           快照列表（状态筛选 + 分页）
+- `GET    /revisions/{id}`      快照详情（`draft_snapshot` / `structure_json` 原文）
 
 **权限在服务层判定**（与 04 / 05 / 07 / 08 一致）：
 「归档先判、角色后判」的顺序只有一个出处——`app/common/permissions.py`。
@@ -29,6 +34,10 @@ from app.process_baselines.schemas import (
     DeriveResponse,
     LinksReplace,
     Page,
+    ReviewDecision,
+    ReviewSubmit,
+    RevisionDetail,
+    RevisionOut,
     ScenarioBatchCreate,
     ScenarioCreatedOut,
     ScenarioOut,
@@ -200,4 +209,146 @@ def run_derive(
             provider=provider,
             payload=payload,
         )
+    )
+
+
+# ---------------------------------------------------------------- 审核与快照
+
+
+@router.get("/revisions", response_model=Page[RevisionOut])
+def list_revisions(
+    project_id: int,
+    status: str = Query(default="approved", pattern="^(approved|submitted|rejected|all)$"),
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=50, ge=1, le=200),
+    session: Session = Depends(get_db),
+    user: User = Depends(current_user),
+) -> Page[RevisionOut]:
+    """快照列表。默认只列审核通过的；`status=submitted` 看待审核的。"""
+    service.ensure_readable(session, project_id=project_id, actor=user)
+    result = service.list_revisions(
+        session, project_id, status=status, page=page, page_size=page_size
+    )
+    return Page[RevisionOut](
+        items=[RevisionOut(**item) for item in result["items"]],
+        total=result["total"],
+        page=result["page"],
+        page_size=result["page_size"],
+    )
+
+
+@router.get("/revisions/{revision_id}", response_model=RevisionDetail)
+def get_revision(
+    project_id: int,
+    revision_id: int,
+    session: Session = Depends(get_db),
+    user: User = Depends(current_user),
+) -> RevisionDetail:
+    """快照详情，含 `draft_snapshot` 与 `structure_json` 两份原文。"""
+    service.ensure_readable(session, project_id=project_id, actor=user)
+    return RevisionDetail(
+        **service.get_revision(session, project_id=project_id, revision_id=revision_id)
+    )
+
+
+@router.post("/reviews/submit", response_model=RevisionOut, status_code=201)
+def submit_review(
+    project_id: int,
+    payload: ReviewSubmit,
+    session: Session = Depends(get_db),
+    user: User = Depends(current_user),
+) -> RevisionOut:
+    """提交审核（项目管理员）。**提交即冻结**——`draft_snapshot` 在此刻定稿。
+
+    **同步接口**：前端要长超时（与 04 推导的同步执行同一策略）。
+    """
+    revision = service.submit_review(
+        session,
+        project_id=project_id,
+        actor=user,
+        comment=payload.comment,
+        payload=payload,
+    )
+    return RevisionOut(
+        id=revision.id,
+        project_id=revision.project_id,
+        version_no=revision.version_no,
+        status=revision.status,
+        scenario_count=revision.scenario_count,
+        step_count=revision.step_count,
+        link_count=revision.link_count,
+        submitted_by=revision.submitted_by,
+        submitted_at=revision.submitted_at,
+        reviewed_by=revision.reviewed_by,
+        reviewed_at=revision.reviewed_at,
+        review_comment=revision.review_comment,
+        created_at=revision.created_at,
+    )
+
+
+@router.post("/reviews/{revision_id}/approve", response_model=RevisionOut)
+def approve_review(
+    project_id: int,
+    revision_id: int,
+    payload: ReviewDecision,
+    session: Session = Depends(get_db),
+    user: User = Depends(current_user),
+) -> RevisionOut:
+    """审核通过：`structure_json` **原样转正** + 分配版本号（v1.0、v1.1…）。"""
+    revision = service.approve_review(
+        session,
+        project_id=project_id,
+        revision_id=revision_id,
+        actor=user,
+        comment=payload.comment,
+        payload=payload,
+    )
+    return RevisionOut(
+        id=revision.id,
+        project_id=revision.project_id,
+        version_no=revision.version_no,
+        status=revision.status,
+        scenario_count=revision.scenario_count,
+        step_count=revision.step_count,
+        link_count=revision.link_count,
+        submitted_by=revision.submitted_by,
+        submitted_at=revision.submitted_at,
+        reviewed_by=revision.reviewed_by,
+        reviewed_at=revision.reviewed_at,
+        review_comment=revision.review_comment,
+        created_at=revision.created_at,
+    )
+
+
+@router.post("/reviews/{revision_id}/reject", response_model=RevisionOut)
+def reject_review(
+    project_id: int,
+    revision_id: int,
+    payload: ReviewDecision,
+    session: Session = Depends(get_db),
+    user: User = Depends(current_user),
+) -> RevisionOut:
+    """驳回。意见必填；**不占版本号、不写 `structure_json`**，`draft_snapshot` 保留。"""
+    revision = service.reject_review(
+        session,
+        project_id=project_id,
+        revision_id=revision_id,
+        actor=user,
+        comment=payload.comment,
+        payload=payload,
+    )
+    return RevisionOut(
+        id=revision.id,
+        project_id=revision.project_id,
+        version_no=revision.version_no,
+        status=revision.status,
+        scenario_count=revision.scenario_count,
+        step_count=revision.step_count,
+        link_count=revision.link_count,
+        submitted_by=revision.submitted_by,
+        submitted_at=revision.submitted_at,
+        reviewed_by=revision.reviewed_by,
+        reviewed_at=revision.reviewed_at,
+        review_comment=revision.review_comment,
+        created_at=revision.created_at,
     )

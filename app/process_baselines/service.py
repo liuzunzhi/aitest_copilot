@@ -19,6 +19,7 @@
    （引擎签名里没有 `session`，spec §5.4 / AC-202）。
 """
 
+import json
 from datetime import datetime, timezone
 
 from sqlalchemy import func, select
@@ -33,12 +34,18 @@ from app.common.errors import (
     DocumentVersionNotAnalyzable,
     DocumentVersionNotFound,
     ProcessBaselineDuplicateName,
+    ProcessBaselineInReview,
     ProcessBaselineInvalid,
     ProcessBaselineLinkInvalid,
     ProcessBaselineNotFound,
+    ProcessBaselineReviewStatusInvalid,
+    ProcessBaselineRevisionNotFound,
     ProcessBaselineStepInvalid,
     PromptTemplateInvalid,
+    ReviewCommentRequired,
+    SelfApprovalForbidden,
 )
+from app.common.settings import get_setting
 from app.documents import service as documents_service
 from app.llm.provider import LLMProvider
 from app.models.baseline import (
@@ -54,6 +61,7 @@ from app.models.process_baseline import (
     TARGET_TYPES,
     ProcessBaseline,
     ProcessBaselineLink,
+    ProcessBaselineRevision,
     ProcessBaselineStep,
 )
 from app.models.user import User
@@ -96,6 +104,9 @@ _ACTION_DELETE = "删除流程基线场景"
 _ACTION_STEPS = "修改流程基线步骤"
 _ACTION_LINKS = "修改流程基线关联"
 _ACTION_DERIVE = "发起流程基线文档反推"
+_ACTION_SUBMIT_REVIEW = "提交流程基线审核"
+_ACTION_APPROVE_REVIEW = "审核通过流程基线快照"
+_ACTION_REJECT_REVIEW = "驳回流程基线快照"
 
 # 反推模板的 task_type——选错模板会静默产出错误结构（spec §11）。
 DERIVE_TASK_TYPE = "process_baseline"
@@ -706,6 +717,7 @@ def update_scenario(
     _ensure_admin(session, project_id=project_id, actor=actor, action=_ACTION_UPDATE)
 
     scenario = _load_scenario(session, project_id, scenario_id)
+    _ensure_not_in_review(session, project_id)
     _reject_unknown(payload, allowed=TRACE_FIELDS)
 
     before = {
@@ -787,6 +799,7 @@ def delete_scenario(
     _ensure_admin(session, project_id=project_id, actor=actor, action=_ACTION_DELETE)
 
     scenario = _load_scenario(session, project_id, scenario_id)
+    _ensure_not_in_review(session, project_id)
 
     step_count = session.scalar(
         select(func.count())
@@ -837,6 +850,7 @@ def replace_steps(
     _ensure_admin(session, project_id=project_id, actor=actor, action=_ACTION_STEPS)
 
     scenario = _load_scenario(session, project_id, scenario_id)
+    _ensure_not_in_review(session, project_id)
     _reject_unknown(payload)
 
     steps = _validate_steps([row.model_dump() for row in payload.steps])
@@ -906,6 +920,7 @@ def replace_links(
     _ensure_admin(session, project_id=project_id, actor=actor, action=_ACTION_LINKS)
 
     scenario = _load_scenario(session, project_id, scenario_id)
+    _ensure_not_in_review(session, project_id)
     _reject_unknown(payload)
 
     resolved = _resolve_links(
@@ -1208,3 +1223,413 @@ def run_derive(
             for scenario in result.scenarios
         ],
     }
+
+
+# ---------------------------------------------------------------- 审核与快照
+
+
+def _self_approval_allowed(session: Session) -> bool:
+    """是否允许审核自己提交的流程基线（照抄 04 的 `_self_approval_allowed`）。
+
+    读 `system_settings.allow_baseline_self_approval`（迁移 0018 播种，默认 True）。
+    读不到（老库没跑 0018）时**保守放行**——内部环境宁可能跑通。
+    """
+    try:
+        return bool(get_setting("allow_baseline_self_approval", session))
+    except KeyError:
+        return True
+
+
+def _ensure_not_in_review(session: Session, project_id: int) -> None:
+    """审核期锁定：项目内存在 `status='submitted'` 的快照 → 409。
+
+    **提交即冻结的前提是「提交后不能改」**（spec §3.8）：
+    否则冻结的 `draft_snapshot` 与库里当下的内容会漂移，
+    「通过时原样转正」也就失去意义。
+
+    锁定检查放在**服务层的每个写入口**——前端禁用按钮只是体验，
+    端上 409 才是保证（tasks.md §1 第 10 条）。
+    """
+    pending = session.scalar(
+        select(ProcessBaselineRevision.id).where(
+            ProcessBaselineRevision.project_id == project_id,
+            ProcessBaselineRevision.status == "submitted",
+        )
+    )
+    if pending is not None:
+        raise ProcessBaselineInReview("流程基线正在审核中，暂时不能修改场景")
+
+
+def _collect_snapshot(session: Session, project_id: int) -> tuple[str, dict]:
+    """收集全部 **active** 场景 → 快照 JSON 文本 + 三个计数。
+
+    **归档场景不参与快照**（与 04 的 `_collect_structure` 过滤
+    `status='active'` 一致），归档场景的步骤与关联也**不计入计数**。
+
+    **一次性批量查询**：先取全部 active 场景的 id，再用**一次 `IN`**
+    查步骤与关联，在 Python 层建映射——**不做 N+1**。
+    """
+    scenarios = session.scalars(
+        select(ProcessBaseline)
+        .where(
+            ProcessBaseline.project_id == project_id,
+            ProcessBaseline.status == "active",
+        )
+        .order_by(ProcessBaseline.id)
+    ).all()
+    if not scenarios:
+        raise ProcessBaselineInvalid("没有可提交审核的场景")
+
+    baseline_ids = [row.id for row in scenarios]
+
+    steps = session.scalars(
+        select(ProcessBaselineStep)
+        .where(ProcessBaselineStep.baseline_id.in_(baseline_ids))
+        .order_by(ProcessBaselineStep.baseline_id, ProcessBaselineStep.step_no)
+    ).all()
+    links = session.scalars(
+        select(ProcessBaselineLink)
+        .where(ProcessBaselineLink.baseline_id.in_(baseline_ids))
+        .order_by(ProcessBaselineLink.baseline_id, ProcessBaselineLink.id)
+    ).all()
+
+    steps_by_baseline: dict[int, list[dict]] = {}
+    for row in steps:
+        steps_by_baseline.setdefault(row.baseline_id, []).append(
+            {"step_no": row.step_no, "action": row.action, "expected": row.expected}
+        )
+    links_by_baseline: dict[int, list[dict]] = {}
+    for row in links:
+        links_by_baseline.setdefault(row.baseline_id, []).append(
+            {
+                "target_type": row.target_type,
+                "target_id": row.target_id,
+                "target_name": row.target_name,
+            }
+        )
+
+    items = []
+    step_total = 0
+    link_total = 0
+    for row in scenarios:
+        row_steps = steps_by_baseline.get(row.id, [])
+        row_links = links_by_baseline.get(row.id, [])
+        step_total += len(row_steps)
+        link_total += len(row_links)
+        items.append(
+            {
+                "id": row.id,
+                "name": row.name,
+                "description": row.description,
+                "precondition": row.precondition,
+                "source_type": row.source_type,
+                "status": row.status,
+                "version_no": row.version_no,
+                "steps": row_steps,
+                "links": row_links,
+            }
+        )
+
+    counts = {
+        "scenarios": len(items),
+        "steps": step_total,
+        "links": link_total,
+    }
+    snapshot = {"scenarios": items, "counts": counts}
+    return json.dumps(snapshot, ensure_ascii=False), counts
+
+
+def _next_version_no(session: Session, project_id: int) -> int:
+    """下一个快照版本号。项目内从 0 开始递增（v1.0、v1.1…）。
+
+    **只查 `process_baseline_revisions`**——功能基线与流程基线是**两套
+    独立的序列**（spec §3.1），同项目里功能基线发过 v1.0 之后，
+    流程基线**仍发 v1.0**。
+    """
+    current = session.scalar(
+        select(func.max(ProcessBaselineRevision.version_no)).where(
+            ProcessBaselineRevision.project_id == project_id,
+            ProcessBaselineRevision.status == "approved",
+        )
+    )
+    return int(current) + 1 if current is not None else 0
+
+
+def _load_revision(
+    session: Session, project_id: int, revision_id: int
+) -> ProcessBaselineRevision:
+    """按 id 取快照；不属于该项目 → 404。"""
+    revision = session.scalar(
+        select(ProcessBaselineRevision).where(
+            ProcessBaselineRevision.id == revision_id,
+            ProcessBaselineRevision.project_id == project_id,
+        )
+    )
+    if revision is None:
+        raise ProcessBaselineRevisionNotFound("流程基线快照不存在")
+    return revision
+
+
+def submit_review(
+    session: Session,
+    *,
+    project_id: int,
+    actor: User,
+    comment: str | None = None,
+    payload=None,
+) -> ProcessBaselineRevision:
+    """提交审核——**提交即冻结**（spec §3.5）。
+
+    编排顺序：
+
+    1. 项目 404 → 归档 409 → 角色 403；
+    2. 项目内已有 `status='submitted'` 的快照 → 409 `PROCESS_BASELINE_IN_REVIEW`；
+    3. 当前无 active 场景 → 400 `PROCESS_BASELINE_INVALID`（**不新建快照**）；
+    4. **冻结**：把当前全部 active 场景（含步骤与关联）冻结进 `draft_snapshot`；
+    5. 建 `ProcessBaselineRevision(status='submitted', …)`；
+    6. 审计 `process_baseline.review.submit` → commit。
+
+    **冻结发生在提交时，不是通过时**——审核人看到的与最终转正的是同一份。
+
+    `payload` 是**原始请求体**（路由层传进来），只为判多余字段——
+    入参模型是 `extra="allow"`，多余字段要活到服务层才能被判 400
+    （照抄 T119 的 `run_derive`）。
+    """
+    _ensure_admin(
+        session, project_id=project_id, actor=actor, action=_ACTION_SUBMIT_REVIEW
+    )
+    if payload is not None:
+        _reject_unknown(payload)
+
+    pending = session.scalar(
+        select(ProcessBaselineRevision.id).where(
+            ProcessBaselineRevision.project_id == project_id,
+            ProcessBaselineRevision.status == "submitted",
+        )
+    )
+    if pending is not None:
+        raise ProcessBaselineInReview("已有一份审核中的流程基线快照，请先处理它")
+
+    snapshot, counts = _collect_snapshot(session, project_id)
+
+    revision = ProcessBaselineRevision(
+        project_id=project_id,
+        status="submitted",
+        draft_snapshot=snapshot,
+        scenario_count=counts["scenarios"],
+        step_count=counts["steps"],
+        link_count=counts["links"],
+        submitted_by=actor.id,
+        submitted_at=_now(),
+        review_comment=comment,
+    )
+    session.add(revision)
+    session.flush()
+
+    write_audit(
+        session,
+        "process_baseline.review.submit",
+        actor_id=actor.id,
+        actor_role=actor.global_role,
+        project_id=project_id,
+        target_type="process_baseline_revision",
+        target_id=revision.id,
+        after_data={
+            "revision_id": revision.id,
+            "scenario_count": counts["scenarios"],
+            "step_count": counts["steps"],
+            "link_count": counts["links"],
+            "comment": comment,
+        },
+    )
+    session.commit()
+    return revision
+
+
+def approve_review(
+    session: Session,
+    *,
+    project_id: int,
+    actor: User,
+    revision_id: int,
+    comment: str | None = None,
+    payload=None,
+) -> ProcessBaselineRevision:
+    """审核通过——`structure_json` **原样转正**（逐字节相同）+ 分配版本号。
+
+    编排顺序：
+
+    1. 项目 404 → 归档 409 → 角色 403；
+    2. 快照不存在 → 404 `PROCESS_BASELINE_REVISION_NOT_FOUND`；
+    3. `status != 'submitted'` → 409 `PROCESS_BASELINE_REVIEW_STATUS_INVALID`；
+    4. 自审校验（读 `allow_baseline_self_approval`）→ 403 `SelfApprovalForbidden`；
+    5. **`structure_json = draft_snapshot`** ← **不重新冻结**（重新冻结就违背「所见即所冻」）；
+    6. `version_no = _next_version_no(...)` ← **只查 `process_baseline_revisions`**；
+    7. `status='approved'` + `reviewed_by` / `reviewed_at` → 审计 → commit。
+
+    `payload` 是**原始请求体**（路由层传进来），只为判多余字段。
+    """
+    _ensure_admin(
+        session, project_id=project_id, actor=actor, action=_ACTION_APPROVE_REVIEW
+    )
+    if payload is not None:
+        _reject_unknown(payload)
+
+    revision = _load_revision(session, project_id, revision_id)
+    if revision.status != "submitted":
+        raise ProcessBaselineReviewStatusInvalid("只有审核中的快照可以通过")
+
+    self_approved = revision.submitted_by == actor.id
+    if self_approved and not _self_approval_allowed(session):
+        raise SelfApprovalForbidden("不能审核自己提交的流程基线快照")
+
+    # 原样转正：逐字节相同，不重新冻结。
+    # 版本号**先算再写**——`version_no` 可空，多份审核中 / 已驳回的记录
+    # 不占版本号（MySQL 唯一索引允许多个 NULL）。
+    version_no = _next_version_no(session, project_id)
+    revision.structure_json = revision.draft_snapshot
+    revision.version_no = version_no
+    revision.status = "approved"
+    revision.reviewed_by = actor.id
+    revision.reviewed_at = _now()
+    if comment:
+        revision.review_comment = comment
+    session.flush()
+
+    write_audit(
+        session,
+        "process_baseline.review.approve",
+        actor_id=actor.id,
+        actor_role=actor.global_role,
+        project_id=project_id,
+        target_type="process_baseline_revision",
+        target_id=revision.id,
+        before_data={"status": "submitted"},
+        after_data={
+            "revision_id": revision.id,
+            "version_no": revision.version_no,
+            "scenario_count": revision.scenario_count,
+            "step_count": revision.step_count,
+            "link_count": revision.link_count,
+            "comment": comment,
+            # 自审放行时留痕，方便事后分辨「双人复核」与「单人兜底」
+            "self_approved": self_approved,
+        },
+    )
+    session.commit()
+    return revision
+
+
+def reject_review(
+    session: Session,
+    *,
+    project_id: int,
+    actor: User,
+    revision_id: int,
+    comment: str | None = None,
+    payload=None,
+) -> ProcessBaselineRevision:
+    """审核驳回——意见必填；**不占版本号、不写 `structure_json`**。
+
+    `draft_snapshot` **保留**供追溯（驳回后仍能查到当初提交的是什么）。
+    驳回后项目内不再有 `status='submitted'` 的快照 → **场景解锁**。
+
+    `payload` 是**原始请求体**（路由层传进来），只为判多余字段。
+    """
+    _ensure_admin(
+        session, project_id=project_id, actor=actor, action=_ACTION_REJECT_REVIEW
+    )
+    if payload is not None:
+        _reject_unknown(payload)
+
+    revision = _load_revision(session, project_id, revision_id)
+    if revision.status != "submitted":
+        raise ProcessBaselineReviewStatusInvalid("只有审核中的快照可以驳回")
+
+    self_approved = revision.submitted_by == actor.id
+    if self_approved and not _self_approval_allowed(session):
+        raise SelfApprovalForbidden("不能审核自己提交的流程基线快照")
+
+    if not (comment or "").strip():
+        raise ReviewCommentRequired("驳回必须填写意见")
+
+    revision.status = "rejected"
+    revision.reviewed_by = actor.id
+    revision.reviewed_at = _now()
+    revision.review_comment = comment
+    session.flush()
+
+    write_audit(
+        session,
+        "process_baseline.review.reject",
+        actor_id=actor.id,
+        actor_role=actor.global_role,
+        project_id=project_id,
+        target_type="process_baseline_revision",
+        target_id=revision.id,
+        before_data={"status": "submitted"},
+        after_data={
+            "revision_id": revision.id,
+            "comment": comment,
+            "self_approved": self_approved,
+        },
+        reason=comment,
+    )
+    session.commit()
+    return revision
+
+
+def list_revisions(
+    session: Session,
+    project_id: int,
+    *,
+    status: str = "approved",
+    page: int = 1,
+    page_size: int = 50,
+) -> dict:
+    """快照列表，新版本在前（照抄 04 的 `list_revisions` 口径）。
+
+    默认只列审核通过的（`status='approved'`）；`status='submitted'` 看待审核的，
+    `status='all'` 列全部。
+    """
+    query = select(ProcessBaselineRevision).where(
+        ProcessBaselineRevision.project_id == project_id
+    )
+    if status != "all":
+        query = query.where(ProcessBaselineRevision.status == status)
+    rows = session.scalars(query.order_by(ProcessBaselineRevision.id.desc())).all()
+    items = [_revision_out(row) for row in rows]
+    return _page(items, page, page_size)
+
+
+def _revision_out(revision: ProcessBaselineRevision) -> dict:
+    """快照的展示 dict（列表与详情共用）。"""
+    return {
+        "id": revision.id,
+        "project_id": revision.project_id,
+        "version_no": revision.version_no,
+        "status": revision.status,
+        "scenario_count": revision.scenario_count,
+        "step_count": revision.step_count,
+        "link_count": revision.link_count,
+        "submitted_by": revision.submitted_by,
+        "submitted_at": revision.submitted_at,
+        "reviewed_by": revision.reviewed_by,
+        "reviewed_at": revision.reviewed_at,
+        "review_comment": revision.review_comment,
+        "created_at": revision.created_at,
+    }
+
+
+def get_revision(
+    session: Session, *, project_id: int, revision_id: int
+) -> dict:
+    """快照详情——**同时给 `draft_snapshot` 与 `structure_json` 原文**。
+
+    两份原文都给，AC-205 才能断言它们**逐字节相同**。
+    """
+    revision = _load_revision(session, project_id, revision_id)
+    item = _revision_out(revision)
+    item["draft_snapshot"] = revision.draft_snapshot
+    item["structure_json"] = revision.structure_json
+    return item

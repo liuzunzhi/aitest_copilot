@@ -452,6 +452,82 @@
 **AC**：AC-204、AC-205、AC-206
 **提交**：`feat(process-baseline): 审核流程与提交即冻结的版本快照`
 
+**T120 补充记录（执行情况）**
+
+- **5 个接口落地**（前缀 `/api/projects/{project_id}/process-baselines`）：
+  `POST /reviews/submit`（201，同步）/ `POST /reviews/{id}/approve`（200）/
+  `POST /reviews/{id}/reject`（200）/ `GET /revisions`（200）/
+  `GET /revisions/{id}`（200）。本任务后共 **10 条 path、13 个 method**。
+- **4 个文件**：`app/process_baselines/service.py`（追加 8 个审核与快照函数 +
+  4 个写入口补锁定调用）/ `schemas.py`（追加 5 个模型）/
+  `router.py`（追加 5 条路由）/ `tests/process_baselines/test_review.py`（新建）。
+  **不写迁移、不加表**（两库 head 仍 `0025`）。
+- **新增测试 29 条**：`tests\process_baselines` 由 T119 的 118 条涨到 **147 条**；
+  后端全量由 1377 涨到 **1406**（`1406/1464 collected，58 deselected` = e2e）。
+- **「提交即冻结」做成结构性的，不是靠自觉**：
+  `approve_review` 里是一行 `revision.structure_json = revision.draft_snapshot`
+  ——**没有任何重新冻结的代码路径**；用例断言两列**逐字节相同**
+  （`encode("utf-8")` 后 `==`），不是「内容相等」。
+- **「审核期锁定」接在 4 个写入口**（`update_scenario` / `delete_scenario` /
+  `replace_steps` / `replace_links`），**在服务层**、**前端零改动**——
+  前端禁用是体验，端 409 才是保证（tasks.md §1 第 10 条）。
+  锁定检查的位置在 `_load_scenario`（资源 404）**之后**：
+  平台固定顺序是「项目 404 → 归档 409 → 角色 403 → 资源 404 → 业务校验」，
+  锁定属业务校验，放在资源 404 之后才不越序。
+- **「两列而不是一列」的三个口径各有断言**：提交后 `structure_json` 为 **NULL**；
+  驳回后 `version_no` 仍 **NULL**、`structure_json` 仍 **NULL**、
+  `draft_snapshot` **保留**（还能查到当初提交的是什么）。
+- **版本号两套序列独立**：`_next_version_no` **只查 `process_baseline_revisions`**。
+  用例在**同一个项目**里先让 04 的功能基线发 `v1.0`，再让流程基线提交通过
+  ——流程基线**仍发 `v1.0`**（`version_no=0`）。
+- **归档场景不参与快照**：用例建两个场景（一个带关联），把其中一个归档，
+  断言 `counts == {scenarios:1, steps:2, links:0}`——归档场景的
+  步骤与关联**也不计入**。
+- **驳回不占版本号**：`version_no` 可空 → MySQL 唯一索引允许多个 NULL，
+  多份审核中 / 已驳回的记录**不撞唯一键**。驳回后重提会产生**两份**
+  `draft_snapshot`（一份 rejected、一份 submitted），用例断言两份都在、都是 NULL。
+- **不写迁移、不加表、不改 CHECK**；`git diff --stat 048c390 --`（上游目录
+  + `app/llm/mock.py` + `app/models/` + `migrations/` + `tests/e2e/` + `web/`）
+  → **全为空**。
+- **踩坑：helpers 里 `BASE` 与 `BASELINES` 是两个常量**。
+  `tests/process_baselines/helpers.py` 的 `BASE` 指的是**流程基线**前缀，
+  04 的功能基线前缀是另一个常量 `BASELINES`——一开始在「两套版本号独立」
+  那条用例里用错了，04 的建模块接口直接 404。改用 `BASELINES` 后通过。
+- **踩坑：`extra="allow"` 的入参模型必须把 payload 传到服务层**。
+  `ReviewSubmit` / `ReviewDecision` 声明了 `extra="allow"`（与本模块其余写模型
+  同口径），但 pydantic 默认的 `ignore` 会把多余字段悄悄丢掉、接口返回 200——
+  与 T119 的 `run_derive` 踩的是同一个坑（见 T119 补充记录）。
+  三个审核接口都补了 `payload` 形参 → 服务层 `_reject_unknown` → 400
+  `PROCESS_BASELINE_INVALID`。用例断言：`items` 字段（04 的分点审核残留）
+  被拒，且**不新建快照、不写审计**。
+- **本期不做分点审核**（spec §3.7）：`ReviewDecision` **没有 `items` 字段**
+  ——04 的 `items` 是分点决策，本期只做「整体通过 / 整体驳回」。
+- **自审开关**复用 `allow_baseline_self_approval`（迁移 0018 播种，默认开启），
+  **本期不新增系统设置项**；读不到（老库没跑 0018）时**保守放行**（照抄 04）。
+  审计 `review.approve` 的 `after_data` 含 `self_approved` 标记。
+- **失败操作不写审计**：重复提交 / 无可审场景 / 状态不对 / 驳回没意见 /
+  快照不存在 → 五个场景都断言审计表**零新增**。
+- **前台等价核对**（本任务只有接口，走真实 HTTP 栈 + 表断言）：
+  `POST /reviews/submit` → 201 → `PATCH /scenarios/{id}` → **409
+  `PROCESS_BASELINE_IN_REVIEW`**（内容未变）→ `POST /reviews/{id}/approve`
+  → 200、`version_no=0` → `GET /revisions/{id}` → `structure_json` 与
+  `draft_snapshot` **逐字节相同=True**、`counts={scenarios:1, steps:2, links:1}`
+  → 再走一轮「提交 → 驳回（带意见）」→ `version_no=None`、
+  `structure_json=None`、`draft_snapshot` 保留=True → 改场景 **200**（已解锁）
+  → 审计三条 `process_baseline.review.submit` / `.review.approve` /
+  `.review.reject` 均有落库。冒烟数据已清理（开发库四张表归零）。
+- **零真实 socket**：`grep -r "requests\|urlopen\|aiohttp\|socket.socket"`
+  `tests\process_baselines` → 无结果。
+- **全量回归**：后端 **1406 passed**（1377 + 29），串行，exit 0；
+  上游定向（`tests\baselines` / `test_points` / `test_cases` / `automation` /
+  `llm` / `incremental` / `common`）**907 passed**，零回归；
+  `npm run build` 通过（本期**未改动前端**，仅回归确认）。
+- **踩坑：`tests\automation\test_runner.py::test_ac_185_timeout_kills_the_child_process`
+  是既有 flaky**——它起一个子进程跑 2 秒超时，机器负载高时子进程还没写出
+  `worker.pid` 就被 kill，断言「样例没跑起来」失败。**单跑必绿**（4 passed），
+  另一轮全量也绿。本任务对 `app/automation/` 与 `tests/automation/` **零改动**
+  （`git diff --stat 048c390 --` 为空），与 T120 无关。
+
 ---
 
 ### T121 权限与归档收口 + 审计覆盖 + 欠账断言
@@ -645,7 +721,7 @@
 | T117 | `tests\process_baselines` **41 passed**（AC-197/210/211 全绿）；`tests\automation` **141 passed**（09 期零回归） | **1300 passed**（1259 + 41），串行，exit 0，463.09s | 未改动前端，**不涉及** | 不涉及 | 两库 `0025 → 0024 → 0025` **干净**，head 均 `0025`；**降级后 `prompt_templates.task_type` 只剩旧四值**、`process_baseline` 残留行 = 0 | 不涉及（纯后端） | 通过 |
 | T118 | `tests\process_baselines` **90 passed**（T117 的 41 + 新增 49；AC-198/199/200/201 全绿）；上游定向（baselines / test_points / test_cases / automation / llm / incremental / common）**907 passed**，零回归 | **1349 passed**（1300 + 49），串行，exit 0，433.94s | `npm run build` 通过（**未改动前端**，仅回归确认） | 不涉及 | 不涉及（本任务不写迁移，两库 head 仍 `0025`） | 不涉及（纯接口，按「前台核对点」走真实 HTTP 栈等价核对） | 通过 |
 | T119 | `tests\process_baselines` **118 passed**（T118 的 90 + 新增 28；AC-202/203 全绿）；上游定向（baselines / test_points / test_cases / automation / llm / incremental / common）**907 passed**，零回归 | **1377 passed**（1349 + 28），串行，exit 0，459.41s | `npm run build` 通过（**未改动前端**，仅回归确认） | 不涉及 | 不涉及（本任务不写迁移，两库 head 仍 `0025`） | 不涉及（纯接口，按「前台核对点」走真实 HTTP 栈等价核对） | 通过 |
-| T120 | `tests\process_baselines` 待回填 | 待回填 | `npm run build` 待回填 | 不涉及 | 不涉及 | 不涉及（纯接口） | 待回填 |
+| T120 | `tests\process_baselines` **147 passed**（T119 的 118 + 新增 29；AC-204/205/206 全绿，29 passed / 118 deselected）；上游定向（baselines / test_points / test_cases / automation / llm / incremental / common）**907 passed**，零回归 | **1406 passed**（1377 + 29），串行，exit 0（`1406/1464 collected，58 deselected`） | `npm run build` 通过（**未改动前端**，仅回归确认） | 不涉及 | 不涉及（本任务不写迁移，两库 head 仍 `0025`） | 不涉及（纯接口，按「前台核对点」走真实 HTTP 栈等价核对） | 通过 |
 | T121 | `tests\process_baselines` + `tests\common` 待回填 | 待回填 | `npm run build` 待回填 | 不涉及 | 不涉及 | 不涉及（纯接口） | 待回填 |
 | T122 | `tests\process_baselines` 待回填 | 待回填 | `npm run build` 待回填 | e2e 全量待回填（原 58 + 新增 ≥ 2） | 不涉及 | `.screenshots/T122/` 待回填 | 待回填 |
 | T123 | 10 定向 + 04~09 定向 待回填 | 待回填（≥ 1259 passed，串行，exit 0） | `npm run build` 待回填 | e2e 全量待回填（≥ 60 passed） | 两库 `0025 → 0024 → 0025` 待回填；降级后 `task_type` 只剩旧四值 | `.screenshots/T123/` 待回填 | 待回填 |
