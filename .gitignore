@@ -27,8 +27,15 @@ var/uploads/
 # 不该进版本库（e2e 也会往这里写样例文件）
 var/automation/
 
-# 脚本起的服务日志（scripts/run_e2e.py）
+# 脚本起的服务日志（scripts/run_e2e.py / start_dev.bat）
 var/*.log
+
+# var/ 下的其它运行时产物（临时脚本、日志重定向文件等）——
+# 这个目录只放「跑起来才产生的东西」，版本库里一张都不该有。
+# **不要**为 var/uploads/ 或 var/automation/ 写反向放行规则：
+# 那两个目录装的是**用户的数据**（上传的文档原文、自己的测试脚本），
+# 放进版本库等于把用户数据泄露出去。
+var/*
 
 # 编辑器
 .idea/
