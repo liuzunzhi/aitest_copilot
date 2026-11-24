@@ -882,6 +882,53 @@
 **AC**：AC-214
 **提交**：`docs(progress): 10 期流程基线收官`
 
+**T123 补充记录（执行情况）**
+
+- **本期是纯收尾**：`app/` **零改动**、`web/` **零改动**（T122 已完成前端），
+  只有 4 处产出：新增 `tests/e2e/test_t123_closing_ui.py`（2 条前台核对）、
+  新增 `scripts/check_process_baseline_roundtrip.py`（迁移往返收尾脚本）、
+  新增 `specs/10-process-baseline/收官总结.md`、
+  回填 `PROGRESS.md` + `specs/验证约定.md` + 本文件。
+- **新增 e2e 2 条**（`tests/e2e/test_t123_closing_ui.py`）：
+  `test_ac_214_all_ten_tabs_and_two_subtabs_render`（10 个顶层 Tab 逐个点开
+  + 「基线管理」内 2 个子 Tab 逐个点开）
+  与 `test_ac_214_process_baseline_full_flow`
+  （新建 → 编辑步骤 → 关联 → 反推 → 提交审核 → 通过 → 看快照）。
+  截图 `.screenshots/T123/` **20 张**（文件名含 AC-214）。
+- **新增 `scripts/check_process_baseline_roundtrip.py`**（照 09 期的
+  `check_migration_roundtrip.py` 改写，**可复用**）：
+  两库各跑一遍 `0025 → 0024 → 0025`，**造存量数据**（一个场景 + 一步）再比对——
+  **只看 alembic 版本号不算验证**，「迁移跑通了」不等于「数据还原了」。
+  断言：降级后四张表已删 + `task_type` **只剩旧四值**；
+  升级后四张表已建 + `process_baseline` 模板**已重新播种**且旧四值模板仍在。
+  **两库均干净**（开发库 `aitest_copilot_v2` 与 e2e 库 `aitest_copilot_e2e`）。
+- **红线 diff 实测**（基准 = 09 期收尾 `379b353`）：
+  `app/baselines/` `app/test_points/` `app/incremental/service.py`
+  `app/test_cases/` `app/automation/` `app/models/project.py`
+  `app/documents/` `app/projects/` `app/llm_admin/` 与既有 3 个 e2e 文件
+  **全为空**；`app/llm/mock.py` **只有新增的 `[PROCESS_BASELINE_SYSTEM]` 分支**
+  （既有五个分支行为一个字节不变）；`app/models/incremental.py` **只有 2 行枚举扩值**
+  （`TASK_TYPES` + `ck_ptemplates_task_type` 各加一个 `'process_baseline'`）。
+  **基准必须是 09 期收尾**，用 10 期中期的提交会漏掉 T117~T121 的改动——
+  diff 看起来「全空」那是**假阳性**。
+- **全量数字**：后端全量 **1444 passed**（串行，exit 0，445.06s，
+  `1444/1506 collected，62 deselected`）；04~09 定向 **916 passed**、零回归；
+  10 定向 **176 passed** 不变；e2e 全量 **64 passed**（62 + 收官核对 2）；
+  `npm run build` 通过；两库 head 均 `0025`。
+- **产出 `specs/10-process-baseline/收官总结.md`**（照 09 期的
+  `specs/09-automation/收官总结.md` 体例）：交付清单 / 数据模型 / 关键设计 /
+  接口一览 / AC 矩阵 / 验证结果 / 红线复核 / 踩坑 / Backlog。
+- **「基线管理」这个子菜单至此整体做完**：功能基线（04 期：三级树 + 标签 +
+  快照 + 保留策略）+ 流程基线（10 期：场景 + 步骤 + 关联 + 反推 + 审核快照）——
+  PRD 2.4.2 的两个子菜单都落地了。
+- **两笔显式欠账已登记进 `PROGRESS.md` §6**（AC-210 / AC-211）：
+  ① **增量分析支持流程基线打标**（需扩 04 的 `baseline_labels` CHECK
+  + 改 05 的引擎目标类型）——**不做的话流程基线是「只能手工维护的孤岛」**，
+  建议排第一；② **流程基线快照保留策略 + 被引用即保护 + 清理候选 + 告警 +
+  删除留痕**（需新增项目列 `process_snapshot_max_count`，04 已有成熟实现可照抄）。
+- **与 spec 的差异**：**无**。spec §13 登记的 10 条后续期欠账逐条进了
+  `PROGRESS.md` §6 的「10 期欠账」。
+
 ## 3. AC → 任务 / 用例映射
 
 | AC | 主题 | 任务 | 测试位置（`test_ac_<号>_*`） |
@@ -915,7 +962,7 @@
 | T120 | `tests\process_baselines` **147 passed**（T119 的 118 + 新增 29；AC-204/205/206 全绿，29 passed / 118 deselected）；上游定向（baselines / test_points / test_cases / automation / llm / incremental / common）**907 passed**，零回归 | **1406 passed**（1377 + 29），串行，exit 0（`1406/1464 collected，58 deselected`） | `npm run build` 通过（**未改动前端**，仅回归确认） | 不涉及 | 不涉及（本任务不写迁移，两库 head 仍 `0025`） | 不涉及（纯接口，按「前台核对点」走真实 HTTP 栈等价核对） | 通过 |
 | T121 | `tests\process_baselines` **176 passed**（T120 的 147 + 新增 29；AC-207/208/209/210/211 全绿，29 passed / 147 deselected）；`tests\common\test_audit_coverage.py` **66 passed**（57 + 补 9 个场景）；上游定向（baselines / test_points / test_cases / automation / llm / incremental / common）**916 passed**（907 + 9），零回归 | **1444 passed**（1406 + 38），串行，exit 0，486.63s | `npm run build` 通过（**未改动前端**，仅回归确认） | 不涉及 | 不涉及（本任务不写迁移，两库 head 仍 `0025`） | 不涉及（纯接口，按「前台核对点」走真实 HTTP 栈等价核对） | 通过 |
 | T122 | `tests\process_baselines` **176 passed**（**零改动**，本期纯前端）；新增 `tests\e2e\test_process_baseline_ui.py` **4 passed**（AC-212 1 条 + AC-213 3 条） | **1444 passed**（与 T121 持平，串行，exit 0，445.06s；`1444/1506 collected，62 deselected`） | `npm run build` 通过（`tsc -b && vite build`） | **62 passed**（原 58 + 新增 4），191.55s | 不涉及（本任务不写迁移，两库 head 仍 `0025`） | `.screenshots/T122/` **9 张**（文件名含 AC 编号） | 通过 |
-| T123 | 10 定向 + 04~09 定向 待回填 | 待回填（≥ 1259 passed，串行，exit 0） | `npm run build` 待回填 | e2e 全量待回填（≥ 60 passed） | 两库 `0025 → 0024 → 0025` 待回填；降级后 `task_type` 只剩旧四值 | `.screenshots/T123/` 待回填 | 待回填 |
+| T123 | 10 定向 **176 passed**（零改动）；04~09 定向 **916 passed**（826 + common 90），零回归 | **1444 passed**（与 T121/T122 持平，串行，exit 0，447.96s；`1444/1508 collected，64 deselected`） | `npm run build` 通过（`tsc -b && vite build`） | **64 passed**（62 + 收官核对 2），223.65s | 两库 `0025 → 0024 → 0025` **干净**，head 均 `0025`；**降级后 `prompt_templates.task_type` 只剩旧四值**、升级后 `process_baseline` 模板已重新播种且旧四值模板仍在 | `.screenshots/T123/` **20 张**（含 AC-214） | 通过 |
 
 **基线口径（不可下调）**
 
