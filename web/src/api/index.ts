@@ -2243,3 +2243,367 @@ export async function fetchAutomationRunReport(
   )
   return data
 }
+
+/* ------------------------------------------------------ 流程基线（10） */
+
+export type ProcessSourceType = 'manual' | 'document_derived'
+export type ProcessStatus = 'active' | 'archived'
+export type ProcessTargetType = 'function' | 'feature_point'
+export type ProcessRevisionStatus = 'submitted' | 'approved' | 'rejected'
+
+/** 一步操作。`step_no` 由服务端按数组顺序重排——前端不发。 */
+export interface ProcessStep {
+  step_no: number
+  action: string
+  expected: string
+}
+
+/**
+ * 一条关联（场景 ↔ 功能基线）。
+ *
+ * `target_id` 是**逻辑引用**（不建外键），`target_name` 是**落库时的名称快照**——
+ * 目标被 04 物理删除后链接行仍在，读取时返回快照名并标「目标已删除」。
+ */
+export interface ProcessLink {
+  target_type: ProcessTargetType
+  target_id: number
+  target_name: string
+  target_deleted: boolean
+}
+
+/**
+ * 一个业务场景。
+ *
+ * **来源追溯 6 列**在 `source_type='manual'` 时**全为 null**（PRD：
+ * 手工添加不做追溯要求）。
+ */
+export interface ProcessScenario {
+  id: number
+  project_id: number
+  name: string
+  description: string | null
+  precondition: string | null
+  source_type: ProcessSourceType
+  status: ProcessStatus
+  /** 场景自身的修订次数，**不是**快照版本号。 */
+  version_no: number
+  source_document_id: number | null
+  source_version_id: number | null
+  source_chapter_id: number | null
+  source_chapter_title: string | null
+  source_method: string | null
+  source_analysis_id: number | null
+  created_by: number
+  created_at: string
+  updated_at: string
+  step_count: number
+  link_count: number
+  steps: ProcessStep[]
+  links: ProcessLink[]
+}
+
+/** 批量新建里的一个场景（手工添加 / 反推候选采纳共用）。 */
+export interface ProcessScenarioCreate {
+  name: string
+  description?: string | null
+  precondition?: string | null
+  source_type?: ProcessSourceType
+  status?: ProcessStatus | null
+  /** 文档反推来源的**三元组**（`document_derived` 时必填且自洽）。 */
+  source_document_id?: number | null
+  source_version_id?: number | null
+  source_chapter_id?: number | null
+  source_chapter_title?: string | null
+  source_method?: string | null
+  steps?: Array<{ action: string; expected?: string | null }>
+  links?: Array<{ target_type: ProcessTargetType; target_id: number }>
+}
+
+export interface ProcessScenarioCreatedItem {
+  index: number
+  id: number
+  name: string
+  source_type: ProcessSourceType
+  version_no: number
+  step_count: number
+  link_count: number
+}
+
+export interface ProcessScenarioCreated {
+  created: number
+  items: ProcessScenarioCreatedItem[]
+}
+
+/** 反推候选里的一步。 */
+export interface ProcessDerivedStep {
+  action: string
+  expected: string
+}
+
+/** 反推候选里的一条关联建议。 */
+export interface ProcessDerivedLink {
+  target_type: ProcessTargetType
+  target_id: number
+  target_name: string
+}
+
+/** 一个候选场景（**尚未落库**，所以没有 id）。 */
+export interface ProcessDerivedScenario {
+  name: string
+  description: string | null
+  precondition: string | null
+  confidence: number | null
+  rationale: string | null
+  source_chapter_id: number | null
+  source_chapter_title: string | null
+  steps: ProcessDerivedStep[]
+  links: ProcessDerivedLink[]
+}
+
+/** 反推响应。**不写表**——候选只是临时草稿。 */
+export interface ProcessDeriveResult {
+  chapter_count: number
+  processed_count: number
+  candidate_count: number
+  skipped_chapters: Array<{ chapter_id: number; reason: string }>
+  scenarios: ProcessDerivedScenario[]
+}
+
+/** 一份快照（列表项）。`version_no` 在审核中 / 已驳回时为 null。 */
+export interface ProcessRevision {
+  id: number
+  project_id: number
+  version_no: number | null
+  status: ProcessRevisionStatus
+  scenario_count: number
+  step_count: number
+  link_count: number
+  submitted_by: number | null
+  submitted_at: string | null
+  reviewed_by: number | null
+  reviewed_at: string | null
+  review_comment: string | null
+  created_at: string
+}
+
+/** 快照详情：同时给 `draft_snapshot` 与 `structure_json` 的**原文**。 */
+export interface ProcessRevisionDetail extends ProcessRevision {
+  draft_snapshot: string | null
+  structure_json: string | null
+}
+
+const PROCESS_BASELINES = (projectId: number) =>
+  `/projects/${projectId}/process-baselines`
+
+export async function listProcessScenarios(
+  projectId: number,
+  params?: {
+    keyword?: string
+    source_type?: ProcessSourceType
+    status?: ProcessStatus | 'all'
+    page?: number
+    page_size?: number
+  },
+): Promise<Page<ProcessScenario>> {
+  const { data } = await client.get<Page<ProcessScenario>>(
+    `${PROCESS_BASELINES(projectId)}/scenarios`,
+    { params },
+  )
+  return data
+}
+
+/** **批量**新建场景。任一条校验失败 → 整批拒，不半批。 */
+export async function createProcessScenarios(
+  projectId: number,
+  scenarios: ProcessScenarioCreate[],
+): Promise<ProcessScenarioCreated> {
+  const { data } = await client.post<ProcessScenarioCreated>(
+    `${PROCESS_BASELINES(projectId)}/scenarios`,
+    { scenarios },
+  )
+  return data
+}
+
+export async function fetchProcessScenario(
+  projectId: number,
+  scenarioId: number,
+): Promise<ProcessScenario> {
+  const { data } = await client.get<ProcessScenario>(
+    `${PROCESS_BASELINES(projectId)}/scenarios/${scenarioId}`,
+  )
+  return data
+}
+
+/** 改场景元数据。来源追溯 6 列**只读**——传了也不写。 */
+export async function updateProcessScenario(
+  projectId: number,
+  scenarioId: number,
+  payload: {
+    name?: string
+    description?: string | null
+    precondition?: string | null
+    status?: ProcessStatus
+  },
+): Promise<ProcessScenario> {
+  const { data } = await client.patch<ProcessScenario>(
+    `${PROCESS_BASELINES(projectId)}/scenarios/${scenarioId}`,
+    payload,
+  )
+  return data
+}
+
+export async function deleteProcessScenario(
+  projectId: number,
+  scenarioId: number,
+): Promise<void> {
+  await client.delete(`${PROCESS_BASELINES(projectId)}/scenarios/${scenarioId}`)
+}
+
+/** 整体覆盖步骤——序号由服务端按数组顺序重排，**前端不发 `step_no`**。 */
+export async function replaceProcessSteps(
+  projectId: number,
+  scenarioId: number,
+  steps: Array<{ action: string; expected?: string | null }>,
+): Promise<ProcessScenario> {
+  const { data } = await client.put<ProcessScenario>(
+    `${PROCESS_BASELINES(projectId)}/scenarios/${scenarioId}/steps`,
+    { steps },
+  )
+  return data
+}
+
+/** 整体覆盖关联（**空数组合法** = 清空关联）。 */
+export async function replaceProcessLinks(
+  projectId: number,
+  scenarioId: number,
+  links: Array<{ target_type: ProcessTargetType; target_id: number }>,
+): Promise<ProcessScenario> {
+  const { data } = await client.put<ProcessScenario>(
+    `${PROCESS_BASELINES(projectId)}/scenarios/${scenarioId}/links`,
+    { links },
+  )
+  return data
+}
+
+/** 文档反推（**同步**执行，响应直接带候选）。**不写表**。 */
+export async function runProcessDerive(
+  projectId: number,
+  payload: { document_id: number; document_version_id: number; template_id: number },
+): Promise<ProcessDeriveResult> {
+  const { data } = await client.post<ProcessDeriveResult>(
+    `${PROCESS_BASELINES(projectId)}/derive`,
+    payload,
+  )
+  return data
+}
+
+export async function listProcessRevisions(
+  projectId: number,
+  params?: {
+    status?: ProcessRevisionStatus | 'all'
+    page?: number
+    page_size?: number
+  },
+): Promise<Page<ProcessRevision>> {
+  const { data } = await client.get<Page<ProcessRevision>>(
+    `${PROCESS_BASELINES(projectId)}/revisions`,
+    { params },
+  )
+  return data
+}
+
+export async function fetchProcessRevision(
+  projectId: number,
+  revisionId: number,
+): Promise<ProcessRevisionDetail> {
+  const { data } = await client.get<ProcessRevisionDetail>(
+    `${PROCESS_BASELINES(projectId)}/revisions/${revisionId}`,
+  )
+  return data
+}
+
+/** 提交审核（**提交即冻结** `draft_snapshot`）。 */
+export async function submitProcessReview(
+  projectId: number,
+  comment?: string | null,
+): Promise<ProcessRevision> {
+  const { data } = await client.post<ProcessRevision>(
+    `${PROCESS_BASELINES(projectId)}/reviews/submit`,
+    { comment },
+  )
+  return data
+}
+
+/** 审核通过：`structure_json` 原样转正 + 分配版本号。 */
+export async function approveProcessReview(
+  projectId: number,
+  revisionId: number,
+  comment?: string | null,
+): Promise<ProcessRevision> {
+  const { data } = await client.post<ProcessRevision>(
+    `${PROCESS_BASELINES(projectId)}/reviews/${revisionId}/approve`,
+    { comment },
+  )
+  return data
+}
+
+/** 审核驳回。**意见必填**，不占版本号。 */
+export async function rejectProcessReview(
+  projectId: number,
+  revisionId: number,
+  comment: string,
+): Promise<ProcessRevision> {
+  const { data } = await client.post<ProcessRevision>(
+    `${PROCESS_BASELINES(projectId)}/reviews/${revisionId}/reject`,
+    { comment },
+  )
+  return data
+}
+
+/** 可关联的功能基线目标（功能 / 功能点）——只列**在用**的。 */
+export interface ProcessLinkableTarget {
+  target_type: ProcessTargetType
+  target_id: number
+  target_name: string
+  /** 展示用前缀：模块 / 上级功能。 */
+  label: string
+}
+
+/**
+ * 场景关联编辑器的可选目标清单。
+ *
+ * 复用 04 的只读查询（`listBaselineFunctions` / `listBaselineFeaturePoints`），
+ * **只取在用的**——归档的目标关联时会被服务端拒（400）。
+ */
+export async function listProcessLinkableTargets(
+  projectId: number,
+): Promise<ProcessLinkableTarget[]> {
+  const fnPage = await listBaselineFunctions(projectId, {
+    status: 'active',
+    page_size: 200,
+  })
+  const functions = fnPage.items
+  const pointLists = await Promise.all(
+    functions.map((fn) => listBaselineFeaturePoints(projectId, fn.id)),
+  )
+  const rows: ProcessLinkableTarget[] = []
+  functions.forEach((fn, index) => {
+    rows.push({
+      target_type: 'function',
+      target_id: fn.id,
+      target_name: fn.name,
+      label: `${fn.module_name} / ${fn.name}`,
+    })
+    pointLists[index]
+      .filter((point) => point.status === 'active')
+      .forEach((point) => {
+        rows.push({
+          target_type: 'feature_point',
+          target_id: point.id,
+          target_name: point.name,
+          label: `${fn.module_name} / ${fn.name} / ${point.name}`,
+        })
+      })
+  })
+  return rows
+}

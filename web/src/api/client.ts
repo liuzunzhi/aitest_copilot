@@ -150,6 +150,15 @@ const CODE_TEXT: Record<string, string> = {
   AUTOMATION_RUN_NOT_FOUND: '执行记录不存在',
   AUTOMATION_RUN_INPUT_EMPTY: '请选择要执行的自动化资产',
   AUTOMATION_EXEC_FAILED: '执行器启动失败，请检查运行环境',
+  /* 流程基线（10） */
+  PROCESS_BASELINE_NOT_FOUND: '流程基线场景不存在',
+  PROCESS_BASELINE_INVALID: '流程基线场景不合法',
+  PROCESS_BASELINE_DUPLICATE_NAME: '同项目已存在同名场景',
+  PROCESS_BASELINE_STEP_INVALID: '步骤不合法：至少一步、操作不能为空、不超过 100 步',
+  PROCESS_BASELINE_LINK_INVALID: '关联不合法：目标不存在、已归档或重复关联',
+  PROCESS_BASELINE_REVISION_NOT_FOUND: '流程基线快照不存在',
+  PROCESS_BASELINE_REVIEW_STATUS_INVALID: '该快照已处理，不能重复审核',
+  PROCESS_BASELINE_IN_REVIEW: '审核中，暂不可编辑',
 }
 
 /**

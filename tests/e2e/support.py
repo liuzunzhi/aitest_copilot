@@ -112,6 +112,30 @@ def cleanup_e2e_data(name_prefix: str = "e2e-") -> dict[str, int]:
         "WHERE p.name LIKE :prefix"
     )
     statements = [
+        # 10 期流程基线四表：按外键依赖倒序（快照 → 步骤 / 关联 → 场景）
+        # `process_baseline_revisions` 有 project_id 直接删；
+        # `process_baseline_links` / `process_baseline_steps` 有 baseline_id，
+        # **要先删子表再删父表**——顺序反了会撞外键。
+        (
+            "process_baseline_revisions",
+            f"DELETE FROM process_baseline_revisions WHERE project_id IN ({in_projects})",
+        ),
+        (
+            "process_baseline_links",
+            "DELETE FROM process_baseline_links WHERE baseline_id IN ("
+            "SELECT id FROM process_baselines WHERE project_id IN ("
+            f"{in_projects}))",
+        ),
+        (
+            "process_baseline_steps",
+            "DELETE FROM process_baseline_steps WHERE baseline_id IN ("
+            "SELECT id FROM process_baselines WHERE project_id IN ("
+            f"{in_projects}))",
+        ),
+        (
+            "process_baselines",
+            f"DELETE FROM process_baselines WHERE project_id IN ({in_projects})",
+        ),
         # 09 期自动化执行三表：按外键依赖倒序（明细 → 记录 → 资产）
         (
             "automation_run_items",

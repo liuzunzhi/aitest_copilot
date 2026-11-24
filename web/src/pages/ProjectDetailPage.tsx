@@ -30,8 +30,7 @@ import {
 import type { Application, Member, Overview, Todos } from '../api'
 import { errorMessage } from '../api/client'
 import { useAuth } from '../auth/AuthProvider'
-import ProjectBaselineSnapshots from './ProjectBaselineSnapshots'
-import ProjectBaselineTree from './ProjectBaselineTree'
+import ProjectBaselineManagementTab from './ProjectBaselineManagementTab'
 import ProjectBaselinesTab from './ProjectBaselinesTab'
 import ProjectAutomationTab from './ProjectAutomationTab'
 import ProjectDocumentsTab from './ProjectDocumentsTab'
@@ -324,12 +323,7 @@ export default function ProjectDetailPage() {
             key: 'baseline-management',
             label: '基线管理',
             children: (
-              <Space direction="vertical" size={16} style={{ width: '100%' }}>
-                <Card title="功能基线结构" size="small">
-                  <ProjectBaselineTree projectId={projectId} canWrite={canManage} />
-                </Card>
-                <ProjectBaselineSnapshots projectId={projectId} canWrite={canManage} />
-              </Space>
+              <ProjectBaselineManagementTab projectId={projectId} canManage={canManage} />
             ),
           },
           {

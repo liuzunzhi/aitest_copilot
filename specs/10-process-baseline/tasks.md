@@ -736,6 +736,102 @@
 **AC**：AC-212、AC-213
 **提交**：`feat(web): 基线管理二级子菜单与流程基线场景管理`
 
+**T122 补充记录（执行情况）**
+
+- **后端 `app/` 零改动**：13 个接口（10 条 path、13 个 method）T117~T121 已全部就位，
+  本期**纯前端对接**——`git diff --stat 7ff32f3 -- app/` → **为空**。
+  `tests\process_baselines` **176 条一条没动**（纯前端任务不写后端用例）。
+- **8 个新前端文件，每个都 < 400 行**（验证约定 §4.3 的拆分阈值）：
+  `ProjectBaselineManagementTab.tsx` 64 / `ProjectProcessBaselineTab.tsx` 240 /
+  `processBaselineColumns.tsx` 292 / `ProcessBaselineDrawer.tsx` 390 /
+  `ProcessBaselineStepsEditor.tsx` 199 / `ProcessBaselineDeriveModal.tsx` 350 /
+  `ProcessBaselineReviewDrawer.tsx` 380 / `processBaselineMeta.ts` 102。
+  `ProjectDetailPage.tsx` **400 → 394 行**（只做减法：换成一个组件 + 删两个 import）。
+- **「新建」与「详情/编辑」合并成同一个抽屉组件**（`ProcessBaselineDrawer` 的
+  `mode` prop）：两者的 UI 完全相同（表单 + 步骤 + 关联），差别只在初始值与
+  保存动作。**先按两套表单写会顶到 400 行**，而且同一段表单要维护两遍——
+  这与 08 期「列表展示与复杂表单必须拆成两个组件」是同一条约束的另一面：
+  **同一个组件能覆盖的两种形态，就不要拆成两个**。
+  顺带把「关联目标多选下拉」（`ProcessLinkSelect`）与「元数据只读展示」
+  （`ProcessScenarioMetaView`）提到 `processBaselineColumns.tsx`，
+  抽屉与列表页共用同一套渲染。
+- **功能基线面板的渲染逻辑一个字节都没改**：照抄原来
+  `ProjectDetailPage.tsx` 里的 `<Space direction="vertical">` +
+  `<Card title="功能基线结构">` + `ProjectBaselineTree` + `ProjectBaselineSnapshots`，
+  原封不动搬进 `ProjectBaselineManagementTab.tsx` 的「功能基线」子 Tab。
+  `ProjectBaselineTree.tsx` / `ProjectBaselineSnapshots.tsx` /
+  `TestCaseStepsEditor.tsx` **一个字节都没改**（`git diff --stat` 为空）——
+  `TestCaseStepsEditor.tsx` 是**照抄蓝本**，不是改造对象。
+- **关键语义怎么落的**（8 条）：
+  ① **二级子菜单在「基线管理」内**，`defaultActiveKey="function"`——
+  现有用户路径不变，进来还是先看到功能基线；
+  ② **顶层仍是 10 个 Tab**——内层二级 Tabs 不计入顶层（详见下面的坑 ①）；
+  ③ **写入口只有 `canManage` 才渲染**——成员与访客**一个写入口都看不到**
+  （不是「渲染了点了报 403」），只显示一句只读提示
+  「只有项目管理员可以新建、反推与编辑流程基线」（与 09 期同一口径）；
+  ④ **步骤顺序由服务端重排**——前端**不发 `step_no`**，
+  `ProcessBaselineStepsEditor.tsx` 照抄 08 期的 `TestCaseStepsEditor.tsx`
+  （受控数组 + 上移 / 下移 / 删除 / 新增，**不用拖拽**）；
+  ⑤ **反推候选默认全不勾**（PRD 1.4 原则二：高风险行为人工确认）；
+  ⑥ **审核期锁定**——项目内有 `status='submitted'` 的快照时，
+  写入口**禁用** + 提示「审核中，暂不可编辑」（后端 4 个写接口 409 兜底，
+  **前端禁用只是体验，端上 409 才是保证**）；
+  ⑦ **驳回意见必填**——复用 04 的 `ReviewCommentRequired`（400），
+  前端在驳回前用「驳回必须填写意见」的 warning 提前拦一道（后端仍会 400）；
+  ⑧ **`target_deleted=true`** 时标「目标已删除」但**仍显示名称快照**。
+- **`source_type='manual'` 时六列追溯字段全为 null** → 前端**不渲染空行**：
+  追溯三元组（来源文档 / 来源版本 / 来源章节）**只在「文档解析」来源下**渲染
+  （`ProcessScenarioMetaView` 里的条件渲染）。
+- **反推是同步接口**：弹窗有 loading + 「正在调用模型分析文档，可能需要 1–2 分钟…」
+  的提示（与 04 的推导同一策略）；采纳走 `POST /scenarios`（批量），
+  候选带 `source_type='document_derived'` + 追溯三元组 + `source_method='baseline_reverse'`。
+- **新增 e2e 4 条**（`tests/e2e/test_process_baseline_ui.py`）：
+  `test_ac_212_subtab_and_top_level_tabs_ui`（二级子菜单 + 顶层仍 10 个）、
+  `test_ac_213_create_scenario_and_edit_steps_ui`（新建 → 详情 → 上移保存）、
+  `test_ac_213_derive_and_review_ui`（反推 → 勾选 → 采纳 → 提交 → 通过 → 看快照）、
+  `test_ac_213_member_readonly_ui`（成员只读）。
+  **零真实 socket**——造数一律走 Playwright 的 `APIRequestContext`；
+  `grep -r "requests\|urlopen\|aiohttp\|socket.socket" tests\e2e` → **无结果**。
+- **踩坑 ①：antd 两层 `Tabs` 都用 `role="tab"`**——
+  进了「基线管理」之后，`page.get_by_role("tab")` 会把内层的两个子 Tab
+  也数进去（**10 + 2 = 12**）。spec §8.1 说的「非活动面板懒渲染 → 内层未挂载」
+  **只在没进 Tab 时成立**：一旦点了「基线管理」，内层 Tabs 就挂载了。
+  `test_tabs_ui.py` 原样通过是因为它**只在进 Tab 之前**计数。
+  修法：断言顶层要写 `page.get_by_role("tablist").first.get_by_role("tab")`
+  （顶层 tablist 在 DOM 里排第一）。
+  **既有 e2e 文件一个字节都没改**——这条只在新文件里绕开。
+- **踩坑 ②：antd v6 的 Select 值不在 `.ant-select-selection-item` 里**——
+  v6 换成了 `.ant-select-content-has-value`（单选）/ `.ant-select-content`（多选）。
+  用 08 期那条 `.ant-select-selection-item` 的写法断言「下拉已有值」会数到 **0** 条。
+- **踩坑 ③：antd Drawer 关闭后内容不销毁**——`destroyOnHidden` 没开时
+  DOM 里还在，只是隐藏。断言「抽屉关掉了」要用 `to_be_hidden()`，
+  **不是** `to_have_count(0)`（否则永远超时）。
+- **踩坑 ④：`resetToServer` 写成 `useCallback` 会把 effect 的依赖带歪**——
+  它依赖 `scenario`，而 `scenario` 每次 `onUpdated` 都是**新对象**——
+  把它列进 `useCallback` 的依赖后，effect 会被反复触发、步骤被反复重置。
+  改法：`resetToServer` 保持成**普通函数**（不 `useCallback`），
+  effect 的依赖显式写成 `[open, scenario, form, isCreate]` 并加
+  `eslint-disable-next-line react-hooks/exhaustive-deps`。
+- **踩坑 ⑤：保存后抽屉里的只读表必须跟着更新**——
+  `onUpdated(updated)` 把新详情回传给父级（父级 `setDetail` + reload），
+  否则「上移第 2 步 → 保存」之后抽屉里显示的还是旧顺序
+  （第一次跑 e2e 时就是这么挂的：库里已经是新顺序，界面还是旧的）。
+- **红线 diff 实测**（基准 = T121 的 `7ff32f3`）：
+  `git diff --stat 7ff32f3 -- app/` → **为空**（后端零改动）；
+  `-- web/src/pages/ProjectBaselineTree.tsx web/src/pages/ProjectBaselineSnapshots.tsx
+  web/src/pages/TestCaseStepsEditor.tsx` → **为空**；
+  `-- web/package.json` → **为空**（**前端零新依赖**）；
+  `-- migrations/` → **为空**；`-- tests/e2e/test_tabs_ui.py test_t116_closing_ui.py
+  test_automation_ui.py` → **为空**。
+- **全量数字**：后端全量 **1444 passed**（与 T121 持平，串行，exit 0，445.06s，
+  `1444/1506 collected，62 deselected`）；`tests\process_baselines` **176 passed** 不变；
+  e2e 全量 **62 passed**（原 58 + 新增 4，191.55s）；
+  `npm run build` 通过；两库 head 均 `0025`（本期**不写迁移，只确认**）。
+- **与 spec 的差异**：**无**。spec §8.1~§8.4 的组件拆分表、交互要点、
+  `data-testid` 清单逐条落地；唯一的实现自由度是「新建场景」没有单列一个组件
+  （spec 的 8 个文件清单里也没有它）——合并进 `ProcessBaselineDrawer` 的
+  `mode` prop，**对外行为与 tasks.md 要求的「新建场景」完全一致**。
+
 ---
 
 ### T123 收尾：全量回归 + 迁移往返 + 文档回填
@@ -818,7 +914,7 @@
 | T119 | `tests\process_baselines` **118 passed**（T118 的 90 + 新增 28；AC-202/203 全绿）；上游定向（baselines / test_points / test_cases / automation / llm / incremental / common）**907 passed**，零回归 | **1377 passed**（1349 + 28），串行，exit 0，459.41s | `npm run build` 通过（**未改动前端**，仅回归确认） | 不涉及 | 不涉及（本任务不写迁移，两库 head 仍 `0025`） | 不涉及（纯接口，按「前台核对点」走真实 HTTP 栈等价核对） | 通过 |
 | T120 | `tests\process_baselines` **147 passed**（T119 的 118 + 新增 29；AC-204/205/206 全绿，29 passed / 118 deselected）；上游定向（baselines / test_points / test_cases / automation / llm / incremental / common）**907 passed**，零回归 | **1406 passed**（1377 + 29），串行，exit 0（`1406/1464 collected，58 deselected`） | `npm run build` 通过（**未改动前端**，仅回归确认） | 不涉及 | 不涉及（本任务不写迁移，两库 head 仍 `0025`） | 不涉及（纯接口，按「前台核对点」走真实 HTTP 栈等价核对） | 通过 |
 | T121 | `tests\process_baselines` **176 passed**（T120 的 147 + 新增 29；AC-207/208/209/210/211 全绿，29 passed / 147 deselected）；`tests\common\test_audit_coverage.py` **66 passed**（57 + 补 9 个场景）；上游定向（baselines / test_points / test_cases / automation / llm / incremental / common）**916 passed**（907 + 9），零回归 | **1444 passed**（1406 + 38），串行，exit 0，486.63s | `npm run build` 通过（**未改动前端**，仅回归确认） | 不涉及 | 不涉及（本任务不写迁移，两库 head 仍 `0025`） | 不涉及（纯接口，按「前台核对点」走真实 HTTP 栈等价核对） | 通过 |
-| T122 | `tests\process_baselines` 待回填 | 待回填 | `npm run build` 待回填 | e2e 全量待回填（原 58 + 新增 ≥ 2） | 不涉及 | `.screenshots/T122/` 待回填 | 待回填 |
+| T122 | `tests\process_baselines` **176 passed**（**零改动**，本期纯前端）；新增 `tests\e2e\test_process_baseline_ui.py` **4 passed**（AC-212 1 条 + AC-213 3 条） | **1444 passed**（与 T121 持平，串行，exit 0，445.06s；`1444/1506 collected，62 deselected`） | `npm run build` 通过（`tsc -b && vite build`） | **62 passed**（原 58 + 新增 4），191.55s | 不涉及（本任务不写迁移，两库 head 仍 `0025`） | `.screenshots/T122/` **9 张**（文件名含 AC 编号） | 通过 |
 | T123 | 10 定向 + 04~09 定向 待回填 | 待回填（≥ 1259 passed，串行，exit 0） | `npm run build` 待回填 | e2e 全量待回填（≥ 60 passed） | 两库 `0025 → 0024 → 0025` 待回填；降级后 `task_type` 只剩旧四值 | `.screenshots/T123/` 待回填 | 待回填 |
 
 **基线口径（不可下调）**
