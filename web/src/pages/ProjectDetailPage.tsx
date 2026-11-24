@@ -1,21 +1,12 @@
 import { useCallback, useEffect, useState } from 'react'
 import {
   App as AntdApp,
-  Button,
   Card,
   Descriptions,
-  Form,
-  InputNumber,
-  Modal,
-  Popconfirm,
-  Select,
   Space,
-  Table,
   Tabs,
-  Tag,
   Typography,
 } from 'antd'
-import type { ColumnsType } from 'antd/es/table'
 import { useLocation, useParams } from 'react-router-dom'
 
 import {
@@ -35,31 +26,10 @@ import ProjectBaselinesTab from './ProjectBaselinesTab'
 import ProjectAutomationTab from './ProjectAutomationTab'
 import ProjectDocumentsTab from './ProjectDocumentsTab'
 import ProjectIncrementalTab from './ProjectIncrementalTab'
+import ProjectMembersTab from './ProjectMembersTab'
 import ProjectTestCasesTab from './ProjectTestCasesTab'
 import ProjectTestPointsTab from './ProjectTestPointsTab'
 import ProjectTodoCard from './ProjectTodoCard'
-
-const PROJECT_ROLE_LABELS: Record<string, string> = {
-  project_admin: '项目管理员',
-  member: '成员',
-  guest: '访客',
-}
-
-const APPLICATION_STATUS_LABELS: Record<string, string> = {
-  pending: '待审批',
-  approved: '已通过',
-  rejected: '已驳回',
-  withdrawn: '已撤回',
-  closed: '已关闭',
-}
-
-const STATUS_COLORS: Record<string, string> = {
-  pending: 'orange',
-  approved: 'green',
-  rejected: 'red',
-  withdrawn: 'default',
-  closed: 'default',
-}
 
 export default function ProjectDetailPage() {
   const { id } = useParams()
@@ -80,8 +50,6 @@ export default function ProjectDetailPage() {
   const [members, setMembers] = useState<Member[]>([])
   const [applications, setApplications] = useState<Application[]>([])
   const [loading, setLoading] = useState(false)
-  const [adding, setAdding] = useState(false)
-  const [form] = Form.useForm<{ user_id: number; role: string }>()
 
   // 直接按 URL 进入项目时 routeState 为空，用成员列表里的真实角色兜底，
   // 否则功能基线页会误判成「不可写」。
@@ -141,17 +109,16 @@ export default function ProjectDetailPage() {
     void reloadApplications()
   }, [reloadOverview, reloadTodos, reloadMembers, reloadApplications])
 
-  async function submitAddMember() {
-    const values = await form.validateFields()
+  async function submitAddMember(userId: number, role: string) {
     try {
-      await addMember(projectId, values.user_id, values.role)
+      await addMember(projectId, userId, role)
       message.success('成员已添加')
-      setAdding(false)
-      form.resetFields()
       await reloadMembers()
       await reloadOverview()
+      return true
     } catch (error) {
       message.error(errorMessage(error))
+      return false
     }
   }
 
@@ -175,82 +142,6 @@ export default function ProjectDetailPage() {
       message.error(errorMessage(error))
     }
   }
-
-  const memberColumns: ColumnsType<Member> = [
-    { title: '用户名', dataIndex: 'username' },
-    {
-      title: '角色',
-      dataIndex: 'role',
-      width: 200,
-      render: (role: string, member) =>
-        canManage ? (
-          <Select
-            size="small"
-            value={role}
-            style={{ width: 140 }}
-            onChange={(value) => changeRole(member, value)}
-            options={Object.entries(PROJECT_ROLE_LABELS).map(([value, label]) => ({
-              value,
-              label,
-            }))}
-          />
-        ) : (
-          (PROJECT_ROLE_LABELS[role] ?? role)
-        ),
-    },
-    {
-      title: '加入时间',
-      dataIndex: 'joined_at',
-      width: 200,
-      render: (value: string) => new Date(value).toLocaleString(),
-    },
-    ...(canManage
-      ? [
-          {
-            title: '操作',
-            key: 'actions',
-            width: 100,
-            render: (_: unknown, member: Member) => (
-              <Popconfirm
-                title="确认移除该成员？"
-                okText="移除"
-                cancelText="取消"
-                onConfirm={() => handleRemove(member)}
-              >
-                <Button size="small" danger>
-                  移除
-                </Button>
-              </Popconfirm>
-            ),
-          },
-        ]
-      : []),
-  ]
-
-  const applicationColumns: ColumnsType<Application> = [
-    {
-      title: '申请人',
-      dataIndex: 'applicant',
-      render: (applicant: Application['applicant']) => applicant?.username ?? '—',
-    },
-    { title: '申请理由', dataIndex: 'reason' },
-    {
-      title: '期望角色',
-      dataIndex: 'desired_role',
-      width: 120,
-      render: (role: string) => PROJECT_ROLE_LABELS[role] ?? role,
-    },
-    {
-      title: '状态',
-      dataIndex: 'status',
-      width: 100,
-      render: (status: string) => (
-        <Tag color={STATUS_COLORS[status] ?? 'default'}>
-          {APPLICATION_STATUS_LABELS[status] ?? status}
-        </Tag>
-      ),
-    },
-  ]
 
   return (
     <div>
@@ -282,60 +173,29 @@ export default function ProjectDetailPage() {
             ),
           },
           {
-            key: 'members',
-            label: '成员',
-            children: (
-              <div>
-                {canManage ? (
-                  <Space style={{ marginBottom: 16 }}>
-                    <Button type="primary" onClick={() => setAdding(true)}>
-                      添加成员
-                    </Button>
-                  </Space>
-                ) : null}
-                <Table<Member>
-                  rowKey="user_id"
-                  columns={memberColumns}
-                  dataSource={members}
-                  pagination={false}
-                  data-testid="member-table"
-                />
-              </div>
-            ),
-          },
-          {
             key: 'documents',
             label: '文档',
             children: (
-              <ProjectDocumentsTab
-                projectId={projectId}
-                canWrite={canWrite}
-                onChanged={reloadOverview}
-              />
+              <Space direction="vertical" size={16} style={{ width: '100%' }}>
+                <ProjectDocumentsTab
+                  projectId={projectId}
+                  canWrite={canWrite}
+                  onChanged={reloadOverview}
+                />
+                {/* 「版本快照」原先是第 4 个顶层 Tab，11 期收敛进「文档」——
+                    基线本来就是「文档版本确认生效」的产物，语义归属文档。
+                    `ProjectBaselinesTab` 组件文件零改动，只是换了挂载点。 */}
+                <Card title="版本快照" size="small">
+                  <ProjectBaselinesTab projectId={projectId} refreshKey={baselineKey} />
+                </Card>
+              </Space>
             ),
-          },
-          {
-            key: 'baselines',
-            label: '版本快照',
-            children: <ProjectBaselinesTab projectId={projectId} refreshKey={baselineKey} />,
           },
           {
             key: 'baseline-management',
             label: '基线管理',
             children: (
               <ProjectBaselineManagementTab projectId={projectId} canManage={canManage} />
-            ),
-          },
-          {
-            key: 'applications',
-            label: '申请',
-            children: (
-              <Table<Application>
-                rowKey="id"
-                columns={applicationColumns}
-                dataSource={applications}
-                pagination={false}
-              />
             ),
           },
           {
@@ -358,37 +218,22 @@ export default function ProjectDetailPage() {
             label: <span data-testid="automation-tab">自动化执行</span>,
             children: <ProjectAutomationTab projectId={projectId} canManage={canManage} />,
           },
+          {
+            key: 'members',
+            label: '成员',
+            children: (
+              <ProjectMembersTab
+                members={members}
+                applications={applications}
+                canManage={canManage}
+                onSubmitAddMember={submitAddMember}
+                onChangeRole={changeRole}
+                onRemoveMember={handleRemove}
+              />
+            ),
+          },
         ]}
       />
-
-      <Modal
-        open={adding}
-        title="添加成员"
-        onCancel={() => setAdding(false)}
-        onOk={submitAddMember}
-        okText="添加"
-        cancelText="取消"
-        okButtonProps={{ 'data-testid': 'modal-ok' }}
-        destroyOnHidden
-      >
-        <Form form={form} layout="vertical" initialValues={{ role: 'member' }} requiredMark={false}>
-          <Form.Item
-            name="user_id"
-            label="用户 ID"
-            rules={[{ required: true, message: '请输入用户 ID' }]}
-          >
-            <InputNumber min={1} style={{ width: '100%' }} />
-          </Form.Item>
-          <Form.Item name="role" label="角色" rules={[{ required: true }]}>
-            <Select
-              options={Object.entries(PROJECT_ROLE_LABELS).map(([value, label]) => ({
-                value,
-                label,
-              }))}
-            />
-          </Form.Item>
-        </Form>
-      </Modal>
     </div>
   )
 }

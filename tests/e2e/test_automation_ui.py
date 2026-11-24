@@ -142,10 +142,11 @@ def test_ac_194_tab_position_and_scan_import_ui(
         ).click()
 
         # ---- 1. Tab 在「测试用例」之后 ----
-        tabs = wide_admin_page.get_by_role("tab")
-        expect(tabs).to_have_count(10)
-        expect(tabs.nth(9)).to_contain_text("自动化执行")
-        expect(tabs.nth(8)).to_contain_text("测试用例")
+        # 顶层 tablist 在 DOM 里排第一；裸 get_by_role("tab") 会把内层子 Tab 也数进去
+        tabs = wide_admin_page.get_by_role("tablist").first.get_by_role("tab")
+        expect(tabs).to_have_count(8)
+        expect(tabs.nth(7)).to_contain_text("成员")
+        expect(tabs.nth(6)).to_contain_text("自动化执行")
         wide_admin_page.get_by_role("tab", name="自动化执行").click()
         expect(wide_admin_page.get_by_test_id("automation-asset-table")).to_be_visible()
         # 空态：还没有资产

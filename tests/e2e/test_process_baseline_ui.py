@@ -133,7 +133,7 @@ def _scenarios(api, project_id: int) -> list[dict]:
 
 @pytest.mark.task("T122")
 def test_ac_212_subtab_and_top_level_tabs_ui(wide_admin_page: Page, api, shot) -> None:
-    """AC-212：二级子菜单 + 顶层仍是 10 个 Tab + 默认停在「功能基线」。"""
+    """AC-212：二级子菜单 + 顶层仍是 8 个 Tab + 默认停在「功能基线」。"""
     project = api.create_project(_name("pb-subtab"))
     wide_admin_page.reload()
     _open_project(wide_admin_page, project["name"])
@@ -154,15 +154,15 @@ def test_ac_212_subtab_and_top_level_tabs_ui(wide_admin_page: Page, api, shot) -
     expect(wide_admin_page.get_by_test_id("process-baseline-table")).to_have_count(0)
     shot(wide_admin_page, "subtab-default-function")
 
-    # ---- 2. 顶层仍然是 10 个 Tab，「自动化执行」仍是最后一个 ----
+    # ---- 2. 顶层仍然是 8 个 Tab，「自动化执行」在「成员」之前 ----
     # 顶层 Tab 的计数**只看顶层 tablist**——内层二级 Tabs 也有 role="tab"，
-    # 进了「基线管理」之后直接 `get_by_role("tab")` 会数到 10 + 2 = 12。
+    # 进了「基线管理」之后直接 `get_by_role("tab")` 会数到 8 + 2 = 10。
     # 顶层 tablist 在 DOM 里排第一（内层那个在它的 content 里），
     # 所以按 tablist 取第一个即可。
     top_tabs = wide_admin_page.get_by_role("tablist").first.get_by_role("tab")
-    expect(top_tabs).to_have_count(10)
-    expect(top_tabs.nth(9)).to_contain_text("自动化执行")
-    expect(top_tabs.nth(8)).to_contain_text("测试用例")
+    expect(top_tabs).to_have_count(8)
+    expect(top_tabs.nth(7)).to_contain_text("成员")
+    expect(top_tabs.nth(6)).to_contain_text("自动化执行")
 
     # ---- 3. 切到「流程基线」→ 列表渲染出来 ----
     wide_admin_page.get_by_test_id("process-baseline-subtab-process").click()

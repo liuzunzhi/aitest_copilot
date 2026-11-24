@@ -1,13 +1,21 @@
-"""项目详情页 10 个 Tab 逐个点开（T110 · AC-180 / T115 · AC-194）。
+"""项目详情页 8 个 Tab 逐个点开（T110 · AC-180 / T115 · AC-194）。
 
 **为什么要有这条**：08 期给项目详情页加了第 9 个 Tab「测试用例」，
 09 期 T115 又加了第 10 个 Tab「自动化执行」——
 Tab 越多，任何一个 Tab 的渲染报错都会让整页白屏。
-这条用例逐个点开 10 个 Tab，每个都要断言**内容区真的渲染出来了**
+这条用例逐个点开 8 个 Tab，每个都要断言**内容区真的渲染出来了**
 （不是「没报错」），顺带确认 Tab 的顺序没被打乱。
 
-**顺带守一条红线**：本期前端只碰了「自动化执行」Tab，
-其余 9 个 Tab 的内容必须与 08 期一致——这里逐个断言关键锚点还在。
+**11 期调整**：顶层 Tab 从 10 个收敛到 8 个——「版本快照」并进「文档」、
+「申请」并进「成员」，顶层顺序也重排了。
+
+**顶层计数要限定顶层 tablist**：antd 的两层 `Tabs` **都**用 `role="tab"`——
+进了「基线管理」或「成员」之后直接 `get_by_role("tab")` 会把内层的子 Tab 也数进去
+（8 + 2 = 10）。断言顶层要写 `get_by_role("tablist").first.get_by_role("tab")`
+（顶层 tablist 在 DOM 里排第一）。
+
+**点击要用 `exact=True`**：Playwright 的 `get_by_role(name=)` 默认是**子串匹配**——
+顶层「成员」与内层「成员列表」名字互相包含，裸写法会 strict mode violation。
 """
 
 import pytest
@@ -17,57 +25,55 @@ from tests.e2e.helpers import unique_name as _name
 
 pytestmark = pytest.mark.e2e
 
-# 10 个 Tab 的名字与顺序（概览 / 成员 / 文档 / 版本快照 / 基线管理 / 申请 / 增量分析 / 测试点 / 测试用例 / 自动化执行）
+# 8 个顶层 Tab 的名字与顺序（概览 / 文档 / 基线管理 / 增量分析 / 测试点 / 测试用例 / 自动化执行 / 成员）
 TAB_NAMES = [
     "概览",
-    "成员",
     "文档",
-    "版本快照",
     "基线管理",
-    "申请",
     "增量分析",
     "测试点",
     "测试用例",
     "自动化执行",
+    "成员",
 ]
 
 # 每个 Tab 内容区的锚点（`data-testid`）——用来证明「真的渲染了」。
 TAB_ANCHORS = {
     "概览": "project-overview",
-    "成员": "member-table",
     "文档": "document-table",
-    "版本快照": "baseline-table",
     "基线管理": "baseline-keyword",
-    "申请": None,  # 申请表没有 testid，用 Tab 自身的选中态 + 空态文本兜底
     "增量分析": "incremental-analysis-table",
     "测试点": "test-point-analysis-table",
     "测试用例": "test-case-analysis-table",
     "自动化执行": "automation-asset-table",
+    "成员": "member-table",
 }
 
 
 @pytest.mark.task("T110")
 def test_ac_180_all_nine_tabs_render(admin_page: Page, api, shot) -> None:
-    """10 个 Tab 逐个点开，每个都断言内容区渲染出来了。"""
+    """8 个顶层 Tab 逐个点开，每个都断言内容区渲染出来了。"""
     project = api.create_project(_name("tabs"))
     admin_page.reload()
     admin_page.get_by_role("row").filter(has_text=project["name"]).get_by_role(
         "button", name="详情"
     ).click()
 
-    tabs = admin_page.get_by_role("tab")
-    # 顺序不能被打乱——「自动化执行」必须在「测试用例」之后
+    # 顶层 tablist 在 DOM 里排第一（内层的在顶层 content-holder 里面）
+    tabs = admin_page.get_by_role("tablist").first.get_by_role("tab")
+    # 顺序不能被打乱——「自动化执行」必须在「测试用例」之后，「成员」是最后一个
     expect(tabs).to_have_count(len(TAB_NAMES))
     for index, name in enumerate(TAB_NAMES):
         expect(tabs.nth(index)).to_contain_text(name)
 
     for name in TAB_NAMES:
-        admin_page.get_by_role("tab", name=name).click()
+        # exact=True：顶层「成员」与内层「成员列表」名字互相包含，裸写法会 strict violation
+        admin_page.get_by_role("tab", name=name, exact=True).click()
         anchor = TAB_ANCHORS[name]
         if anchor:
             expect(admin_page.get_by_test_id(anchor)).to_be_visible()
         # Tab 选中态确实落在刚点的那个上
-        expect(admin_page.get_by_role("tab", name=name)).to_have_attribute(
+        expect(admin_page.get_by_role("tab", name=name, exact=True)).to_have_attribute(
             "aria-selected", "true"
         )
 
