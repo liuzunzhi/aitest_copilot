@@ -32,7 +32,9 @@ def test_ac_47_member_sees_no_manage_entry_ui(api, make_user, page_as, shot) -> 
     shot(page, "member-project-list")
 
     row.get_by_role("button", name="详情").click()
-    page.get_by_role("tab", name="成员").click()
+    # exact=True：顶层「成员」与内层「成员列表」名字互相包含，
+    # Playwright 的 get_by_role(name=) 默认子串匹配，裸写法会 strict violation
+    page.get_by_role("tab", name="成员", exact=True).click()
     expect(page.get_by_test_id("member-table")).to_be_visible()
     expect(page.get_by_role("button", name="添加成员")).to_have_count(0)
     shot(page, "member-detail")

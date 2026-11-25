@@ -60,7 +60,8 @@ def test_ac_33_34_archived_project_ui(admin_page: Page, api, shot) -> None:
     # AC-34：概览仍可看，写操作被拒绝并给出中文提示
     _open_detail(admin_page, project["name"])
     expect(admin_page.get_by_test_id("project-overview")).to_be_visible()
-    admin_page.get_by_role("tab", name="成员").click()
+    # exact=True：顶层「成员」与内层「成员列表」名字互相包含，裸写法会 strict violation
+    admin_page.get_by_role("tab", name="成员", exact=True).click()
     admin_page.get_by_role("button", name="添加成员").click()
     admin_page.get_by_label("用户 ID").fill('1')
     admin_page.get_by_test_id("modal-ok").click()
@@ -76,7 +77,8 @@ def test_ac_35_to_38_member_management_ui(admin_page: Page, api, make_user, shot
     admin_page.reload()
 
     _open_detail(admin_page, project["name"])
-    admin_page.get_by_role("tab", name="成员").click()
+    # exact=True：顶层「成员」与内层「成员列表」名字互相包含，裸写法会 strict violation
+    admin_page.get_by_role("tab", name="成员", exact=True).click()
     table = admin_page.get_by_test_id("member-table")
 
     # AC-35：只展示用户名与角色

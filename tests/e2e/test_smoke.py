@@ -48,7 +48,8 @@ def test_ac_31_project_lifecycle_ui(admin_page: Page, shot) -> None:
     expect(overview).to_contain_text("暂无")
     shot(admin_page, "overview")
 
-    admin_page.get_by_role("tab", name="成员").click()
+    # exact=True：顶层「成员」与内层「成员列表」名字互相包含，裸写法会 strict violation
+    admin_page.get_by_role("tab", name="成员", exact=True).click()
     member_table = admin_page.get_by_test_id("member-table")
     expect(member_table).to_be_visible()
     expect(member_table.get_by_role("columnheader", name="用户名")).to_be_visible()
