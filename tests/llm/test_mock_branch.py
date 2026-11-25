@@ -44,22 +44,28 @@ def _chat(system: str) -> str:
 
 
 def test_ac_228_chapter_link_branch_returns_empty_references():
-    """新前缀命中引用图分支，默认返回空引用列表。"""
+    """新前缀命中引用图分支，默认返回空引用列表。
+
+    默认响应**同时**含 `chapters` 与 `references` 两个键——引用图分析
+    是两阶段的（阶段一要每章摘要、阶段二要引用边），两个阶段共用同一个
+    模板前缀，Mock 只有一条默认响应，必须同时满足两阶段的根结构校验。
+    """
     content = _chat(f"{CHAPTER_LINK_SYSTEM_PREFIX} 你是章节引用关系分析助手。")
 
-    assert json.loads(content) == {"references": []}
+    assert json.loads(content) == {"chapters": [], "references": []}
 
 
 def test_ac_228_chapter_link_default_response_is_json():
-    """默认响应是**合法 JSON**，且根结构是 `{"references": [...]}`。
+    """默认响应是**合法 JSON**，且两个阶段的根结构都在。
 
-    根结构错一个字母，服务端的根结构校验就会失败——
+    根结构缺一个键，对应阶段的根结构校验就会失败——
     Mock 存在的意义就是让 e2e 不依赖真实模型也能跑通。
     """
     payload = json.loads(CHAPTER_LINK_DEFAULT_RESPONSE)
 
-    assert set(payload) == {"references"}
+    assert set(payload) == {"chapters", "references"}
     assert payload["references"] == []
+    assert payload["chapters"] == []
 
 
 def test_ac_228_legacy_branches_unchanged():
@@ -83,7 +89,7 @@ def test_ac_228_chapter_link_branch_does_not_shadow_others():
         LLMRequest(system=PROCESS_BASELINE_SYSTEM_PREFIX, user="u")
     )
 
-    assert json.loads(link_response.content) == {"references": []}
+    assert json.loads(link_response.content) == {"chapters": [], "references": []}
     assert json.loads(baseline_response.content) == json.loads(
         PROCESS_BASELINE_DEFAULT_RESPONSE
     )

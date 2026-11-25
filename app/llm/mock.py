@@ -119,8 +119,13 @@ CHAPTER_LINK_SYSTEM_PREFIX = "[CHAPTER_LINK_ANALYZE_SYSTEM]"
 # 默认返回**空列表**而不是带假 id 的一条边：Mock 不知道真实的章节 id，
 # 编一个出来必然越界被丢弃（越界即丢是硬规则）。空列表让 e2e 与单测
 # 都能稳定跑通——需要「有边」的场景用 `MockProvider(queue=[...])` 显式喂。
+#
+# **两个键都要有**：引用图分析是**两阶段**的——阶段一要 `chapters`
+# （每章摘要），阶段二要 `references`（引用边）。Mock 只有一条默认响应，
+# 两个阶段共用同一个模板前缀（分流靠 `startswith`），所以默认响应
+# 必须**同时**满足两个阶段的根结构校验，否则阶段一会被判成「坏输出」。
 CHAPTER_LINK_DEFAULT_RESPONSE = json.dumps(
-    {"references": []},
+    {"chapters": [], "references": []},
     ensure_ascii=False,
 )
 
