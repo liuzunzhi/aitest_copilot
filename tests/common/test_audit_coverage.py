@@ -983,6 +983,41 @@ def _test_point_analysis_create(
     assert response.status_code == 201, response.text
 
 
+def _chapter_link_delete(client: TestClient, db: Session, monkeypatch) -> None:
+    """12 期：删一条章节引用边。"""
+    project, _, headers, body = _uploaded(client, db)
+    chapter_id = db.scalar(
+        select(DocumentChapter.id)
+        .where(DocumentChapter.version_id == body["version"]["id"])
+        .limit(1)
+    )
+    assert chapter_id is not None
+    created = client.post(
+        CHAPTER_LINKS.format(
+            project_id=project.id,
+            document_id=body["document"]["id"],
+            version_id=body["version"]["id"],
+        ),
+        json={
+            "from_chapter_id": chapter_id,
+            "link_type": "mentions_entity",
+            "entity": "待删除的审计功能",
+        },
+        headers=headers,
+    )
+    assert created.status_code == 201, created.text
+    response = client.delete(
+        CHAPTER_LINKS.format(
+            project_id=project.id,
+            document_id=body["document"]["id"],
+            version_id=body["version"]["id"],
+        )
+        + f"/{created.json()['id']}",
+        headers=headers,
+    )
+    assert response.status_code == 204, response.text
+
+
 def _chapter_link_analyze(client: TestClient, db: Session, monkeypatch) -> None:
     """12 期：AI 分析章节引用关系。
 
@@ -1447,6 +1482,7 @@ SCENARIOS = {
     "incremental.apply.run": _incremental_apply_run,
     "document.chapter_link.create": _chapter_link_create,
     "document.chapter_link.analyze": _chapter_link_analyze,
+    "document.chapter_link.delete": _chapter_link_delete,
     "llm.provider.create": _llm_provider_create,
     "llm.provider.update": _llm_provider_update,
     "prompt_template.update": _prompt_template_update,

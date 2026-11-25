@@ -30,6 +30,7 @@ from app.common.audit import write_audit
 from app.common.config import get_settings
 from app.common.deps import SYSTEM_ADMIN
 from app.common.errors import (
+    ChapterLinkNotFound,
     DocumentNotFound,
     DocumentVersionNotFound,
     DuplicateChapterLink,
@@ -590,6 +591,71 @@ def _record_link_analyze_run(
     )
 
 
+# ------------------------------------------------------------ 删除引用边
+
+
+def delete_link(
+    session: Session,
+    *,
+    project_id: int,
+    document_id: int,
+    version_id: int,
+    actor: User,
+    link_id: int,
+) -> None:
+    """删一条引用边（项目管理员）。
+
+    **三种来源都可删**：`ai` / `manual` / `rule` 统一口径——
+    用户诉求是「可以修改或删除错误结果」，规则边也是「结果」，
+    限制它会让抽屉顶部的提示语变成半真。
+
+    `source='rule'` 的边删掉后，**下次「按规则重抽」会重新生成它**
+    （重抽是「按 `source='rule'` 先删后插」）。前端在删除确认框里
+    要把这一点告诉用户。
+
+    **必须校验归属**：`id == link_id AND version_id == version_id`——
+    不校验就能跨版本删边。边不存在 / 不属于该版本 → 404
+    `CHAPTER_LINK_NOT_FOUND`。
+    """
+    ensure_writable_admin(session, project_id=project_id, actor=actor)
+    _load_version(
+        session, project_id=project_id, document_id=document_id, version_id=version_id
+    )
+
+    link = session.scalar(
+        select(DocumentChapterLink).where(
+            DocumentChapterLink.id == link_id,
+            DocumentChapterLink.version_id == version_id,
+        )
+    )
+    if link is None:
+        raise ChapterLinkNotFound("引用关系不存在或不属于该文档版本")
+
+    before_data = {
+        "document_id": document_id,
+        "version_id": version_id,
+        "from_chapter_id": link.from_chapter_id,
+        "to_chapter_id": link.to_chapter_id,
+        "link_type": link.link_type,
+        "entity": link.entity,
+        "source": link.source,
+    }
+    session.delete(link)
+    session.flush()
+
+    write_audit(
+        session,
+        "document.chapter_link.delete",
+        actor_id=actor.id,
+        actor_role=actor.global_role,
+        project_id=project_id,
+        target_type="document_chapter_link",
+        target_id=link.id,
+        before_data=before_data,
+    )
+    session.commit()
+
+
 # ------------------------------------------------------------ 手动补链
 
 
@@ -737,6 +803,7 @@ __all__ = [
     "RULE_CONFIDENCE",
     "analyze_links",
     "create_link",
+    "delete_link",
     "ensure_member",
     "ensure_writable_admin",
     "extract_links",

@@ -6,12 +6,13 @@
 - `POST ""`        手动补一条（项目管理员）
 - `POST /extract`  按规则重抽取（幂等，项目管理员）
 - `POST /analyze`  AI 分析引用关系（项目管理员，调用真实大模型）
+- `DELETE /{id}`   删一条引用边（项目管理员）
 
 读权限随文档章节（成员含访客）；写权限单独校验，固定顺序是
 项目不存在 404 → 已归档 409 → 不是管理员 403。
 """
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Response
 from sqlalchemy.orm import Session
 
 from app.common.db import get_db
@@ -152,6 +153,31 @@ def analyze_links(
         provider=result["provider"],
         mode=result["mode"],
     )
+
+
+@router.delete("/{link_id}", status_code=204)
+def delete_link(
+    project_id: int,
+    document_id: int,
+    version_id: int,
+    link_id: int,
+    session: Session = Depends(get_db),
+    user: User = Depends(current_user),
+) -> Response:
+    """删一条引用边（项目管理员）。三种来源的边都可删。
+
+    删 `source='rule'` 的边后，再次「按规则重抽」会重新生成它——
+    前端在确认框里要提示这一点。
+    """
+    links.delete_link(
+        session,
+        project_id=project_id,
+        document_id=document_id,
+        version_id=version_id,
+        actor=user,
+        link_id=link_id,
+    )
+    return Response(status_code=204)
 
 
 __all__ = ["router"]
