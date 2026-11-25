@@ -37,7 +37,17 @@ _TABLE_OPTS = {
 
 PROVIDER_TYPES = ("openai_compat",)
 PROVIDER_STATUSES = ("active", "disabled")
-RUN_LOG_TASK_TYPES = ("incremental_first", "incremental_second", "provider_test", "test_point")
+RUN_LOG_TASK_TYPES = (
+    "incremental_first",
+    "incremental_second",
+    "provider_test",
+    "test_point",
+    # 08 期（0023）扩的 `test_case`——当时只改了迁移，模型里漏了，
+    # 这里补齐（模型与库必须一致，否则 ORM 写入会被 CHECK 拒）。
+    "test_case",
+    # 12 期（0027）扩的 `chapter_link_analyze`：章节引用图的 AI 分析。
+    "chapter_link_analyze",
+)
 RUN_LOG_STATUSES = ("succeeded", "failed")
 
 # 生成列：默认行取 1，其余取 NULL。
@@ -127,7 +137,8 @@ class LLMRunLog(Base):
         Index("idx_llmlogs_status", "status", "created_at"),
         CheckConstraint(
             "task_type IN "
-            "('incremental_first','incremental_second','provider_test','test_point')",
+            "('incremental_first','incremental_second','provider_test',"
+            "'test_point','test_case','chapter_link_analyze')",
             name="ck_llmlogs_task_type",
         ),
         CheckConstraint(

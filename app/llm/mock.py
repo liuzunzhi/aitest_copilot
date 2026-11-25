@@ -4,14 +4,15 @@
 
 - `calls: list[LLMRequest]`：每次 `chat` 追加一条，用例据此断言 Prompt 来源；
 - `queue: list[str]`：预设返回队列，为空时按 Prompt 类型返回默认响应；
-- 默认响应分六套：第一遍（`{"conclusions": []}`）、第二遍
+- 默认响应分七套：第一遍（`{"conclusions": []}`）、第二遍
   （`[INCREMENTAL_2B_SYSTEM]` 前缀的 system → `decision=unchanged`）、
   文档推导（`[DERIVE_SYSTEM]` 前缀 → 一个最小三层结构）、
   测试点生成（`[TEST_POINT_SYSTEM]` 前缀 → 一条最小测试点）、
   测试用例生成（`[TEST_CASE_SYSTEM]` 前缀 → 一条带步骤的最小用例）、
-  流程基线推导（`[PROCESS_BASELINE_SYSTEM]` 前缀 → 一个最小场景列表）。
+  流程基线推导（`[PROCESS_BASELINE_SYSTEM]` 前缀 → 一个最小场景列表）、
+  引用图分析（`[CHAPTER_LINK_ANALYZE_SYSTEM]` 前缀 → 一个空引用列表）。
   这样 e2e 不预设队列也能跑通第一遍、第二遍、基线推导、测试点生成、
-  用例生成与流程基线推导。
+  用例生成、流程基线推导与引用图分析。
 
 **07 / 08 / 10 期新增的分支只影响各自的前缀**——
 既有分支的行为一个字节没变，05 / 06 的断言不受影响。
@@ -114,6 +115,14 @@ PROCESS_BASELINE_DEFAULT_RESPONSE = json.dumps(
     },
     ensure_ascii=False,
 )
+CHAPTER_LINK_SYSTEM_PREFIX = "[CHAPTER_LINK_ANALYZE_SYSTEM]"
+# 默认返回**空列表**而不是带假 id 的一条边：Mock 不知道真实的章节 id，
+# 编一个出来必然越界被丢弃（越界即丢是硬规则）。空列表让 e2e 与单测
+# 都能稳定跑通——需要「有边」的场景用 `MockProvider(queue=[...])` 显式喂。
+CHAPTER_LINK_DEFAULT_RESPONSE = json.dumps(
+    {"references": []},
+    ensure_ascii=False,
+)
 
 
 class MockProvider:
@@ -147,6 +156,8 @@ class MockProvider:
             content = TEST_CASE_DEFAULT_RESPONSE
         elif req.system.startswith(PROCESS_BASELINE_SYSTEM_PREFIX):
             content = PROCESS_BASELINE_DEFAULT_RESPONSE
+        elif req.system.startswith(CHAPTER_LINK_SYSTEM_PREFIX):
+            content = CHAPTER_LINK_DEFAULT_RESPONSE
         else:
             content = self.default_response
         prompt_tokens = len(req.system) + len(req.user)
@@ -164,6 +175,8 @@ class MockProvider:
 
 
 __all__ = [
+    "CHAPTER_LINK_DEFAULT_RESPONSE",
+    "CHAPTER_LINK_SYSTEM_PREFIX",
     "DEFAULT_RESPONSE",
     "DERIVE_DEFAULT_RESPONSE",
     "DERIVE_SYSTEM_PREFIX",

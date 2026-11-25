@@ -34,6 +34,11 @@ interface FormValues {
 
 const TASK_TYPE_LABELS: Record<string, string> = {
   incremental: '增量分析',
+  document_parse: '基线推导',
+  test_point: '测试点生成',
+  test_case: '测试用例生成',
+  process_baseline: '流程基线推导',
+  chapter_link_analyze: '引用图分析',
 }
 
 const STATUS_LABELS: Record<string, string> = {

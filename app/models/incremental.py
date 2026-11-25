@@ -48,6 +48,11 @@ TASK_TYPES = (
     # 解析器会拿到 `{"scenarios": [...]}` 直接根结构校验失败，
     # 报错信息完全指不到真因。
     "process_baseline",
+    # 12 期新增：章节引用图的 AI 分析。
+    # 同理**必须独立**：引用分析的输出契约是 `{"references": [...]}`，
+    # 与增量分析的 `{"conclusions": [...]}`、流程基线的 `{"scenarios": [...]}`
+    # 根结构都不同，复用任何一个都会让根结构校验失败。
+    "chapter_link_analyze",
 )
 TEMPLATE_STATUSES = ("active", "disabled")
 ANALYSIS_STATUSES = ("pending", "running", "succeeded", "failed")
@@ -72,7 +77,8 @@ class PromptTemplate(Base):
         Index("uk_ptemplates_type_name", "task_type", "name", unique=True),
         CheckConstraint(
             "task_type IN "
-            "('document_parse','incremental','test_point','test_case','process_baseline')",
+            "('document_parse','incremental','test_point','test_case',"
+            "'process_baseline','chapter_link_analyze')",
             name="ck_ptemplates_task_type",
         ),
         CheckConstraint(
