@@ -104,6 +104,9 @@ const CODE_TEXT: Record<string, string> = {
   /* 增量分析第二期（第二遍 + 引用图） */
   INVALID_CHAPTER_LINK: '引用关系不合法：目标章节与实体名必须二选一',
   DUPLICATE_CHAPTER_LINK: '相同的引用关系已存在',
+  CHAPTER_LINK_NOT_FOUND: '该引用关系不存在或已删除',
+  CHAPTER_LINK_ANALYZE_FAILED: 'AI 分析引用关系失败，请检查大模型配置后重试',
+  CHAPTER_LINK_ANALYZE_EMPTY: '该文档版本没有可分析的章节内容',
   SECOND_PASS_NOT_READY: '第一遍分析尚未成功，不能执行第二遍',
   SECOND_PASS_TEMPLATE_MISSING: '第二遍提示词模板缺失或已停用',
   SECOND_PASS_CONFLICTS_PENDING: '仍有待裁决的冲突，请先完成裁决再重跑',

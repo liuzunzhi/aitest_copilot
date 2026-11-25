@@ -1193,9 +1193,21 @@ export interface ChapterLink {
   link_type: 'references' | 'depends_on' | 'mentions_entity'
   entity: string | null
   confidence: number | null
-  source: 'rule' | 'manual'
+  /** `rule` = 正则抽取；`manual` = 人工补链；`ai` = AI 分析产出。 */
+  source: 'rule' | 'manual' | 'ai'
   created_by: number
   created_at: string
+}
+
+/** AI 分析引用关系的结果。 */
+export interface ChapterLinkAnalyzeResult {
+  links: ChapterLink[]
+  analyzed_count: number
+  discarded_count: number
+  chapter_count: number
+  provider: string
+  /** `full` = 整篇一次调用；`chunked` = 两阶段分块映射。 */
+  mode: 'full' | 'chunked'
 }
 
 /**
@@ -1306,6 +1318,33 @@ export async function extractChapterLinks(
     `${CHAPTER_LINKS(projectId, documentId, versionId)}/extract`,
   )
   return data
+}
+
+/**
+ * AI 分析引用关系。后端**同步**调用大模型，可能耗时较久。
+ * 产出的边落库为 `source='ai'`；人工边与规则边不受影响。
+ */
+export async function analyzeChapterLinks(
+  projectId: number,
+  documentId: number,
+  versionId: number,
+): Promise<ChapterLinkAnalyzeResult> {
+  const { data } = await client.post<ChapterLinkAnalyzeResult>(
+    `${CHAPTER_LINKS(projectId, documentId, versionId)}/analyze`,
+  )
+  return data
+}
+
+/** 删一条引用边。三种来源的边都可删。 */
+export async function deleteChapterLink(
+  projectId: number,
+  documentId: number,
+  versionId: number,
+  linkId: number,
+): Promise<void> {
+  await client.delete(
+    `${CHAPTER_LINKS(projectId, documentId, versionId)}/${linkId}`,
+  )
 }
 
 /* ---------------------------------------------- 增量分析第三期（产出段） */

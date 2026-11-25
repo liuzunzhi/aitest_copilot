@@ -43,7 +43,7 @@ def list_links(
     link_type: str | None = Query(
         default=None, pattern="^(references|depends_on|mentions_entity)$"
     ),
-    source: str | None = Query(default=None, pattern="^(rule|manual)$"),
+    source: str | None = Query(default=None, pattern="^(rule|manual|ai)$"),
     session: Session = Depends(get_db),
     user: User = Depends(current_user),
 ) -> list[ChapterLinkOut]:

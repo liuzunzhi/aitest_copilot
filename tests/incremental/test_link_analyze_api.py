@@ -164,6 +164,26 @@ def test_ac_224_out_of_scope_id_is_discarded(client: TestClient, db: Session, pr
     assert len(_ai_rows(db, version)) == 1
 
 
+def test_ac_224_list_filter_by_ai_source(client: TestClient, db: Session, provider):
+    """按 `source='ai'` 过滤引用图可用（路由的 source 正则已扩 `'ai'`）。
+
+    前端 `listChapterLinks` 的 `source` 参数类型含 `'ai'`，
+    后端正则不同步扩就会被 422 拒掉。
+    """
+    admin, project, document, version, rows = _chain(db)
+    headers = helpers.login(client, admin)
+    url = _url(project, document, version)
+
+    provider.queue.append(json.dumps({"references": [_ref(rows[0].id, rows[1].id)]}))
+    assert client.post(f"{url}/analyze", headers=headers).status_code == 200
+
+    filtered = client.get(url, params={"source": "ai"}, headers=headers)
+
+    assert filtered.status_code == 200, filtered.text
+    assert len(filtered.json()) == 1
+    assert filtered.json()[0]["source"] == "ai"
+
+
 # ------------------------------------------------------------ 三种来源互不覆盖
 
 
