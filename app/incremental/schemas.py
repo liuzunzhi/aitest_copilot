@@ -16,6 +16,7 @@ __all__ = [
     "AnalysisOut",
     "AppliedLabelOut",
     "ApplyResultOut",
+    "ChapterLinkAnalyzeOut",
     "ChapterLinkCreate",
     "ChapterLinkOut",
     "ConclusionOut",
@@ -112,6 +113,22 @@ class ChapterLinkOut(BaseModel):
     source: str
     created_by: int
     created_at: datetime
+
+
+class ChapterLinkAnalyzeOut(BaseModel):
+    """AI 分析引用关系的结果。
+
+    **为什么不是裸 list**：前端要显示「分析了 N 章，发现 M 条」，
+    还要区分「模型没返回」与「返回了但全被丢弃」——裸 list 表达不了。
+    `mode` 让用户知道走的是整篇单次调用还是两阶段分块。
+    """
+
+    links: list[ChapterLinkOut]
+    analyzed_count: int
+    discarded_count: int
+    chapter_count: int
+    provider: str
+    mode: str
 
 
 class DecisionOut(BaseModel):

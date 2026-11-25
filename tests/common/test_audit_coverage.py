@@ -983,6 +983,32 @@ def _test_point_analysis_create(
     assert response.status_code == 201, response.text
 
 
+def _chapter_link_analyze(client: TestClient, db: Session, monkeypatch) -> None:
+    """12 期：AI 分析章节引用关系。
+
+    需要一个可编程的模型供应商——审计覆盖用例跑的是真实接口，
+    而 AI 分析要调模型。覆盖 `get_provider` 依赖换成 Mock。
+    """
+    from app.llm.mock import MockProvider
+    from app.llm.provider import get_provider
+    from app.main import app as fastapi_app
+
+    mock = MockProvider()
+    fastapi_app.dependency_overrides[get_provider] = lambda: mock
+
+    project, _, headers, body = _uploaded(client, db)
+    response = client.post(
+        CHAPTER_LINKS.format(
+            project_id=project.id,
+            document_id=body["document"]["id"],
+            version_id=body["version"]["id"],
+        )
+        + "/analyze",
+        headers=headers,
+    )
+    assert response.status_code == 200, response.text
+
+
 def _chapter_link_create(client: TestClient, db: Session, monkeypatch) -> None:
     """05 第二期：人工补一条章节引用边。"""
     project, _, headers, body = _uploaded(client, db)
@@ -1420,6 +1446,7 @@ SCENARIOS = {
     "incremental.conflict.resolve": _incremental_conflict_resolve,
     "incremental.apply.run": _incremental_apply_run,
     "document.chapter_link.create": _chapter_link_create,
+    "document.chapter_link.analyze": _chapter_link_analyze,
     "llm.provider.create": _llm_provider_create,
     "llm.provider.update": _llm_provider_update,
     "prompt_template.update": _prompt_template_update,

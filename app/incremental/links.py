@@ -19,29 +19,45 @@
 """
 
 import re
+import time
 from dataclasses import dataclass
 from decimal import Decimal
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 
 from app.common.audit import write_audit
+from app.common.config import get_settings
 from app.common.deps import SYSTEM_ADMIN
 from app.common.errors import (
     DocumentNotFound,
     DocumentVersionNotFound,
     DuplicateChapterLink,
     InvalidChapterLink,
+    LLMCallFailed,
+    LLMOutputInvalid,
     NotProjectAdmin,
     NotProjectMember,
     ProjectArchived,
     ProjectNotFound,
+    TemplateDisabled,
+    TemplateNotFound,
 )
+from app.documents import service as documents_service
+from app.incremental import link_analyze as link_analyze_engine
+from app.llm import run_log
+from app.llm.provider import LLMProvider
 from app.models.baseline import BaselineFeaturePoint, BaselineFunction, BaselineModule
 from app.models.chapter_link import CHAPTER_LINK_TYPES, DocumentChapterLink
 from app.models.document import Document, DocumentChapter, DocumentVersion
+from app.models.incremental import PromptTemplate
 from app.models.project import Project, ProjectMember
 from app.models.user import User
+
+# AI 分析用的提示词模板类型（独立成一个类型，理由见 spec §2.3）
+LINK_ANALYZE_TASK_TYPE = "chapter_link_analyze"
+# AI 分析写运行留痕的 task_type（与 `llm_run_logs.task_type` 的枚举一致）
+LINK_ANALYZE_RUN_LOG_TASK_TYPE = "chapter_link_analyze"
 
 # 规则抽取的固定置信度（spec §6.4）
 RULE_CONFIDENCE = {
@@ -317,6 +333,263 @@ def extract_links(
     return rows
 
 
+# ------------------------------------------------------------ AI 分析
+
+
+def _load_link_analyze_template(session: Session) -> PromptTemplate:
+    """取 AI 分析的模板（`task_type='chapter_link_analyze'` + `status='active'`）。
+
+    **按类型取，不按 id 取**——用户点「AI 一键分析」时前端不选模板，
+    平台用唯一的那条种子模板。管理员可以在「系统设置 → 提示词模板」里
+    改它的正文（改文案不用发版），但**不能改它的 `task_type`**
+    （改了就匹配不上）。
+
+    模板缺失 → `TemplateNotFound`（404）；模板存在但被停用 →
+    `TemplateDisabled`（409）。**都不静默降级**——降级会让「模板可编辑」
+    这个设计失效，也让用户以为 AI 跑了、其实什么都没跑。
+    """
+    template = session.scalar(
+        select(PromptTemplate)
+        .where(
+            PromptTemplate.task_type == LINK_ANALYZE_TASK_TYPE,
+            PromptTemplate.status == "active",
+        )
+        .order_by(PromptTemplate.version_no.desc(), PromptTemplate.id.desc())
+    )
+    if template is not None:
+        return template
+
+    exists = session.scalar(
+        select(func.count())
+        .select_from(PromptTemplate)
+        .where(PromptTemplate.task_type == LINK_ANALYZE_TASK_TYPE)
+    )
+    if exists:
+        raise TemplateDisabled(
+            "AI 分析引用关系的提示词模板已停用，请先在系统设置里启用"
+        )
+    raise TemplateNotFound(
+        "AI 分析引用关系的提示词模板缺失，请先在系统设置里创建并启用"
+    )
+
+
+def analyze_links(
+    session: Session,
+    *,
+    project_id: int,
+    document_id: int,
+    version_id: int,
+    actor: User,
+    provider: LLMProvider,
+) -> dict:
+    """AI 分析该版本的章节引用关系（同步跑完）。
+
+    编排顺序（与 10 期的 `run_derive` 同构）：
+
+    1. 权限：项目 404 → 归档 409 → 角色 403；
+    2. 文档 / 版本校验；
+    3. 取模板（`task_type='chapter_link_analyze'` + active）；
+    4. 取章节（复用 `documents_service.list_chapters`）；
+    5. 调引擎（`link_analyze.analyze`，纯函数）；
+    6. **落库**：删 `source='ai'` 旧行 → 插新行；
+    7. 写审计 + 写运行留痕。
+
+    **三种来源互不覆盖**：这里只重算 `source='ai'` 的边，
+    人工边（`manual`）与规则边（`rule`）一个字节都不动。
+
+    **「没有引用关系」不是错误**：模型返回 `{"references": []}`
+    → 写 0 行，`analyzed_count=0`，不抛异常。
+    """
+    ensure_writable_admin(session, project_id=project_id, actor=actor)
+    document, version = _load_version(
+        session, project_id=project_id, document_id=document_id, version_id=version_id
+    )
+
+    template = _load_link_analyze_template(session)
+    limit = get_settings().incremental_max_input_chars
+
+    chapters = documents_service.list_chapters(
+        session,
+        project_id=project_id,
+        document_id=document_id,
+        version_id=version_id,
+    )
+
+    started_at = time.monotonic()
+    calls_before = run_log.call_count(provider)
+    status = "succeeded"
+    error_code: str | None = None
+    error_message: str | None = None
+    try:
+        result = link_analyze_engine.analyze(
+            provider=provider,
+            template=template,
+            document_name=document.name,
+            version_no=version.version_no,
+            chapters=chapters,
+            max_chars=limit,
+        )
+    except (LLMCallFailed, LLMOutputInvalid) as exc:
+        status = "failed"
+        error_code = exc.code
+        error_message = exc.message
+        _record_link_analyze_run(
+            session,
+            provider=provider,
+            template=template,
+            project_id=project_id,
+            calls_before=calls_before,
+            started_at=started_at,
+            status=status,
+            error_code=error_code,
+            error_message=error_message,
+        )
+        session.commit()
+        raise
+
+    rows = _persist_ai_links(
+        session,
+        version_id=version_id,
+        actor=actor,
+        references=result.references,
+    )
+
+    _record_link_analyze_run(
+        session,
+        provider=provider,
+        template=template,
+        project_id=project_id,
+        calls_before=calls_before,
+        started_at=started_at,
+        status=status,
+        error_code=error_code,
+        error_message=error_message,
+    )
+
+    write_audit(
+        session,
+        "document.chapter_link.analyze",
+        actor_id=actor.id,
+        actor_role=actor.global_role,
+        project_id=project_id,
+        target_type="document_chapter_link",
+        target_id=None,
+        after_data={
+            "document_id": document_id,
+            "version_id": version_id,
+            "template_id": template.id,
+            "provider": getattr(provider, "name", "mock"),
+            "mode": result.mode,
+            "chapter_count": result.chapter_count,
+            "analyzed_count": result.analyzed_count,
+            "discarded_count": result.discarded_count,
+        },
+    )
+    session.commit()
+
+    return {
+        "links": list_links(
+            session,
+            project_id=project_id,
+            document_id=document_id,
+            version_id=version_id,
+        ),
+        "analyzed_count": result.analyzed_count,
+        "discarded_count": result.discarded_count,
+        "chapter_count": result.chapter_count,
+        "provider": getattr(provider, "name", "mock"),
+        "mode": result.mode,
+        "inserted_count": len(rows),
+    }
+
+
+def _persist_ai_links(
+    session: Session,
+    *,
+    version_id: int,
+    actor: User,
+    references: list[dict],
+) -> list[DocumentChapterLink]:
+    """把引擎产出的引用边落库（幂等）。
+
+    口径与 `extract_links` 完全一致：
+
+    1. **先删** `(version_id, source='ai')` 的旧行 → 再插新的（重复调用不累加）；
+    2. **人工边优先**：AI 边命中人工边同一条（同源同类型同目标）时跳过，
+       否则撞 `uk_chlinks_to_chapter` 唯一键。
+
+    与重抽的区别只在「删哪一批」：重抽删 `source='rule'`，这里删 `source='ai'`。
+    """
+    session.execute(
+        delete(DocumentChapterLink).where(
+            DocumentChapterLink.version_id == version_id,
+            DocumentChapterLink.source == "ai",
+        )
+    )
+
+    manual_keys = {
+        (row.from_chapter_id, row.link_type, row.to_chapter_id, row.entity)
+        for row in session.scalars(
+            select(DocumentChapterLink).where(
+                DocumentChapterLink.version_id == version_id,
+                DocumentChapterLink.source == "manual",
+            )
+        ).all()
+    }
+
+    rows = [
+        DocumentChapterLink(
+            version_id=version_id,
+            from_chapter_id=item["from_chapter_id"],
+            to_chapter_id=item["to_chapter_id"],
+            link_type=item["link_type"],
+            entity=None,
+            confidence=item.get("confidence"),
+            source="ai",
+            created_by=actor.id,
+        )
+        for item in references
+        if (item["from_chapter_id"], item["link_type"], item["to_chapter_id"], None)
+        not in manual_keys
+    ]
+    if rows:
+        session.add_all(rows)
+        session.flush()
+    return rows
+
+
+def _record_link_analyze_run(
+    session: Session,
+    *,
+    provider: LLMProvider,
+    template: PromptTemplate,
+    project_id: int,
+    calls_before: int,
+    started_at: float,
+    status: str,
+    error_code: str | None,
+    error_message: str | None,
+) -> None:
+    """写模型运行留痕（**只 add + flush**，事务边界归调用方）。
+
+    `calls_before` 是跑之前的累计调用数——`provider.calls` 是**累计**的，
+    直接取 `len(calls)` 会把历史调用也算进来。
+    """
+    run_log.record_run(
+        session,
+        task_type=LINK_ANALYZE_RUN_LOG_TASK_TYPE,
+        provider=provider,
+        calls=max(0, run_log.call_count(provider) - calls_before),
+        started_at=started_at,
+        status=status,
+        error_code=error_code,
+        error_message=error_message,
+        project_id=project_id,
+        template_id=template.id,
+        template_version=template.version_no,
+    )
+
+
 # ------------------------------------------------------------ 手动补链
 
 
@@ -462,6 +735,7 @@ def list_links(
 
 __all__ = [
     "RULE_CONFIDENCE",
+    "analyze_links",
     "create_link",
     "ensure_member",
     "ensure_writable_admin",
