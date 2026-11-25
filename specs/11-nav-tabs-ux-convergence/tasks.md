@@ -429,7 +429,7 @@
   - `web/package.json` **为空**（零新依赖）
   - `tests/e2e/` 只改断言，**没有新增或删除用例**（条数仍 64）
 - 零真实 socket：`grep -r "requests\|urlopen\|aiohttp\|socket.socket" tests\e2e` → 无结果
-- **不推送、不打 tag**（未明确要求）
+- **不打 tag**（按期次约定）；**推送**按用户 2026-11-25 明确要求执行
 
 **AC**：AC-219
 **提交**：`docs(progress): 11 期导航栏 UX 收敛收官`
@@ -466,6 +466,15 @@
   **历史期次目录**（T110 / T116 / T123 / T54 / T37 / T42 / T31），
   **不在** `.screenshots/T124~T126/`。截图是 gitignored 的本地证据，
   不影响任何提交；DoD 第 5 条已按实际情况如实标注。
+- **T128 的两个交付物已完成**：
+  - `specs/11-nav-tabs-ux-convergence/收官总结.md`（**新增**）——
+    照 10 期 `specs/10-process-baseline/收官总结.md` 的体例：
+    结论摘要 / 交付清单 / 关键设计 / e2e 改动汇总 / AC 矩阵 /
+    验证结果 / 红线复核 / 踩坑 / Backlog / 提交与发布 / 下一步
+  - `PROGRESS.md`：§2 进度表新增 11 期「**已归档**」行；§3 当前目标切到 11 期
+    （10 期降为子节保留）；§4 现状表的 pytest / e2e 两行同步到 11 期口径；
+    **新增 §5.18** 记录本期 UX 收敛；§6 新增「11 期欠账」5 条
+- **11 期正式收官**（用户 2026-11-25 确认）。
 
 ---
 
@@ -547,7 +556,7 @@ antd 的 `Tabs` 非活动面板**懒渲染** → **进 Tab 之前**计数天然�
 | T125 | **4** | `run_e2e.py -k "closing or documents or applications"` → **14 passed** | **1444 passed**（零回归，**跑两遍** 732.94s / 678.68s） | 通过（**未改前端**，仅回归确认） | **🟢 64 passed**（218.60s）——比预测的更早转绿；**条数不变** | 浏览器实跑核对（版本快照卡片随文档 Tab 常驻、加入申请子 Tab 可达） | 通过 |
 | T126 | **3** | `run_e2e.py -k "access or projects or smoke"` → 3 文件绿 | **1444 passed**（零回归，380.77s） | 通过（**未改前端**，仅回归确认） | **🟢 64 passed**（214.80s）——第一次跑撞既有 flaky 失败 1 条，单跑与第二次全量均通过 | 不涉及（纯定位加固） | 通过 |
 | T127 | **4** | 不涉及（纯文档） | **1444 passed**（零回归，498.34s，exit 0，64 deselected） | `npm run build` 通过（仅注释改动）；`npm run lint` **0 errors**（36 warnings 全是既有 `set-state-in-effect`） | **🟢 64 passed**（219.74s，条数与 T123 持平） | 不涉及（纯文档） | **通过** |
-| T128 | **2** | 不涉及 | **1444 passed**（串行，exit 0，498.34s） | 通过 | **🟢 64 passed**（219.74s，条数与 T123 持平） | 不涉及 | **红线复核全绿**（收官总结.md 待写） |
+| T128 | **2** | 不涉及 | **1444 passed**（串行，exit 0，498.34s） | 通过 | **🟢 64 passed**（219.74s，条数与 T123 持平） | 不涉及 | **通过**（红线复核全绿；收官总结.md 已写） |
 
 **基线口径（不可下调）**
 
@@ -586,5 +595,6 @@ antd 的 `Tabs` 非活动面板**懒渲染** → **进 Tab 之前**计数天然�
       —— `README.md` / `PROGRESS.md` / `specs/验证约定.md` /
       `ProjectBaselineManagementTab.tsx` 四个文件全部改完
 
-**尚未完成（属 T128 交付物，不在本轮验证范围）**：
-`specs/11-nav-tabs-ux-convergence/收官总结.md` 尚未撰写。
+**11 期收官（2026-11-25）**：T124 ~ T128 全部完成，
+`specs/11-nav-tabs-ux-convergence/收官总结.md` 已撰写，
+`PROGRESS.md` §2 已把 11 期标记为「**已归档**」——**本期正式收官**。
