@@ -50,6 +50,13 @@ export const LINK_TYPE_META: Record<string, { label: string; color: string }> = 
   mentions_entity: { label: '提及实体', color: 'default' },
 }
 
+/** 引用边的来源。`ai` 是 12 期新增的 AI 分析产出。 */
+export const LINK_SOURCE_META: Record<string, { label: string; color: string }> = {
+  rule: { label: '规则', color: 'default' },
+  manual: { label: '人工', color: 'green' },
+  ai: { label: 'AI', color: 'cyan' },
+}
+
 /** 丢弃标识 → 中文（只出现在 stats.discarded，不会作为 HTTP 错误码）。 */
 export const DISCARD_LABELS: Record<string, string> = {
   INCREMENTAL_TARGET_OUT_OF_BASELINE: '目标不在基线内',
@@ -84,5 +91,14 @@ export function conflictStatusTag(status: string) {
 
 export function linkTypeTag(linkType: string) {
   const meta = LINK_TYPE_META[linkType] ?? { label: linkType, color: 'default' }
+  return <Tag color={meta.color}>{meta.label}</Tag>
+}
+
+/**
+ * 来源标签。**必须用映射表，不能用三元表达式**——
+ * 三元表达式会把新增的 `ai` 误显示成「人工」（12 期新增 `source='ai'` 时踩过）。
+ */
+export function linkSourceTag(source: string) {
+  const meta = LINK_SOURCE_META[source] ?? { label: source, color: 'default' }
   return <Tag color={meta.color}>{meta.label}</Tag>
 }

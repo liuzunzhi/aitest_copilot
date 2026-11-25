@@ -42,10 +42,14 @@ const VERSION_STATUS_COLORS: Record<string, string> = {
 export default function ProjectDocumentsTab({
   projectId,
   canWrite,
+  canManage,
   onChanged,
 }: {
   projectId: number
+  /** 上传 / 确认 / 作废：后端允许 member 动自己上传的版本。 */
   canWrite: boolean
+  /** 项目管理员：引用图的写操作（补链 / 重抽 / AI 分析 / 删除）只认这个。 */
+  canManage: boolean
   onChanged: () => void
 }) {
   const { message } = AntdApp.useApp()
@@ -379,7 +383,7 @@ export default function ProjectDocumentsTab({
         projectId={projectId}
         documentId={linkVersion?.documentId ?? 0}
         versionId={linkVersion?.versionId ?? 0}
-        canWrite={canWrite}
+        canWrite={canManage}
         onClose={() => setLinkVersion(null)}
       />
     </div>

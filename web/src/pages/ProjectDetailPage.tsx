@@ -180,6 +180,7 @@ export default function ProjectDetailPage() {
                 <ProjectDocumentsTab
                   projectId={projectId}
                   canWrite={canWrite}
+                  canManage={canManage}
                   onChanged={reloadOverview}
                 />
                 {/* 「版本快照」原先是第 4 个顶层 Tab，11 期收敛进「文档」——
