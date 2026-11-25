@@ -129,7 +129,8 @@ def test_ac_55_activate_generates_baseline(admin_page: Page, api, shot) -> None:
     shot(admin_page, "activated")
     admin_page.locator(".ant-modal-close").click()
 
-    admin_page.get_by_role("tab", name="版本快照", exact=True).click()
+    # 11 期：版本快照不再是顶层 Tab，内容并进了「文档」Tab 里的「版本快照」卡片
+    admin_page.get_by_role("tab", name="文档").click()
     baseline_table = admin_page.get_by_test_id("baseline-table")
     expect(baseline_table).to_contain_text("V1")
     expect(baseline_table).to_contain_text("支付需求")
@@ -174,19 +175,19 @@ def test_ac_58_download_original(admin_page: Page, api, shot) -> None:
 def test_ac_54_new_version_archives_old_and_baseline_refreshes(
     admin_page: Page, api, shot
 ) -> None:
-    """追加 V2 并确认：V1 变「已归档」，基线 Tab 无需刷新页面即出现 V2。"""
+    """追加 V2 并确认：V1 变「已归档」，基线表无需刷新页面即出现 V2。"""
     _open_documents(admin_page, api, "version")
     _upload(admin_page)
     _open_versions(admin_page, "支付需求")
     _activate(admin_page)
     admin_page.locator(".ant-modal-close").click()
 
-    # 先看一次基线，让组件挂载并缓存 V1
-    admin_page.get_by_role("tab", name="版本快照", exact=True).click()
+    # 11 期：版本快照不再是顶层 Tab，内容并进了「文档」Tab 里的「版本快照」卡片——
+    # 组件随文档 Tab 一直挂载（Tabs 切走不卸载），所以这里不用再切 Tab，
+    # 确认生效后 baselineKey 自增会自动触发快照表重载。
     expect(admin_page.get_by_test_id("baseline-table")).to_contain_text("V1")
 
-    # 回文档页追加新版本
-    admin_page.get_by_role("tab", name="文档").click()
+    # 在文档页追加新版本
     _open_versions(admin_page, "支付需求")
     admin_page.get_by_test_id("version-file-input").set_input_files(
         {"name": "支付需求.md", "mimeType": "text/markdown", "buffer": DOC_MD_V2.encode("utf-8")}
@@ -204,8 +205,7 @@ def test_ac_54_new_version_archives_old_and_baseline_refreshes(
     shot(admin_page, "v2-activated")
     admin_page.locator(".ant-modal-close").click()
 
-    # 不刷新页面，基线 Tab 应已重载
-    admin_page.get_by_role("tab", name="版本快照", exact=True).click()
+    # 不刷新页面，「版本快照」卡片里的表应已重载
     baseline_table = admin_page.get_by_test_id("baseline-table")
     expect(baseline_table).to_contain_text("V2")
     expect(baseline_table).to_contain_text("V1")

@@ -1,9 +1,20 @@
 """09 期收尾的前台核对（T116 · AC-194 / AC-196）。
 
 **两个核对点**（tasks.md §4「前台核对点」）：
-1. **10 个 Tab 逐个点开无报错**——概览 / 成员 / 文档 / 版本快照 / 基线管理 / 申请 /
-   增量分析 / 测试点 / 测试用例 / 自动化执行；
+1. **8 个顶层 Tab 逐个点开无报错**——概览 / 文档 / 基线管理 / 增量分析 /
+   测试点 / 测试用例 / 自动化执行 / 成员；
 2. **「自动化执行」完整走一遍**：扫描 → 入库 → 关联 → 执行 → 报告。
+
+**11 期调整**：顶层 Tab 从 10 个收敛到 8 个——「版本快照」并进「文档」、
+「申请」并进「成员」，顶层顺序也重排了。
+
+**顶层计数要限定顶层 tablist**：antd 的两层 `Tabs` **都**用 `role="tab"`——
+进了「基线管理」或「成员」之后直接 `get_by_role("tab")` 会把内层的子 Tab 也数进去
+（8 + 2 = 10）。断言顶层要写 `get_by_role("tablist").first.get_by_role("tab")`
+（顶层 tablist 在 DOM 里排第一）。
+
+**点击要用 `exact=True`**：Playwright 的 `get_by_role(name=)` 默认是**子串匹配**——
+顶层「成员」与内层「成员列表」名字互相包含，裸写法会 strict mode violation。
 
 **为什么单独一个文件**：`test_tabs_ui.py` 的截图落在 `.screenshots/T110/`
 （`shot` 夹具按 `@pytest.mark.task` 分目录），收尾的核对点要落在
@@ -30,28 +41,24 @@ VIEWPORT = {"width": 1600, "height": 900}
 
 TAB_NAMES = [
     "概览",
-    "成员",
     "文档",
-    "版本快照",
     "基线管理",
-    "申请",
     "增量分析",
     "测试点",
     "测试用例",
     "自动化执行",
+    "成员",
 ]
 
 TAB_ANCHORS = {
     "概览": "project-overview",
-    "成员": "member-table",
     "文档": "document-table",
-    "版本快照": "baseline-table",
     "基线管理": "baseline-keyword",
-    "申请": None,
     "增量分析": "incremental-analysis-table",
     "测试点": "test-point-analysis-table",
     "测试用例": "test-case-analysis-table",
     "自动化执行": "automation-asset-table",
+    "成员": "member-table",
 }
 
 PYTEST_SAMPLE = (
@@ -78,31 +85,33 @@ def wide_admin_page(browser, base_url, admin_storage_state):
 
 @pytest.mark.task("T116")
 def test_ac_196_all_ten_tabs_render(wide_admin_page: Page, api, shot) -> None:
-    """10 个 Tab 逐个点开，每个都断言内容区渲染出来了（收官核对点 1）。"""
+    """8 个顶层 Tab 逐个点开，每个都断言内容区渲染出来了（收官核对点 1）。"""
     project = api.create_project(_name("t116-tabs"))
     wide_admin_page.reload()
     wide_admin_page.get_by_role("row").filter(has_text=project["name"]).get_by_role(
         "button", name="详情"
     ).click()
 
-    tabs = wide_admin_page.get_by_role("tab")
+    # 顶层 tablist 在 DOM 里排第一（内层的在顶层 content-holder 里面）
+    tabs = wide_admin_page.get_by_role("tablist").first.get_by_role("tab")
     expect(tabs).to_have_count(len(TAB_NAMES))
     for index, name in enumerate(TAB_NAMES):
         expect(tabs.nth(index)).to_contain_text(name)
 
     for name in TAB_NAMES:
-        wide_admin_page.get_by_role("tab", name=name).click()
+        # exact=True：顶层「成员」与内层「成员列表」名字互相包含，裸写法会 strict violation
+        wide_admin_page.get_by_role("tab", name=name, exact=True).click()
         anchor = TAB_ANCHORS[name]
         if anchor:
             expect(wide_admin_page.get_by_test_id(anchor)).to_be_visible()
-        expect(wide_admin_page.get_by_role("tab", name=name)).to_have_attribute(
+        expect(wide_admin_page.get_by_role("tab", name=name, exact=True)).to_have_attribute(
             "aria-selected", "true"
         )
         shot(wide_admin_page, f"tab-{name}")
 
-    # 最后一个 Tab 是「自动化执行」——顺序不能被打乱
-    expect(tabs.nth(9)).to_contain_text("自动化执行")
-    expect(tabs.nth(8)).to_contain_text("测试用例")
+    # 最后一个 Tab 是「成员」——顺序不能被打乱（11 期：成员从第 2 位移到末位）
+    expect(tabs.nth(7)).to_contain_text("成员")
+    expect(tabs.nth(6)).to_contain_text("自动化执行")
 
 
 @pytest.mark.task("T116")

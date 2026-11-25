@@ -1,4 +1,9 @@
-"""申请队列与代审批的前台核对（AC-41 / 42 / 43 / 44）。"""
+"""申请队列与代审批的前台核对（AC-41 / 42 / 43 / 44）。
+
+**11 期调整**：项目内申请列表原先在顶层「申请」Tab，
+现在合并进「成员」Tab 的「加入申请」二级子 Tab——
+入口路径变了，断言内容不变。
+"""
 
 import uuid
 
@@ -24,11 +29,14 @@ def test_ac_41_to_44_applications_ui(
     api.submit_application(project["id"], token, reason="e2e 申请理由")
 
     # AC-41：项目内申请列表
+    # 11 期：申请不再是顶层 Tab，合并进「成员」Tab 的「加入申请」子 Tab
     admin_page.reload()
     admin_page.get_by_role("row").filter(has_text=project["name"]).get_by_role(
         "button", name="详情"
     ).click()
-    admin_page.get_by_role("tab", name="申请").click()
+    # exact=True：顶层「成员」与内层「成员列表」名字互相包含，裸写法会 strict violation
+    admin_page.get_by_role("tab", name="成员", exact=True).click()
+    admin_page.get_by_test_id("project-members-subtab-applications").click()
     project_row = admin_page.get_by_role("row").filter(has_text=applicant["username"])
     expect(project_row).to_be_visible()
     expect(project_row).to_contain_text("待审批")

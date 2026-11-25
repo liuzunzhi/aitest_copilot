@@ -1,19 +1,25 @@
 """10 期收尾的前台核对（T123 · AC-214）。
 
 **三个核对点**（tasks.md §2 T123 的「前台核对点」）：
-1. **10 个顶层 Tab 逐个点开无报错**——概览 / 成员 / 文档 / 版本快照 / 基线管理 /
-   申请 / 增量分析 / 测试点 / 测试用例 / 自动化执行；
+1. **8 个顶层 Tab 逐个点开无报错**——概览 / 文档 / 基线管理 / 增量分析 /
+   测试点 / 测试用例 / 自动化执行 / 成员；
 2. **「基线管理」内两个子 Tab 逐个点开**——「功能基线」/「流程基线」；
 3. **流程基线完整走一遍**：新建 → 编辑步骤 → 关联 → 反推 → 提交审核 → 通过 → 看快照。
+
+**11 期调整**：顶层 Tab 从 10 个收敛到 8 个——「版本快照」并进「文档」、
+「申请」并进「成员」，顶层顺序也重排了。
 
 **为什么单独一个文件**：`test_tabs_ui.py` 的截图落在 `.screenshots/T110/`
 （`shot` 夹具按 `@pytest.mark.task` 分目录），收尾的核对点要落在
 `.screenshots/T123/`，所以这里另起一份。
 
 **Tab 计数要限定顶层 tablist**：antd 的两层 `Tabs` **都**用 `role="tab"`——
-进了「基线管理」之后直接 `get_by_role("tab")` 会数到 **10 + 2 = 12**。
+进了「基线管理」或「成员」之后直接 `get_by_role("tab")` 会数到 **8 + 2 = 10**。
 断言顶层要写 `get_by_role("tablist").first.get_by_role("tab")`
 （顶层 tablist 在 DOM 里排第一）。
+
+**点击要用 `exact=True`**：Playwright 的 `get_by_role(name=)` 默认是**子串匹配**——
+顶层「成员」与内层「成员列表」名字互相包含，裸写法会 strict mode violation。
 
 **零真实 socket**：造数一律走 Playwright 的 `APIRequestContext`。
 """
@@ -30,28 +36,24 @@ VIEWPORT = {"width": 1600, "height": 900}
 
 TAB_NAMES = [
     "概览",
-    "成员",
     "文档",
-    "版本快照",
     "基线管理",
-    "申请",
     "增量分析",
     "测试点",
     "测试用例",
     "自动化执行",
+    "成员",
 ]
 
 TAB_ANCHORS = {
     "概览": "project-overview",
-    "成员": "member-table",
     "文档": "document-table",
-    "版本快照": "baseline-table",
     "基线管理": "baseline-keyword",
-    "申请": None,
     "增量分析": "incremental-analysis-table",
     "测试点": "test-point-analysis-table",
     "测试用例": "test-case-analysis-table",
     "自动化执行": "automation-asset-table",
+    "成员": "member-table",
 }
 
 # 反推用的文档正文（要能被切出带正文的章节，Mock provider 才有东西可读）。
@@ -136,30 +138,31 @@ def _upload_and_activate(api, project_id: int) -> dict:
 def test_ac_214_all_ten_tabs_and_two_subtabs_render(
     wide_admin_page: Page, api, shot
 ) -> None:
-    """10 个顶层 Tab + 基线管理内 2 个子 Tab 逐个点开（收官核对点 1 与 2）。"""
+    """8 个顶层 Tab + 基线管理内 2 个子 Tab 逐个点开（收官核对点 1 与 2）。"""
     project = api.create_project(_name("t123-tabs"))
     wide_admin_page.reload()
     _open_project(wide_admin_page, project["name"])
 
-    # ---- 顶层 10 个 Tab ----
+    # ---- 顶层 8 个 Tab ----
     top_tabs = wide_admin_page.get_by_role("tablist").first.get_by_role("tab")
     expect(top_tabs).to_have_count(len(TAB_NAMES))
     for index, name in enumerate(TAB_NAMES):
         expect(top_tabs.nth(index)).to_contain_text(name)
 
     for name in TAB_NAMES:
-        wide_admin_page.get_by_role("tab", name=name).click()
+        # exact=True：顶层「成员」与内层「成员列表」名字互相包含，裸写法会 strict violation
+        wide_admin_page.get_by_role("tab", name=name, exact=True).click()
         anchor = TAB_ANCHORS[name]
         if anchor:
             expect(wide_admin_page.get_by_test_id(anchor)).to_be_visible()
-        expect(wide_admin_page.get_by_role("tab", name=name)).to_have_attribute(
+        expect(wide_admin_page.get_by_role("tab", name=name, exact=True)).to_have_attribute(
             "aria-selected", "true"
         )
         shot(wide_admin_page, f"tab-{name}")
 
-    # 最后一个 Tab 仍是「自动化执行」——顺序不能被打乱
-    expect(top_tabs.nth(9)).to_contain_text("自动化执行")
-    expect(top_tabs.nth(8)).to_contain_text("测试用例")
+    # 最后一个 Tab 是「成员」——顺序不能被打乱（11 期：成员从第 2 位移到末位）
+    expect(top_tabs.nth(7)).to_contain_text("成员")
+    expect(top_tabs.nth(6)).to_contain_text("自动化执行")
 
     # ---- 「基线管理」内两个子 Tab ----
     wide_admin_page.get_by_role("tab", name="基线管理").click()
