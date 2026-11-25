@@ -96,7 +96,7 @@ aitest_copilot/
 - **路由统一前缀**：`/api/projects/{project_id}/...`；系统级为 `/api/admin/...`。
 - **引擎层是纯函数**：签名里没有 `session`，不写库，便于不起 HTTP、不起数据库地逐条断言（`app/*/engine.py`、`app/automation/scanner.py`）。
 - **错误码统一**：`app/common/errors.py` 集中定义，前端在 `web/src/api/client.ts` 里配中文文案。
-- **前端 Tab 宿主**：项目详情页 `web/src/pages/ProjectDetailPage.tsx`（顶层 10 个 Tab：概览 / 成员 / 文档 / 版本快照 / 基线管理 / 申请 / 增量分析 / 测试点 / 测试用例 / 自动化执行）。
+- **前端 Tab 宿主**：项目详情页 `web/src/pages/ProjectDetailPage.tsx`（顶层 8 个 Tab：概览 / 文档 / 基线管理 / 增量分析 / 测试点 / 测试用例 / 自动化执行 / 成员——「成员」内含二级子菜单「成员列表」/「加入申请」；「版本快照」并入「文档」Tab 内的卡片）。
 
 ---
 

@@ -25,9 +25,9 @@ interface Props {
  * `ProjectBaselineSnapshots`——e2e 的
  * `TAB_ANCHORS["基线管理"] = "baseline-keyword"` 依赖它。
  *
- * **顶层 Tab 仍然是 10 个**：antd `Tabs` 的非活动面板是**懒渲染**，
- * 内层二级 Tabs 在 e2e 计数时**尚未挂载**，
- * `get_by_role("tab")` 的 `to_have_count(10)` 仍然成立（AC-212）。
+ * **顶层 Tab 是 8 个**（11 期 T124 起由 10 个收敛为 8 个）：antd `Tabs` 的
+ * 非活动面板是**懒渲染**，内层二级 Tabs 在 e2e 计数时**尚未挂载**，
+ * 所以顶层计数要限定 `get_by_role("tablist").first`（AC-212）。
  */
 export default function ProjectBaselineManagementTab({ projectId, canManage }: Props) {
   return (

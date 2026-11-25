@@ -295,14 +295,14 @@
 | 开跑前自检 | `.\.venv\Scripts\python.exe scripts\dev_check.py`（跑 e2e 时加 `--expect-db e2e`） |
 | 账号 | `admin` / `Admin12345` |
 | 迁移 head | **`0025`**（06 期 T84 建 `0017`；`0018` 免审核开关；`0019` 第一遍模板修正；04 补期 `0020` 推导 / `0021` 分点审核；07 期 T99 建 `0022` 测试点；08 期 T105 建 `0023` 测试用例；09 期 T111 建 `0024` 自动化三表 + 清除原因枚举修正；10 期 T117 建 `0025` 流程基线四表 + 模板 CHECK 扩枚举） |
-| 项目详情 Tab | **10 个**（概览 / 成员 / 文档 / 版本快照 / 基线管理 / 申请 / 增量分析 / 测试点 / 测试用例 / 自动化执行）——**「基线管理」内含二级子菜单**（「功能基线」/「流程基线」），顶层数量不变 |
+| 项目详情 Tab | **8 个**（概览 / 文档 / 基线管理 / 增量分析 / 测试点 / 测试用例 / 自动化执行 / 成员）——**「基线管理」内含二级子菜单**（「功能基线」/「流程基线」），**「成员」内含二级子菜单**（「成员列表」/「加入申请」）；「版本快照」并入「文档」Tab 内的卡片 |
 | 流程基线数据 | 四张表 `process_baselines` / `process_baseline_steps` / `process_baseline_links` / `process_baseline_revisions`；**开发库当前均为 0 行**（本期只做能力落地，没往开发库塞业务数据；数据由用户自己建） |
 | 截图目录 | 仓库根 `.screenshots/`（`E2E_SCREENSHOT_DIR` 可覆盖） |
 | 运行时依赖 | `pdfplumber>=0.11`（T84-PDF 新增）；`cryptography>=43`（T84 新增）、`httpx>=0.28`（T84 从 dev 移入）；**`openpyxl>=3.1`（08 期新增，仅用于 Excel 导出）** |
 | 环境变量 | **新增必填 `LLM_SECRET_KEY`**（已写入本地 `.env`，随机生成，不入库；`.env.example` 有说明） |
 | 新增脚本 | `scripts/check_migration_roundtrip.py`（09 期：两库迁移往返 + 枚举逐字节还原断言）、`scripts/check_process_baseline_roundtrip.py`（10 期：两库 `0025 ↔ 0024` 往返 + 四张表与模板 CHECK 还原断言） |
 
-### ⚠️ 两个已知的坑（别重复踩）
+### ⚠️ 已知的坑（别重复踩）
 
 1. **`pytest -n 4` 下 `tests/projects/` 有既有 flaky**（与新改动无关）：
    `test_available_returns_all_unjoined_projects`、`test_ac_36_add_member`
@@ -325,19 +325,31 @@
    平台 `addopts` 里含 `-m 'not e2e'`，覆盖掉它会把 51 条 e2e 一起收进来
    → 它们要连 8001 端口 → 51 个 error。
    **要看用例数用 `-m "not e2e"`**，别动 `addopts`。
-6. **antd 两层 `Tabs` 都用 `role="tab"`**（10 期 T122 实测踩到）：
+6. **antd 两层 `Tabs` 都用 `role="tab"`**（10 期 T122 实测踩到，11 期 T124 复核）：
    「基线管理」内引入了二级子菜单之后，进了这个 Tab
-   `page.get_by_role("tab")` 会数到 **12**（顶层 10 + 内层 2）。
-   **「顶层仍是 10 个 Tab」这条断言要限定顶层 tablist**：
+   `page.get_by_role("tab")` 会数到 **10**（顶层 8 + 内层 2）。
+   **「顶层仍是 8 个 Tab」这条断言要限定顶层 tablist**：
    `page.get_by_role("tablist").first.get_by_role("tab")`。
-   既有 `test_tabs_ui.py` / `test_t116_closing_ui.py` **一个字节都没改**——
-   它们只在**进 Tab 之前**计数，天然不受影响。
+   **11 期实测纠正**：只有**当前激活**的顶层 Tab 的内层子 Tab 会被计入——
+   已离开的顶层 Tab 面板是 `display:none`（`removeOnLeave` 默认 false，
+   DOM 保留但不可见），而 Playwright 默认 `include_hidden=False` 不计入隐藏元素。
+   所以裸计数是 **8 + 2 = 10**，**不是 12**。
 7. **antd v6 的 Select 值不在 `.ant-select-selection-item` 里**（10 期 T122 踩到）：
    v6 换成了 `.ant-select-content-has-value`（单选）/ `.ant-select-content`（多选）。
    断言「下拉已有值」要用新的类名，否则数到 0 条。
 8. **antd Drawer 关闭后内容不销毁**（10 期 T122 踩到）：
    `destroyOnHidden` 没开时 DOM 里还在，只是隐藏——
    断言「抽屉关掉了」要用 `to_be_hidden()`，**不是** `to_have_count(0)`。
+9. **Playwright 的 `get_by_role(name=)` 默认是「子串匹配」**（11 期 T124 实测踩到）：
+   `exact=False` → 属性选择器带 `i` 标志（`playwright/_impl/isomorphic/string_utils.py`）。
+   「成员」Tab 与它内层的「成员列表」子 Tab **名字互相包含** →
+   裸 `get_by_role("tab", name="成员")` 在**「成员」Tab 正激活时**会命中 2 个 →
+   **strict mode violation**。
+   写顶层 Tab 的定位**统一加 `exact=True`**；内层子 Tab **用 `data-testid` 定位**
+   （如 `project-members-subtab-applications`），别用 `role="tab"` 名字。
+   补充：内层子 Tab 是**懒渲染**的（antd `Tabs` 的 `forceRender` 默认 undefined，
+   未激活的面板不进 DOM），所以「第一次点开某顶层 Tab」时裸写法是安全的——
+   但**依赖这个「恰好安全」很脆**，用例顺序一变就会撞。
 
 ## 5. 04 收尾完成情况（2026-11-17）
 
