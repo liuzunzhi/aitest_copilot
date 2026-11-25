@@ -558,6 +558,27 @@ class DuplicateChapterLink(AppError):
     code = "DUPLICATE_CHAPTER_LINK"
 
 
+class ChapterLinkNotFound(AppError):
+    """引用边不存在，或不属于该文档版本。"""
+
+    status_code = 404
+    code = "CHAPTER_LINK_NOT_FOUND"
+
+
+class ChapterLinkAnalyzeFailed(AppError):
+    """AI 分析引用关系失败（模型调不动或返回结构不合法）。"""
+
+    status_code = 502
+    code = "CHAPTER_LINK_ANALYZE_FAILED"
+
+
+class ChapterLinkAnalyzeEmpty(AppError):
+    """该文档版本没有可分析的章节正文。"""
+
+    status_code = 400
+    code = "CHAPTER_LINK_ANALYZE_EMPTY"
+
+
 class SecondPassNotReady(AppError):
     """AC-88：第一遍还没成功，不能跑第二遍。"""
 
@@ -1056,6 +1077,9 @@ __all__ = [
     "BaselineRevisionRequired",
     "CannotChangeOwnRole",
     "CannotRemoveSelf",
+    "ChapterLinkAnalyzeEmpty",
+    "ChapterLinkAnalyzeFailed",
+    "ChapterLinkNotFound",
     "ClearNoteRequired",
     "ClearReasonRequired",
     "ConflictAlreadyResolved",

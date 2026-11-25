@@ -8,7 +8,9 @@ MySQL 允许唯一索引上出现多个 NULL，所以两条唯一键分别管章
 `uk_chlinks_entity` 在 `entity IS NULL` 时不约束，互不干扰。
 
 规则抽取的边 `source='rule'`，每次重抽按 `(version_id, source='rule')` 先删后插；
-人工补链的边 `source='manual'`，不受重抽影响。
+人工补链的边 `source='manual'`，不受重抽影响；
+AI 分析的边 `source='ai'`，每次分析按 `(version_id, source='ai')` 先删后插——
+与重抽同样的幂等口径，但**互不覆盖**：三种来源各自独立重算。
 """
 
 from datetime import datetime
@@ -27,7 +29,7 @@ _TABLE_OPTS = {
 }
 
 CHAPTER_LINK_TYPES = ("references", "depends_on", "mentions_entity")
-CHAPTER_LINK_SOURCES = ("rule", "manual")
+CHAPTER_LINK_SOURCES = ("rule", "manual", "ai")
 
 
 class DocumentChapterLink(Base):
@@ -68,7 +70,9 @@ class DocumentChapterLink(Base):
             "link_type IN ('references','depends_on','mentions_entity')",
             name="ck_chlinks_link_type",
         ),
-        CheckConstraint("source IN ('rule','manual')", name="ck_chlinks_source"),
+        CheckConstraint(
+            "source IN ('rule','manual','ai')", name="ck_chlinks_source"
+        ),
         CheckConstraint(
             "((to_chapter_id IS NOT NULL) <> (entity IS NOT NULL))",
             name="ck_chlinks_target",
