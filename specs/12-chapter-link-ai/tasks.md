@@ -69,11 +69,16 @@
 
 - `app/models/incremental.py`：`TASK_TYPES` + `ck_ptemplates_task_type` 加 `'chapter_link_analyze'`
 - `app/models/llm.py`：`RUN_LOG_TASK_TYPES` + `ck_llmlogs_task_type` 加 `'chapter_link_analyze'`（含补 `test_case` 的漏项）
-- `migrations/versions/0026_chapter_link_ai.py`：同一迁移内追加扩 `ck_ptemplates_task_type` + `ck_llmlogs_task_type` + 播种模板
-- `app/llm/mock.py`：`CHAPTER_LINK_SYSTEM_PREFIX` + `CHAPTER_LINK_DEFAULT_RESPONSE`（`{"references":[]}`）+ 分支
+- `migrations/versions/0027_chapter_link_ai_template.py`（**新建**）：扩 `ck_ptemplates_task_type` + `ck_llmlogs_task_type` + 播种模板
+- `app/llm/mock.py`：`CHAPTER_LINK_SYSTEM_PREFIX` + `CHAPTER_LINK_DEFAULT_RESPONSE` + 分支
 - `web/src/pages/settings/PromptTemplatePanel.tsx`：`TASK_TYPE_LABELS` 补 5 项（含 `chapter_link_analyze`）
+- `tests/llm/test_mock_branch.py`（新增）：新前缀命中新响应；既有六个分支逐字节不变
 
-> 合并进 0026 的理由：拆的是任务，不是迁移。若 0026 已发布则新开 0027。
+> **实际拆成了 `0026` + `0027` 两个迁移**（原计划合并进 0026）：
+> 「一个迁移只做一件事」——`0026` 只扩 `document_chapter_links.source`，
+> `0027` 做模板与留痕枚举 + 播种。两库往返时哪一步出问题一目了然。
+> **Mock 默认响应必须同时含 `chapters` 与 `references` 两个键**——
+> 两阶段共用同一个前缀分流，默认响应要同时满足两个阶段的根结构校验。
 
 **验证**
 
@@ -203,3 +208,33 @@ cd web; npm run build; npm run lint
 T129 ─┬─→ T130 → T131 → T132 → T134 → T135 → T136
       └─→ T133（可与 T131~T135 并行）
 ```
+
+## 4. 验证记录（2026-11-26 回填）
+
+| 任务 | 验证命令 | 结果 |
+|---|---|---|
+| T129 | `pytest tests\incremental\test_chapter_link_models.py tests\incremental\test_chapter_link_migration.py -q` | **9 passed**；两库 `upgrade → downgrade -1 → upgrade` 往返干净 |
+| T130 | `pytest tests\llm tests\incremental\test_chapter_link_models.py -q` | **18 passed**；两库 `0026 → 0027 → 0026 → 0027` 往返干净 |
+| T131 | `pytest tests\incremental\test_link_analyze*.py -q` | **41 passed**；`tests\llm` + `tests\incremental` 全量回归通过 |
+| T132 | `pytest tests\incremental\test_link_analyze_api.py -q` | **15 passed**；审计覆盖 67 passed；后端全量通过 |
+| T133 | `pytest tests\incremental\test_chapter_link_delete.py -q` | **15 passed**；审计覆盖 80 passed；后端全量通过 |
+| T134 | `cd web; npm run build` | 通过；`npm run lint` 0 errors；后端全量通过 |
+| T135 | `cd web; npm run build; npm run lint` | 构建通过；lint **0 errors**（36 warnings 是既有的 React hooks 提示） |
+| T136 | `scripts\run_e2e.py -k chapter_link_ai` | **6 passed**；全量 e2e **70 passed**；后端全量 **1533 passed** |
+
+**收官数据**：后端全量 **1533 passed**（基线 1444 + 新增 89，**零回归**）；
+e2e 全量 **70 passed**（基线 64 + 新增 6）；两库迁移 head **`0027`**；
+截图落 `.screenshots/T136/`（6 张，文件名含 AC 编号）。
+
+## 5. 实施中调整的地方（与原计划有出入，以本节为准）
+
+| # | 原计划 | 实际做法 | 原因 |
+|---|---|---|---|
+| 1 | 0026 一个迁移装完 T129 + T130 | **拆成 `0026` + `0027`** | 「一个迁移只做一件事」；两库往返时哪一步出问题一目了然 |
+| 2 | 模板缺失 → 400 `TEMPLATE_NOT_FOUND` | 拆成 **404 `TEMPLATE_NOT_FOUND`（行不存在）/ 409 `TEMPLATE_DISABLED`（被停用）** | 「没建」与「建了但关了」是两个不同的运维动作，复用既有错误码 |
+| 3 | 非成员写操作 → 403 `NOT_PROJECT_MEMBER` | **403 `NOT_PROJECT_ADMIN`** | 与既有 `create_link` 同一口径（`ensure_writable_admin`）；区分会泄露项目是否存在 |
+| 4 | Mock 默认响应 `{"references": []}` | **`{"chapters": [], "references": []}`** | 两阶段共用一个前缀分流，默认响应必须同时满足两个阶段的根结构校验，否则阶段一全块跳过 → 整次失败 |
+| 5 | 阶段一测试用 `MockProvider(queue=[...])` | **自建 `_PhaseProvider`（按 Prompt 内容分派）** | 阶段一并发执行，队列消费顺序不确定 → 断言随机挂 |
+| 6 | 后端 `source` 过滤正则未在计划里提及 | **补扩 `'ai'`**（T134 发现） | 前端类型放开 `'ai'` 后按来源过滤会被 422 拒——这是 T132 扩枚举时漏掉的一环 |
+| 7 | `Popconfirm` 用 antd 默认确认按钮文案 | **显式 `okText="删除"`** | 仓库既有惯例用业务动作名定位确认按钮（`test_test_points_ui.py:293`） |
+| 8 | 截图用 `full_page=False` | **只截 `.ant-drawer-section`** | 版本历史弹窗会盖住整页；且 antd v6 抽屉**没有** `.ant-drawer-content` |

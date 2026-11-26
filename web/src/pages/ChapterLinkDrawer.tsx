@@ -206,6 +206,8 @@ export default function ChapterLinkDrawer({
         canWrite ? (
           <Popconfirm
             title="确认删除这条引用关系？"
+            okText="删除"
+            cancelText="取消"
             description={
               row.source === 'rule'
                 ? '删除后再次「按规则重抽」会重新生成这条关系。'
