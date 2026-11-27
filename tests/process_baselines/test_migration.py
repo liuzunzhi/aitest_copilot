@@ -209,11 +209,11 @@ def test_ac_197_llm_run_log_check_is_not_extended(db: Session):
     db.rollback()
 
 
-def test_ac_197_migration_head_is_0027(db: Session):
-    """迁移 head 是 `0027`（0026 数据层 + 0027 模板层，12 期推进）。"""
+def test_ac_197_migration_head_is_0028(db: Session):
+    """迁移 head 是 `0028`（0026 数据层 + 0027 模板层 + 0028 评审状态层）。"""
     row = db.execute(text("SELECT version_num FROM alembic_version")).first()
     assert row is not None
-    assert row[0] == "0027"
+    assert row[0] == "0028"
 
 
 def test_ac_211_projects_table_has_no_new_column(engine: Engine):

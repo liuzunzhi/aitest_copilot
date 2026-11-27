@@ -153,6 +153,10 @@ def build_point_index(session: Session, analysis: IncrementalAnalysis) -> PointI
             DocumentChapterLink.version_id == analysis.document_version_id,
             DocumentChapterLink.link_type.in_(_PROPAGATION_LINK_TYPES),
             DocumentChapterLink.to_chapter_id.is_not(None),
+            # 12.5 期：只有**已生效**的边参与图传播。
+            # AI 分析产出的边先落 `status='pending'`（待人工采纳），
+            # 采纳前不得影响增量分析的结论——否则「待评审」只是一个前端分区标签。
+            DocumentChapterLink.status == "approved",
         )
         .order_by(DocumentChapterLink.from_chapter_id, DocumentChapterLink.to_chapter_id)
     ).all()
