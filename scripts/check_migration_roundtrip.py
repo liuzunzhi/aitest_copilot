@@ -25,10 +25,15 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 
-from dev_check import e2e_dsn, read_env  # noqa: E402
+from dev_check import e2e_dsn, migration_head, read_env  # noqa: E402
 
 ALEMBIC = str(ROOT / ".venv" / "Scripts" / "alembic.exe")
 PYTHON = str(ROOT / ".venv" / "Scripts" / "python.exe")
+
+# 当前的迁移 head —— **动态取**，不硬编码。
+# 这个脚本做的是「降到 0023 → 升回最新」，每加一个迁移都要跟着改版本号
+# 是最容易漏的那类维护负担（12.5 期加 0028 时就在这里红过）。
+HEAD = migration_head()
 
 # 旧枚举名 → 新枚举名（与 `migrations/versions/0024_automation.py` 同源）
 LEGACY_VALUES = ("priority_changed", "duplicate_label")
@@ -290,13 +295,13 @@ def check_roundtrip(label: str, dsn: str) -> None:
             else:
                 ok(f"降级后表 {table} 已删")
 
-        # ---- 升回 0024 ----
+        # ---- 升回当前 head ----
         run_alembic(dsn, "upgrade", "head")
         version = current_version(dsn)
-        if version != "0024":
-            fail(f"升级后版本是 {version}，应为 0024")
+        if version != HEAD:
+            fail(f"升级后版本是 {version}，应为 {HEAD}")
         else:
-            ok("升级回 0024")
+            ok(f"升级回 {HEAD}")
 
         # ---- 升级后：枚举应只剩新值 ----
         reasons = distinct_clear_reasons(dsn)
@@ -324,7 +329,7 @@ def main() -> int:
         print("[FAIL] .env 里没有 DB_DSN")
         return 1
 
-    print("=== 09 期迁移往返（0024 → 0023 → 0024）===")
+    print(f"=== 09 期迁移往返（0023 → head {HEAD}）+ 枚举还原 ===")
     for label, dsn in (
         ("开发", dev_dsn),
         ("e2e", e2e_dsn(dev_dsn)),

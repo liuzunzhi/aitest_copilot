@@ -23,10 +23,49 @@
 - [x] 10-process-baseline (流程基线) —— **已完成**（T117 数据层建表 `0025`、T118 场景 CRUD + 步骤覆盖 + 关联功能基线、T119 反推引擎 + 候选采纳、T120 审核与提交即冻结的版本快照、T121 权限与审计收口、T122 前端二级子菜单 + 场景管理、T123 收尾与文档回填）
 - [x] 11-nav-tabs-ux-convergence (导航栏 UX 收敛) —— **已归档**（T124 前端顶层 10 → 8 个 Tab + 「成员」二级子菜单、T125 e2e 入口路径改写、T126 成员 Tab 定位精确化、T127 文档口径同步、T128 收尾与红线复核）
 - [x] 12-chapter-link-ai (章节引用图 AI 分析) —— **已归档**（T129 数据层 + 迁移 `0026`、T130 提示词模板 + 留痕枚举 + 迁移 `0027`、T131 AI 分析引擎 + 分块映射、T132 服务层 + `POST /links/analyze`、T133 删除边接口、T134 前端 API 客户端、T135 前端抽屉重构、T136 e2e + 文档回填）
+- [x] 12.5-chapter-link-review (章节引用图人工评审闭环) —— **已完成**（T137 数据层 `status`/`rationale` + 迁移 `0028`、T138 图传播只读生效边、T139 AI 落待评审 + 采纳服务层、T140 采纳接口 + 审计、T141 前端 API + 状态标签、T142 抽屉三区 + 锁屏 + 详情弹窗、T143 e2e、T144 收尾与文档回填）
 
 ## 3. 当前冲刺任务（⚠️ 务必先做这个）
 
-**当前目标**：12 章节引用图 AI 分析 —— **T129 ~ T136 全部完成，已收官并归档**。
+**当前目标**：12.5 章节引用图人工评审闭环 —— **T137 ~ T144 全部完成**。
+
+**规格**：`specs/12.5-chapter-link-review/`（`spec.md` AC-229 ~ AC-239 / `plan.md` / `tasks.md`）。
+
+**本期是用户 2026-11-26 实测反馈驱动的补丁，不是新增期**——
+针对 12 期「AI 分析出来的边直接落库、用户没法逐条判断对错」的问题，
+补**人工评审闭环**，并修 5 个 UX 缺陷：
+
+| 痛点 | 做法 |
+|---|---|
+| **缺人工评审闭环**（最重要） | AI 边先落 `status='pending'` 进「待评审区」，人工采纳（单条 / 批量）后才 `approved` 生效。**`source` 不动**——来源与生命周期是两个正交维度 |
+| 状态提示语错乱 | 抽屉顶部提示语改**状态驱动**（空数据引导点 AI / 有待评审橙色警示 / 只剩已生效才是 12 期原文案） |
+| 分析期间未锁屏 | `ConfigProvider componentDisabled={analyzing}` 包住抽屉内容，大模型调用期间删/补链/下拉全部禁用 |
+| 移出废弃功能 | 前端**删掉**「按规则重抽」按钮；后端 `extract_links` 与 `POST /links/extract` 保留（05 期 `_ensure_rule_links` 在用） |
+| 表单引导文案缺失 | 三个字段各加 `extra` 说明；类型下拉改两行式（名称 + 说明） |
+| 增加「详情」按钮 | 表格操作列「详情」→ 弹窗展示 **rationale + confidence + 状态**（本期新增 `rationale` 列，12 期只落了 confidence） |
+
+| 数据 | 内容 |
+|---|---|
+| 表 | **复用 `document_chapter_links`**，加两列：`status`（`pending`/`approved`，默认 `approved`）+ `rationale`（`String(1000)`） |
+| 「生效」的定义 | 能参与 05 期第二遍的**图传播**——`second_pass.build_point_index` 的链接查询加 `status='approved'` |
+| 迁移 | 两库 head `0028`（升级 4 步 / 降级先删 pending 行再拆结构） |
+| 新增接口 | `POST .../links/{id}/approve`（幂等）、`POST .../links/approve-batch`（整批原子） |
+| 错误码 | **零新增**（采纳幂等，复用 `CHAPTER_LINK_NOT_FOUND` / `INVALID_CHAPTER_LINK`） |
+| 测试 | 后端 **1574 passed**（1533 基线 + 41）；e2e **77 passed**（70 + 7） |
+
+**下一步**：无指定任务。后续期欠账见 `specs/12.5-chapter-link-review/spec.md` §12
+（引用图可视化 / AI 产出实体边 / 置信度阈值筛选 / 驳回状态与评审人留痕 / 批量删除）。
+
+> **12.5 期红线（用户 2026-11-26 拍板）**：
+> - **不新建表**，复用 `document_chapter_links`，加 `status` 列（**不复用 `source`**：
+>   `source` 说「谁产生的」、`status` 说「人认可了没」，硬塞进 `source` 会让
+>   「重新分析」冲掉用户已采纳的边）；
+> - **错的直接删除**，不做 `rejected` 状态（删除写审计，历史可追）；
+> - **前端删「按规则重抽」入口，后端 `extract_links` 一个字节不动**；
+> - **待评审边不参与图传播**——否则「待评审」只是个前端标签；
+> - **任务拆细**（T137 ~ T144，每任务改动文件 ≤ 5）。
+
+### 12 章节引用图 AI 分析 —— T129 ~ T136 已完成并归档
 
 **收官总结**：`specs/12-chapter-link-ai/收官总结.md`
 （交付清单 / 关键设计 / AC 矩阵 / 验证结果 / 红线复核 / 踩坑 / Backlog）。
@@ -315,12 +354,12 @@
 
 | 项 | 值 |
 |---|---|
-| 后端全量 pytest | **1533 passed**（串行；12 期 T136 收官，基线 1444 + 12 期新增 89） |
-| e2e | **70 passed**（增量分析第一期 2 + 第二期 3 + 第三期 2 + PDF 1 + 系统设置 2 + 来源筛选 1 + 测试点 2 + 测试用例 4 + Tab 核对 2 + 待办计数 3 + 自动化执行 5 + 自动化收官 2 + 流程基线 4 + 10 期收官 2 + **引用图 AI 6**），一条命令 `.\.venv\Scripts\python.exe scripts\run_e2e.py`（8001/5174 + `aitest_copilot_e2e`） |
+| 后端全量 pytest | **1574 passed**（串行；12.5 期 T144 收官，基线 1533 + 12.5 期新增 41） |
+| e2e | **77 passed**（增量分析第一期 2 + 第二期 3 + 第三期 2 + PDF 1 + 系统设置 2 + 来源筛选 1 + 测试点 2 + 测试用例 4 + Tab 核对 2 + 待办计数 3 + 自动化执行 5 + 自动化收官 2 + 流程基线 4 + 10 期收官 2 + 引用图 AI 6 + **评审闭环 7**），一条命令 `.\.venv\Scripts\python.exe scripts\run_e2e.py`（8001/5174 + `aitest_copilot_e2e`） |
 | 前端构建 | `npm run build`（`web/` 目录，端口 5173，代理到 8000） |
 | 开跑前自检 | `.\.venv\Scripts\python.exe scripts\dev_check.py`（跑 e2e 时加 `--expect-db e2e`） |
 | 账号 | `admin` / `Admin12345` |
-| 迁移 head | **`0027`**（06 期 T84 建 `0017`；`0018` 免审核开关；`0019` 第一遍模板修正；04 补期 `0020` 推导 / `0021` 分点审核；07 期 T99 建 `0022` 测试点；08 期 T105 建 `0023` 测试用例；09 期 T111 建 `0024` 自动化三表 + 清除原因枚举修正；10 期 T117 建 `0025` 流程基线四表 + 模板 CHECK 扩枚举；12 期 T129 建 `0026` 引用图 `source` 扩 `'ai'`、T130 建 `0027` 模板与留痕 `task_type` 扩枚举 + 播种「章节引用图·AI 引用分析」模板） |
+| 迁移 head | **`0028`**（06 期 T84 建 `0017`；`0018` 免审核开关；`0019` 第一遍模板修正；04 补期 `0020` 推导 / `0021` 分点审核；07 期 T99 建 `0022` 测试点；08 期 T105 建 `0023` 测试用例；09 期 T111 建 `0024` 自动化三表 + 清除原因枚举修正；10 期 T117 建 `0025` 流程基线四表 + 模板 CHECK 扩枚举；12 期 T129 建 `0026` 引用图 `source` 扩 `'ai'`、T130 建 `0027` 模板与留痕 `task_type` 扩枚举 + 播种「章节引用图·AI 引用分析」模板；**12.5 期 T137 建 `0028` 引用图加 `status`（待评审 / 已生效）与 `rationale` 两列 + `ck_chlinks_status`**） |
 | 项目详情 Tab | **8 个**（概览 / 文档 / 基线管理 / 增量分析 / 测试点 / 测试用例 / 自动化执行 / 成员）——**「基线管理」内含二级子菜单**（「功能基线」/「流程基线」），**「成员」内含二级子菜单**（「成员列表」/「加入申请」）；「版本快照」并入「文档」Tab 内的卡片 |
 | 流程基线数据 | 四张表 `process_baselines` / `process_baseline_steps` / `process_baseline_links` / `process_baseline_revisions`；**开发库当前均为 0 行**（本期只做能力落地，没往开发库塞业务数据；数据由用户自己建） |
 | 截图目录 | 仓库根 `.screenshots/`（`E2E_SCREENSHOT_DIR` 可覆盖） |
@@ -1232,6 +1271,51 @@ e2e 全量 **70 passed**（64 基线 + 6 新增）；`npm run build` 通过；
 antd v6 抽屉没有 `.ant-drawer-content` / 抽屉遮罩盖住 Modal 关闭按钮 /
 并发下 `MockProvider.queue` 消费顺序不确定。
 
+## 5.20 12.5 期 · T137 ~ T144 章节引用图人工评审闭环（2026-11-26 ~ 2026-11-27）
+
+**规格**：`specs/12.5-chapter-link-review/`（`spec.md` AC-229 ~ AC-239 / `plan.md` / `tasks.md`）。
+**定位**：用户 2026-11-26 实测反馈驱动的**补丁**，不是新增期。
+
+**核心裁决：待评审用 `status` 列，不复用 `source`**
+
+`source`（谁产生的：rule / manual / ai）与「待评审」（人认可了没）**正交**。
+硬塞进 `source` 会炸三处：① 12 期的幂等口径「删 `(version_id, source='ai')` 再插」
+会变成只删待评审那批 → **用户刚采纳的边在重新分析后凭空消失**；
+② 采纳后 `source` 不能改，改了丢掉「这条边是 AI 认出来的」信息；
+③ 下游传播要写 `source IN (...)` 白名单，漏一个来源就静默少传播一条边。
+而唯一键 `uk_chlinks_to_chapter` 既不含 `source` 也不含 `status`，用 `source` 一点迁移成本都省不下来。
+
+**数据层**：`document_chapter_links` 加两列——`status`（`pending`/`approved`，默认 `approved`）
+与 `rationale`（`String(1000)`）。迁移 `0028` upgrade 四步（加可空列带 server_default
+→ 加 rationale → 加 CHECK → 收紧非空），downgrade 三步（**先删 pending 行**再拆结构）。
+
+**「生效」有确切定义**：能参与 05 期第二遍的**图传播**。
+`second_pass.build_point_index` 的链接查询加**一个** `status='approved'` 条件——
+不加的话「待评审」就只是前端分区标签，语义上等于没做（AC-231 专门验证）。
+
+**服务层三个关键决定**：
+- 重新分析**只删** `status='pending'` 的旧行，已采纳的原样保留（AC-232）；
+- 新分析出的边命中**任何已存在的同一条边**就跳过（唯一键不含 source/status）；
+- 采纳**幂等**（重复采纳 200，且**状态没变就不写审计**）；批量**整批原子**（缺一个 id 就整批 404）。
+
+**验证结果**：后端全量 **1574 passed**（1533 基线 + 41 新增，**零回归**）；
+e2e 全量 **77 passed**（70 基线 + 7 新增）；`npm run build` 通过（lint 0 errors）；
+两库 head `0028` 往返干净（存量 19 行全回填 `approved`，无 NULL）；
+截图 7 张落 `.screenshots/T143/`。
+
+**计划外的三处调整**（详见 `tasks.md` §6）：
+① `alter_column` 在 MySQL 上必须显式给 `existing_type`（否则报错且 DDL 非事务留下半成品状态）；
+② 05 期 `test_ac_86_chapter_link_ui` 也在用 `chapter-link-table`（表格拆分后同样失效，实跑才发现）；
+③ AC-238 要求「访客看不到详情按钮」，T142 实现漏了，T143 补了 `canWrite` 限制。
+
+**踩坑**：
+- MySQL 的 `op.alter_column` 不写 `existing_type` 会失败，且**前几步已经落库**（DDL 非事务）；
+- 一个文档只能有一个 `active` 版本（`uk_versions_active`），测「跨版本」要用 `pending` 版本；
+- antd v6 `ConfigProvider componentDisabled` 会禁掉内部所有组件，
+  **触发锁屏的那个按钮必须放在 Provider 外面**，否则自己点不动；
+- e2e 抓「分析中」态要把请求**挂起**（`page.route(..., lambda route: None)`），
+  Mock 几毫秒就返回，直接点抓不到中间态。
+
 ## 6. 待办（不属当前冲刺，等用户点头再做）
 
 - [x] 06 期其余任务：T87（前端系统设置页 + 05 动态模板下拉 + L1/L2 联调收尾）—— 已完成
@@ -1242,10 +1326,15 @@ antd v6 抽屉没有 `.ant-drawer-content` / 抽屉遮罩盖住 Modal 关闭按�
     实体名没有 id 可校验，越界无法判定，12 期只产出章节 → 章节边
   - **置信度阈值筛选**——后端 `list_links` 已支持 `link_type` / `source` 过滤，
     但前端**未暴露**；`confidence` 还没进过滤条件
-  - **批量审核 AI 边**（勾选采纳而非直接落库）——12 期是「AI 直接落库 + 可删」，
-    「候选待确认」两段式留待后续（对齐 10 期流程基线反推的形态）
-  - **AI 分析结果的可解释性**——`rationale` 已落库但没在前端展示，
-    用户不知道为什么模型认为这两章有引用关系
+  - [x] **批量审核 AI 边**（勾选采纳而非直接落库）—— **12.5 期已做**（待评审区 + 单条/批量采纳）
+  - [x] **AI 分析结果的可解释性**—— **12.5 期已做**（`rationale` 落库 + 「详情」弹窗展示）
+- **12.5 期欠账**（2026-11-27 收官时登记，详见 `specs/12.5-chapter-link-review/spec.md` §12）：
+  - **引用图真正可视化**（力导向图而非表格）——沿用 12 期的欠账
+  - **AI 产出实体边**（`entity`）——沿用 12 期的欠账（实体名无 id 可校验）
+  - **置信度阈值筛选**——`list_links` 支持 `link_type` / `source`，`confidence` 还没进过滤
+  - **「驳回」状态与评审人留痕**——本期用「删除」代替驳回；`approve` 审计里有操作者，
+    但表上没有 `reviewed_by` / `reviewed_at` 列
+  - **批量删除**——本期只做批量采纳
 - **11 期欠账**（2026-11-25 收官时登记，详见 `specs/11-nav-tabs-ux-convergence/spec.md` §10）：
   - **修 e2e 既有 flaky**：`tests/e2e/test_t123_closing_ui.py::test_ac_214_process_baseline_full_flow`
     在「文档反推」那步点 Select 选项会超时——**已连续撞到 3 期**（T125 / T126 / T128），

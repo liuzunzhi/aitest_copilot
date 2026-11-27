@@ -60,9 +60,9 @@ aitest_copilot/
 │           ├── ProjectAutomationTab.tsx / ProjectTodoCard.tsx
 │           └── settings/         # LlmProviderPanel / PromptTemplatePanel
 │
-├── migrations/                   # Alembic 迁移（当前 head = 0027）
+├── migrations/                   # Alembic 迁移（当前 head = 0028）
 │   ├── env.py
-│   └── versions/0001_baseline.py … 0027_chapter_link_ai_template.py
+│   └── versions/0001_baseline.py … 0028_chapter_link_review_status.py
 │
 ├── tests/                        # 后端测试 + Playwright 前台 e2e
 ├── specs/                        # 各期 spec / plan / tasks（与代码同库提交）
@@ -120,11 +120,11 @@ aitest_copilot/
 | `tests/users/` | 33 | 用户管理、角色 |
 | `tests/integration/` | 3 | 审计链路贯通 |
 | `tests/test_config.py` / `test_db.py` / `test_models.py` | 21 | 配置、连接、模型基线 |
-| `tests/e2e/` | **70** | Playwright 前台用例（真实浏览器，独立执行） |
+| `tests/e2e/` | **77** | Playwright 前台用例（真实浏览器，独立执行） |
 
 ### 规模与执行方式
 
-- **当前规模：后端 1533 条（`pytest` 全量）+ e2e 70 条 = 1603 条**，覆盖 01 ~ 12 期全部模块。
+- **当前规模：后端 1574 条（`pytest` 全量）+ e2e 77 条 = 1651 条**，覆盖 01 ~ 12.5 期全部模块。
 - 后端与 e2e **分开跑**：平台 `addopts` 含 `-m 'not e2e'`，全量 pytest 默认自动排除 e2e。
 
 ```powershell
@@ -186,7 +186,7 @@ npm run lint
 
 ### 4.3 数据库迁移（Alembic）
 
-DSN 从 `.env` 读取（`alembic.ini` 里不写连接串）。当前 head = **0027**。
+DSN 从 `.env` 读取（`alembic.ini` 里不写连接串）。当前 head = **0028**。
 
 ```powershell
 # 应用到最新
