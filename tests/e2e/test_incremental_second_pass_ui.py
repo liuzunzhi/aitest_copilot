@@ -270,7 +270,11 @@ def test_ac_95_guest_readonly_second_pass(api, make_user, page_as, shot) -> None
 
 @pytest.mark.task("T77")
 def test_ac_86_chapter_link_ui(admin_page: Page, api, make_user, shot) -> None:
-    """文档版本行「引用图」入口 → 列表可见 → 管理员可补链。"""
+    """文档版本行「引用图」入口 → 列表可见 → 管理员可补链。
+
+    12.5 期把抽屉拆成「待评审」/「已生效」两张表，
+    原本的 `chapter-link-table` 不再存在——这里定位**抽屉内容区**。
+    """
     project = api.create_project(_name("inc2-links"))
     uploaded = _upload_and_activate(api, project["id"])
     version_id = uploaded["version"]["id"]
@@ -287,9 +291,9 @@ def test_ac_86_chapter_link_ui(admin_page: Page, api, make_user, shot) -> None:
     admin_page.get_by_test_id(f"versions-{document_id}").click()
     admin_page.get_by_test_id(f"chapter-link-btn-{version_id}").click()
 
-    link_table = admin_page.get_by_test_id("chapter-link-table")
-    expect(link_table).to_be_visible()
-    expect(link_table).to_contain_text("该版本还没有引用关系")
+    drawer_body = admin_page.locator(".ant-drawer-body")
+    expect(drawer_body).to_be_visible()
+    expect(drawer_body).to_contain_text("该版本还没有引用关系")
 
     # 补一条实体引用
     admin_page.get_by_test_id("chapter-link-from-select").click()
@@ -301,6 +305,7 @@ def test_ac_86_chapter_link_ui(admin_page: Page, api, make_user, shot) -> None:
     admin_page.get_by_test_id("chapter-link-create-btn").click()
     expect(admin_page.locator(".ant-message")).to_contain_text("已补一条引用关系")
 
-    expect(link_table).to_contain_text("退款审核")
-    expect(link_table).to_contain_text("人工")
+    effective_table = admin_page.get_by_test_id("chapter-link-effective-table")
+    expect(effective_table).to_contain_text("退款审核")
+    expect(effective_table).to_contain_text("人工")
     shot(admin_page, "chapter-links")

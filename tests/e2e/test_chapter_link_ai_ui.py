@@ -93,6 +93,11 @@ def _open_link_drawer(page: Page, project_name: str, document_id: int, version_i
     **不关版本历史弹窗**：抽屉的遮罩盖在弹窗的关闭按钮上，
     点它会被拦下超时（Drawer 的 z-index 更高）。截图改成只截抽屉区域，
     弹窗就影响不到了。
+
+    返回**抽屉内容区**（`.ant-drawer-body`）而不是某一张表——
+    12.5 期把表格拆成了「待评审」/「已生效」两张
+    （`chapter-link-pending-table` / `chapter-link-effective-table`），
+    用例需要哪张就自己按 testid 取。
     """
     page.goto("/projects")
     page.get_by_role("row").filter(has_text=project_name).get_by_role(
@@ -101,7 +106,7 @@ def _open_link_drawer(page: Page, project_name: str, document_id: int, version_i
     page.get_by_role("tab", name="文档").click()
     page.get_by_test_id(f"versions-{document_id}").click()
     page.get_by_test_id(f"chapter-link-btn-{version_id}").click()
-    return page.get_by_test_id("chapter-link-table")
+    return page.locator(".ant-drawer-body")
 
 
 def _shot_drawer(page: Page, label: str) -> Path:
@@ -119,19 +124,39 @@ def _shot_drawer(page: Page, label: str) -> Path:
 
 @pytest.mark.task("T136")
 def test_ac_220_chapter_link_ai_analyze_ui(admin_page: Page, api) -> None:
-    """AI 一键分析按钮在抽屉右上角，点击后有 loading 态；顶部有浅色提示语。"""
+    """AI 一键分析按钮在抽屉右上角；顶部提示语在有已生效边时是 12 期文案。
+
+    **12.5 期起提示语是状态驱动的**：空数据时显示「当前版本还没有引用关系…」，
+    「系统已通过 AI 自动识别…」只在「无待评审 + 有已生效边」时出现。
+    所以这里先造一条已生效的边，再断言原文案（**文案本身一字没改**）。
+    """
     project = api.create_project(_name("chlink-ai"))
     uploaded = _upload_and_activate(api, project["id"])
     version_id = uploaded["version"]["id"]
     document_id = uploaded["document"]["id"]
+    chapters = _chapters(api, project["id"], document_id, version_id)
+    seed_chapter_links(
+        version_id,
+        [
+            {
+                "from_chapter_id": chapters[0]["id"],
+                "to_chapter_id": chapters[1]["id"],
+                "link_type": "references",
+                "source": "ai",
+                "status": "approved",
+                "confidence": 0.85,
+                "rationale": "1 节提到「详见第 2 章」",
+            }
+        ],
+    )
 
-    link_table = _open_link_drawer(
+    drawer_body = _open_link_drawer(
         admin_page, project["name"], document_id, version_id
     )
-    expect(link_table).to_be_visible()
+    expect(drawer_body).to_be_visible()
 
-    # AC-221：顶部浅色提示语完整可见
-    hint = admin_page.get_by_test_id("chapter-link-ai-hint")
+    # AC-221：无待评审 + 有已生效边 → 12 期原文案
+    hint = admin_page.get_by_test_id("chapter-link-hint")
     expect(hint).to_be_visible()
     expect(hint).to_contain_text("系统已通过 AI 自动识别章节间的引用关系")
     expect(hint).to_contain_text("您可以修改或删除错误结果")
@@ -161,10 +186,10 @@ def test_ac_222_chapter_link_form_hints(admin_page: Page, api) -> None:
     version_id = uploaded["version"]["id"]
     document_id = uploaded["document"]["id"]
 
-    link_table = _open_link_drawer(
+    drawer_body = _open_link_drawer(
         admin_page, project["name"], document_id, version_id
     )
-    expect(link_table).to_be_visible()
+    expect(drawer_body).to_be_visible()
 
     # AC-222：源章节 / 目标章节 placeholder
     expect(admin_page.get_by_test_id("chapter-link-from-select")).to_contain_text(
@@ -210,18 +235,20 @@ def test_ac_224_ai_source_is_rendered_as_ai(admin_page: Page, api) -> None:
                 "to_chapter_id": chapters[1]["id"],
                 "link_type": "references",
                 "source": "ai",
+                "status": "approved",
                 "confidence": 0.85,
             }
         ],
     )
 
-    link_table = _open_link_drawer(
+    drawer_body = _open_link_drawer(
         admin_page, project["name"], document_id, version_id
     )
-    expect(link_table).to_be_visible()
-    expect(link_table).to_contain_text("AI")
+    expect(drawer_body).to_be_visible()
+    effective_table = admin_page.get_by_test_id("chapter-link-effective-table")
+    expect(effective_table).to_contain_text("AI")
     # 不能被误显示成「人工」
-    expect(link_table).not_to_contain_text("人工")
+    expect(effective_table).not_to_contain_text("人工")
     _shot_drawer(admin_page, "ai-source")
 
 
@@ -328,11 +355,13 @@ def test_ac_227_guest_sees_no_write_controls(
     )
     expect(link_table).to_be_visible()
 
-    # 没有 AI 按钮、没有删除按钮、没有补链表单
+    # 没有 AI 按钮、没有删除按钮、没有补链表单、没有详情按钮
     expect(guest_page.get_by_test_id("chapter-link-ai-analyze-btn")).to_have_count(0)
     expect(guest_page.locator("[data-testid^='chapter-link-delete-btn-']")).to_have_count(0)
+    expect(guest_page.locator("[data-testid^='chapter-link-detail-btn-']")).to_have_count(0)
+    expect(guest_page.locator("[data-testid^='chapter-link-approve-btn-']")).to_have_count(0)
     expect(guest_page.get_by_test_id("chapter-link-create-btn")).to_have_count(0)
-    expect(guest_page.get_by_test_id("chapter-link-ai-hint")).to_be_visible()
+    expect(guest_page.get_by_test_id("chapter-link-hint")).to_be_visible()
 
     _shot_drawer(guest_page, "guest-readonly")
     guest_page.close()

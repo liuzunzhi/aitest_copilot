@@ -341,8 +341,13 @@ def seed_analysis_conclusions(analysis_id: int, targets: list[dict]) -> None:
 def seed_chapter_links(version_id: int, links: list[dict]) -> None:
     """给一个文档版本补写章节引用边。
 
-    `links` 每项：{from_chapter_id, link_type, to_chapter_id?, entity?, source?}
-    `source` 默认 `manual`（人工补链）；`rule` 表示规则抽取的边。
+    `links` 每项：
+    `{from_chapter_id, link_type, to_chapter_id?, entity?, source?, status?, rationale?, confidence?}`
+
+    - `source` 默认 `manual`（人工补链）；`rule` = 规则抽取；`ai` = AI 分析产出；
+    - `status` 默认 `approved`（人工边 / 规则边天然已生效）；
+      要造「待评审」的 AI 边显式传 `status="pending"`；
+    - `rationale` 默认 None（只有 AI 边才有分析理由）。
     """
     session = _session()
     try:
@@ -350,9 +355,10 @@ def seed_chapter_links(version_id: int, links: list[dict]) -> None:
             session.execute(
                 text(
                     "INSERT INTO document_chapter_links (version_id, from_chapter_id,"
-                    " to_chapter_id, link_type, entity, confidence, source, created_by,"
-                    " created_at) VALUES (:version_id, :from_chapter_id, :to_chapter_id,"
-                    " :link_type, :entity, :confidence, :source, :created_by, NOW(3))"
+                    " to_chapter_id, link_type, entity, confidence, source, status,"
+                    " rationale, created_by, created_at) VALUES (:version_id,"
+                    " :from_chapter_id, :to_chapter_id, :link_type, :entity,"
+                    " :confidence, :source, :status, :rationale, :created_by, NOW(3))"
                 ),
                 {
                     "version_id": version_id,
@@ -362,6 +368,8 @@ def seed_chapter_links(version_id: int, links: list[dict]) -> None:
                     "entity": link.get("entity"),
                     "confidence": link.get("confidence"),
                     "source": link.get("source", "manual"),
+                    "status": link.get("status", "approved"),
+                    "rationale": link.get("rationale"),
                     "created_by": link.get("created_by", 1),
                 },
             )
