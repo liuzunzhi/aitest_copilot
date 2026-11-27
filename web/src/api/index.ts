@@ -1195,6 +1195,15 @@ export interface ChapterLink {
   confidence: number | null
   /** `rule` = 正则抽取；`manual` = 人工补链；`ai` = AI 分析产出。 */
   source: 'rule' | 'manual' | 'ai'
+  /**
+   * 生命周期：`pending` 待评审 / `approved` 已生效。
+   *
+   * 只有 AI 产出的边会是 `pending`——人工边与规则边天然已生效。
+   * **待评审的边不参与增量分析的图传播**，采纳后才生效。
+   */
+  status: 'pending' | 'approved'
+  /** AI 给出的分析理由（详情弹窗展示）；其它来源为 null。 */
+  rationale: string | null
   created_by: number
   created_at: string
 }
@@ -1345,6 +1354,40 @@ export async function deleteChapterLink(
   await client.delete(
     `${CHAPTER_LINKS(projectId, documentId, versionId)}/${linkId}`,
   )
+}
+
+/**
+ * 采纳一条待评审的引用边（`pending → approved`）。
+ *
+ * **幂等**：已生效的边再调一次返回 200，不报错。
+ */
+export async function approveChapterLink(
+  projectId: number,
+  documentId: number,
+  versionId: number,
+  linkId: number,
+): Promise<ChapterLink> {
+  const { data } = await client.post<ChapterLink>(
+    `${CHAPTER_LINKS(projectId, documentId, versionId)}/${linkId}/approve`,
+  )
+  return data
+}
+
+/**
+ * 批量采纳（**整批原子**：任一条不存在就整批 404，不部分成功）。
+ * 空数组会被后端拒成 400，前端应拦住空选。
+ */
+export async function approveChapterLinksBatch(
+  projectId: number,
+  documentId: number,
+  versionId: number,
+  linkIds: number[],
+): Promise<{ approved_count: number }> {
+  const { data } = await client.post<{ approved_count: number }>(
+    `${CHAPTER_LINKS(projectId, documentId, versionId)}/approve-batch`,
+    { link_ids: linkIds },
+  )
+  return data
 }
 
 /* ---------------------------------------------- 增量分析第三期（产出段） */

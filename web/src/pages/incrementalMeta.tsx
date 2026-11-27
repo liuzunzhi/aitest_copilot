@@ -57,6 +57,17 @@ export const LINK_SOURCE_META: Record<string, { label: string; color: string }> 
   ai: { label: 'AI', color: 'cyan' },
 }
 
+/**
+ * 引用边的生命周期（12.5 期）。
+ *
+ * **与 `source` 是两个正交维度**：`source` 说「谁产生的」，
+ * `status` 说「人认可了没」。只有 AI 产出的边会是 `pending`。
+ */
+export const LINK_STATUS_META: Record<string, { label: string; color: string }> = {
+  pending: { label: '待评审', color: 'orange' },
+  approved: { label: '已生效', color: 'success' },
+}
+
 /** 丢弃标识 → 中文（只出现在 stats.discarded，不会作为 HTTP 错误码）。 */
 export const DISCARD_LABELS: Record<string, string> = {
   INCREMENTAL_TARGET_OUT_OF_BASELINE: '目标不在基线内',
@@ -100,5 +111,11 @@ export function linkTypeTag(linkType: string) {
  */
 export function linkSourceTag(source: string) {
   const meta = LINK_SOURCE_META[source] ?? { label: source, color: 'default' }
+  return <Tag color={meta.color}>{meta.label}</Tag>
+}
+
+/** 生命周期标签：待评审 / 已生效。同样走映射表，不用三元表达式。 */
+export function linkStatusTag(status: string) {
+  const meta = LINK_STATUS_META[status] ?? { label: status, color: 'default' }
   return <Tag color={meta.color}>{meta.label}</Tag>
 }
