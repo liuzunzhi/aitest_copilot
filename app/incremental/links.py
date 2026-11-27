@@ -511,29 +511,40 @@ def _persist_ai_links(
     actor: User,
     references: list[dict],
 ) -> list[DocumentChapterLink]:
-    """把引擎产出的引用边落库（幂等）。
+    """把引擎产出的引用边落库为**待评审**（`status='pending'`）。
 
-    口径与 `extract_links` 完全一致：
+    12.5 期的口径变化（与 12 期的直接落库相比，有三处）：
 
-    1. **先删** `(version_id, source='ai')` 的旧行 → 再插新的（重复调用不累加）；
-    2. **人工边优先**：AI 边命中人工边同一条（同源同类型同目标）时跳过，
-       否则撞 `uk_chlinks_to_chapter` 唯一键。
+    1. **只删「上一轮还没审的」**：删 `(version_id, source='ai', status='pending')`。
+       **已 `approved` 的 AI 边原样保留**——用户逐条采纳过的成果，
+       不能因为重新分析一次就被冲掉。
+    2. **落库即待评审**：新插入的边 `status='pending'`，
+       并在 `rationale` 里记下模型给的分析理由（详情弹窗要展示）。
+       采纳前不参与 05 期第二遍的图传播（见 `second_pass.build_point_index`）。
+    3. **跳过「已存在的同一条边」**：唯一键
+       `uk_chlinks_to_chapter` 是 `(version_id, from, link_type, to)`，
+       **不含 `source` 也不含 `status`**。所以新分析出的边只要命中任何已存在的边
+       （不论来源、不论状态）就必须跳过，否则撞唯一键 500。
 
-    与重抽的区别只在「删哪一批」：重抽删 `source='rule'`，这里删 `source='ai'`。
+    跳过是最保守也最符合直觉的做法：已采纳的边保持 `approved`，
+    新一轮的结果由「尚未被采纳的那批」承载（与 12 期「人工边优先」同一哲学）。
     """
+    # ① 只清上一轮**没被采纳**的 AI 边；已 approved 的保留
     session.execute(
         delete(DocumentChapterLink).where(
             DocumentChapterLink.version_id == version_id,
             DocumentChapterLink.source == "ai",
+            DocumentChapterLink.status == "pending",
         )
     )
 
-    manual_keys = {
-        (row.from_chapter_id, row.link_type, row.to_chapter_id, row.entity)
+    # ② 收集「已存在的章节边」（不论来源 / 状态）——它们占着唯一键
+    existing_keys = {
+        (row.from_chapter_id, row.link_type, row.to_chapter_id)
         for row in session.scalars(
             select(DocumentChapterLink).where(
                 DocumentChapterLink.version_id == version_id,
-                DocumentChapterLink.source == "manual",
+                DocumentChapterLink.to_chapter_id.is_not(None),
             )
         ).all()
     }
@@ -546,12 +557,14 @@ def _persist_ai_links(
             link_type=item["link_type"],
             entity=None,
             confidence=item.get("confidence"),
+            rationale=item.get("rationale"),
             source="ai",
+            status="pending",
             created_by=actor.id,
         )
         for item in references
-        if (item["from_chapter_id"], item["link_type"], item["to_chapter_id"], None)
-        not in manual_keys
+        if (item["from_chapter_id"], item["link_type"], item["to_chapter_id"])
+        not in existing_keys
     ]
     if rows:
         session.add_all(rows)
@@ -656,6 +669,149 @@ def delete_link(
     session.commit()
 
 
+# ------------------------------------------------------------ 采纳（人工评审）
+
+
+def _load_version_link(
+    session: Session, *, version_id: int, link_id: int
+) -> DocumentChapterLink:
+    """取一条属于该版本的边；不存在 / 跨版本 → 404。
+
+    **必须校验归属**：`id == link_id AND version_id == version_id`——
+    不校验就能跨版本采纳别人的边。
+    """
+    link = session.scalar(
+        select(DocumentChapterLink).where(
+            DocumentChapterLink.id == link_id,
+            DocumentChapterLink.version_id == version_id,
+        )
+    )
+    if link is None:
+        raise ChapterLinkNotFound("引用关系不存在或不属于该文档版本")
+    return link
+
+
+def approve_link(
+    session: Session,
+    *,
+    project_id: int,
+    document_id: int,
+    version_id: int,
+    actor: User,
+    link_id: int,
+) -> DocumentChapterLink:
+    """采纳一条待评审的引用边（项目管理员）。
+
+    **幂等**：已经 `approved` 的边再采纳一次直接返回，**不报错、不写审计**。
+
+    为什么幂等而不是像 07 期测试点那样「已评审过就 409」：
+    07 期的评审是**有决策语义**的动作（通过 / 驳回），驳回后状态变了，
+    重复「通过」确实自相矛盾。本期**没有驳回态**（用户原话「错的直接删除」），
+    唯一的状态迁移是 `pending → approved`，重复采纳就是「再确认一次」，
+    语义上完全成立，也让前端「批量采纳」可以放心重复点。
+
+    为什么状态没变就不写审计：审计记录的是**业务变更**。
+    没变更却记一条「采纳」，会让审计流里出现无法解释的重复记录。
+    """
+    ensure_writable_admin(session, project_id=project_id, actor=actor)
+    _load_version(
+        session, project_id=project_id, document_id=document_id, version_id=version_id
+    )
+
+    link = _load_version_link(session, version_id=version_id, link_id=link_id)
+
+    if link.status != "approved":
+        before_status = link.status
+        link.status = "approved"
+        session.flush()
+        write_audit(
+            session,
+            "document.chapter_link.approve",
+            actor_id=actor.id,
+            actor_role=actor.global_role,
+            project_id=project_id,
+            target_type="document_chapter_link",
+            target_id=link.id,
+            before_data={"status": before_status},
+            after_data={
+                "document_id": document_id,
+                "version_id": version_id,
+                "status": "approved",
+                "link_ids": [link.id],
+                "approved_count": 1,
+            },
+        )
+    session.commit()
+    return link
+
+
+def approve_links_batch(
+    session: Session,
+    *,
+    project_id: int,
+    document_id: int,
+    version_id: int,
+    actor: User,
+    link_ids: list[int],
+) -> int:
+    """批量采纳（项目管理员）。返回本次被确认为已生效的条数。
+
+    **整批原子**：只要有一个 id 不存在或不属于该版本，**整批失败**（404），
+    不部分成功。部分成功会让用户不知道哪些进了、哪些没进。
+
+    **空列表直接 400**：复用既有 `INVALID_CHAPTER_LINK`（本期零新增错误码）。
+
+    **幂等**：已 `approved` 的边按成功计（计入返回值），但**不写**「变更」审计；
+    只有确实发生状态迁移时才写一条审计。
+    """
+    ensure_writable_admin(session, project_id=project_id, actor=actor)
+    _load_version(
+        session, project_id=project_id, document_id=document_id, version_id=version_id
+    )
+
+    if not link_ids:
+        raise InvalidChapterLink("请选择要采纳的引用关系")
+
+    rows = list(
+        session.scalars(
+            select(DocumentChapterLink).where(
+                DocumentChapterLink.id.in_(link_ids),
+                DocumentChapterLink.version_id == version_id,
+            )
+        ).all()
+    )
+    found = {row.id for row in rows}
+    missing = [item for item in link_ids if item not in found]
+    if missing:
+        raise ChapterLinkNotFound(
+            f"引用关系不存在或不属于该文档版本：{sorted(missing)}"
+        )
+
+    changed = [row for row in rows if row.status != "approved"]
+    for row in changed:
+        row.status = "approved"
+    if changed:
+        session.flush()
+        write_audit(
+            session,
+            "document.chapter_link.approve",
+            actor_id=actor.id,
+            actor_role=actor.global_role,
+            project_id=project_id,
+            target_type="document_chapter_link",
+            target_id=None,
+            after_data={
+                "document_id": document_id,
+                "version_id": version_id,
+                "status": "approved",
+                "link_ids": sorted(found),
+                "approved_count": len(rows),
+            },
+        )
+    session.commit()
+    return len(rows)
+
+
 # ------------------------------------------------------------ 手动补链
 
 
@@ -725,6 +881,8 @@ def create_link(
         entity=entity_value,
         confidence=None,
         source="manual",
+        # 人工补的边**天然已生效**：人自己写的，不需要再走一遍评审。
+        status="approved",
         created_by=actor.id,
     )
     session.add(link)
@@ -792,6 +950,9 @@ def list_links(
             "entity": row.entity,
             "confidence": float(row.confidence) if row.confidence is not None else None,
             "source": row.source,
+            # 12.5 期：待评审 / 已生效；AI 边的分析理由（详情弹窗展示）
+            "status": row.status,
+            "rationale": row.rationale,
             "created_by": row.created_by,
             "created_at": row.created_at,
         }
@@ -802,6 +963,8 @@ def list_links(
 __all__ = [
     "RULE_CONFIDENCE",
     "analyze_links",
+    "approve_link",
+    "approve_links_batch",
     "create_link",
     "delete_link",
     "ensure_member",
