@@ -9,8 +9,17 @@ MySQL 允许唯一索引上出现多个 NULL，所以两条唯一键分别管章
 
 规则抽取的边 `source='rule'`，每次重抽按 `(version_id, source='rule')` 先删后插；
 人工补链的边 `source='manual'`，不受重抽影响；
-AI 分析的边 `source='ai'`，每次分析按 `(version_id, source='ai')` 先删后插——
-与重抽同样的幂等口径，但**互不覆盖**：三种来源各自独立重算。
+AI 分析的边 `source='ai'`，每次分析按 `(version_id, source='ai', status='pending')`
+先删后插——与重抽同样的幂等口径，但**互不覆盖**：三种来源各自独立重算。
+
+**`source` 与 `status` 是两个正交维度**（12.5 期）：
+
+- `source` = 这条边**是谁产生的**（`rule` / `manual` / `ai`）；
+- `status` = 这条边**人认可了没**（`pending` 待评审 / `approved` 已生效）。
+
+只有 AI 产出的边需要人工评审，所以 AI 边默认 `pending`；
+人工边与规则边天然已生效，默认 `approved`。
+**「已生效」= 能参与 05 期第二遍的图传播**（`second_pass.py` 只读 `approved` 的边）。
 """
 
 from datetime import datetime
@@ -30,6 +39,9 @@ _TABLE_OPTS = {
 
 CHAPTER_LINK_TYPES = ("references", "depends_on", "mentions_entity")
 CHAPTER_LINK_SOURCES = ("rule", "manual", "ai")
+# 12.5 期：待评审 / 已生效。**刻意只有两值**——用户说「错的直接删除」，
+# 不做 `rejected`（删除会写审计，历史可追）。
+CHAPTER_LINK_STATUSES = ("pending", "approved")
 
 
 class DocumentChapterLink(Base):
@@ -74,6 +86,9 @@ class DocumentChapterLink(Base):
             "source IN ('rule','manual','ai')", name="ck_chlinks_source"
         ),
         CheckConstraint(
+            "status IN ('pending','approved')", name="ck_chlinks_status"
+        ),
+        CheckConstraint(
             "((to_chapter_id IS NOT NULL) <> (entity IS NOT NULL))",
             name="ck_chlinks_target",
         ),
@@ -94,10 +109,24 @@ class DocumentChapterLink(Base):
         DECIMAL(3, 2), nullable=True, comment="规则抽取固定值；人工补链为空"
     )
     source: Mapped[str] = mapped_column(String(16), nullable=False)
+    status: Mapped[str] = mapped_column(
+        String(16),
+        nullable=False,
+        server_default=text("'approved'"),
+        comment="pending=待评审（仅 AI 产出）；approved=已生效",
+    )
+    rationale: Mapped[str | None] = mapped_column(
+        String(1000), nullable=True, comment="AI 分析理由（详情弹窗展示）"
+    )
     created_by: Mapped[int] = mapped_column(BIGINT(unsigned=True), nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DATETIME(fsp=3), nullable=False, server_default=text("CURRENT_TIMESTAMP(3)")
     )
 
 
-__all__ = ["CHAPTER_LINK_SOURCES", "CHAPTER_LINK_TYPES", "DocumentChapterLink"]
+__all__ = [
+    "CHAPTER_LINK_SOURCES",
+    "CHAPTER_LINK_STATUSES",
+    "CHAPTER_LINK_TYPES",
+    "DocumentChapterLink",
+]

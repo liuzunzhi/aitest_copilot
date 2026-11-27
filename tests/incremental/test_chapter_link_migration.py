@@ -1,7 +1,7 @@
 """迁移 `0026` 的数据库层断言（12-chapter-link-ai T129 / AC-224）。
 
 覆盖：`document_chapter_links.source` 的 CHECK 真的扩了 `'ai'`（不是只写在 ORM
-元数据里）；迁移 head 是 `0026`。
+元数据里）；迁移 head。
 
 `0026 → 0025 → 0026` 的往返不在这里跑——迁移在独立事务里执行，与 `db` 夹具的
 嵌套事务会互相干扰；往返由 T129 的验证命令在两库上实跑。
@@ -43,15 +43,15 @@ def test_ac_224_source_check_keeps_rule_and_manual(engine: Engine):
     assert "'manual'" in sqltext
 
 
-def test_migration_head_is_0027(db: Session):
-    """迁移 head 是 `0027`（0026 数据层 + 0027 模板层）。"""
+def test_migration_head_is_0028(db: Session):
+    """迁移 head 是 `0028`（0026 数据层 + 0027 模板层 + 0028 评审状态层）。"""
     row = db.execute(text("SELECT version_num FROM alembic_version")).first()
     assert row is not None
-    assert row[0] == "0027"
+    assert row[0] == "0028"
 
 
-def test_chapter_links_table_has_no_new_column(engine: Engine):
-    """表结构零改动：`document_chapter_links` 的列集合不变（只扩 CHECK）。"""
+def test_chapter_links_table_has_two_new_columns(engine: Engine):
+    """12.5 期加两列：`status`（待评审/已生效）与 `rationale`（分析理由）。"""
     columns = {item["name"] for item in inspect(engine).get_columns("document_chapter_links")}
     assert columns == {
         "id",
@@ -64,6 +64,8 @@ def test_chapter_links_table_has_no_new_column(engine: Engine):
         "source",
         "created_by",
         "created_at",
+        "status",
+        "rationale",
     }
 
 
