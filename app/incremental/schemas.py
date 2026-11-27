@@ -17,6 +17,8 @@ __all__ = [
     "AppliedLabelOut",
     "ApplyResultOut",
     "ChapterLinkAnalyzeOut",
+    "ChapterLinkApproveBatchIn",
+    "ChapterLinkApproveBatchOut",
     "ChapterLinkCreate",
     "ChapterLinkOut",
     "ConclusionOut",
@@ -99,7 +101,12 @@ class ChapterLinkCreate(BaseModel):
 
 
 class ChapterLinkOut(BaseModel):
-    """章节引用图的一条边，附带两端章节标题。"""
+    """章节引用图的一条边，附带两端章节标题。
+
+    `status` 是**生命周期**（12.5 期）：`pending` 待评审 / `approved` 已生效。
+    只有 AI 产出的边会是 `pending`——人工边与规则边天然已生效。
+    `rationale` 是 AI 给出的分析理由（详情弹窗展示），其它来源为 null。
+    """
 
     id: int
     version_id: int
@@ -111,8 +118,27 @@ class ChapterLinkOut(BaseModel):
     entity: str | None = None
     confidence: float | None = None
     source: str
+    status: str
+    rationale: str | None = None
     created_by: int
     created_at: datetime
+
+
+class ChapterLinkApproveBatchIn(BaseModel):
+    """批量采纳入参。
+
+    **不做 `min_length=1`**：空数组要让服务层抛 400 `INVALID_CHAPTER_LINK`
+    （与 `ChapterLinkCreate` 同理——pydantic 校验失败会变成 422，
+    而 spec 要求 400）。
+    """
+
+    link_ids: list[int]
+
+
+class ChapterLinkApproveBatchOut(BaseModel):
+    """批量采纳的结果。`approved_count` = 本次确认为已生效的条数。"""
+
+    approved_count: int
 
 
 class ChapterLinkAnalyzeOut(BaseModel):

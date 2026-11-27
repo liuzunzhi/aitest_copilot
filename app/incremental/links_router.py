@@ -1,12 +1,14 @@
-"""章节引用图路由（05-incremental 第二期 T71）。
+"""章节引用图路由（05-incremental 第二期 T71 / 12-chapter-link-ai / 12.5 期评审）。
 
 前缀 `/api/projects/{project_id}/documents/{document_id}/versions/{version_id}/links`：
 
-- `GET  ""`        引用图列表（不分页，可按 link_type / source 筛选）
-- `POST ""`        手动补一条（项目管理员）
-- `POST /extract`  按规则重抽取（幂等，项目管理员）
-- `POST /analyze`  AI 分析引用关系（项目管理员，调用真实大模型）
-- `DELETE /{id}`   删一条引用边（项目管理员）
+- `GET  ""`             引用图列表（不分页，可按 link_type / source 筛选）
+- `POST ""`             手动补一条（项目管理员，落库即 `approved`）
+- `POST /extract`       按规则重抽取（幂等，项目管理员）
+- `POST /analyze`       AI 分析引用关系（项目管理员，产出的边落 `pending` 待评审）
+- `POST /approve-batch` 批量采纳待评审的边（项目管理员，整批原子）
+- `POST /{id}/approve`  采纳一条（项目管理员，幂等）
+- `DELETE /{id}`        删一条引用边（项目管理员）
 
 读权限随文档章节（成员含访客）；写权限单独校验，固定顺序是
 项目不存在 404 → 已归档 409 → 不是管理员 403。
@@ -20,6 +22,8 @@ from app.common.deps import current_user
 from app.incremental import links
 from app.incremental.schemas import (
     ChapterLinkAnalyzeOut,
+    ChapterLinkApproveBatchIn,
+    ChapterLinkApproveBatchOut,
     ChapterLinkCreate,
     ChapterLinkOut,
 )
@@ -153,6 +157,67 @@ def analyze_links(
         provider=result["provider"],
         mode=result["mode"],
     )
+
+
+@router.post("/approve-batch", response_model=ChapterLinkApproveBatchOut)
+def approve_links_batch(
+    project_id: int,
+    document_id: int,
+    version_id: int,
+    payload: ChapterLinkApproveBatchIn,
+    session: Session = Depends(get_db),
+    user: User = Depends(current_user),
+) -> ChapterLinkApproveBatchOut:
+    """批量采纳待评审的引用边（项目管理员）。
+
+    **整批原子**：只要有一个 id 不存在或不属于该版本，整批失败（404），
+    不部分成功。空数组 → 400 `INVALID_CHAPTER_LINK`。
+
+    **路径顺序**：本路由的字面量段数（1 段）与 `/{link_id}/approve`（2 段）
+    不同、与 `POST /extract`、`POST /analyze` 同段但字面量不同，实际不冲突。
+    仍然把它放在 `/{link_id}/approve` **之前**——具体路径优先，避免以后
+    有人加 `POST /{link_id}/xxx` 时踩坑。
+    """
+    approved_count = links.approve_links_batch(
+        session,
+        project_id=project_id,
+        document_id=document_id,
+        version_id=version_id,
+        actor=user,
+        link_ids=payload.link_ids,
+    )
+    return ChapterLinkApproveBatchOut(approved_count=approved_count)
+
+
+@router.post("/{link_id}/approve", response_model=ChapterLinkOut)
+def approve_link(
+    project_id: int,
+    document_id: int,
+    version_id: int,
+    link_id: int,
+    session: Session = Depends(get_db),
+    user: User = Depends(current_user),
+) -> ChapterLinkOut:
+    """采纳一条待评审的引用边（项目管理员）。**幂等**：已生效的再采纳返回 200。"""
+    link = links.approve_link(
+        session,
+        project_id=project_id,
+        document_id=document_id,
+        version_id=version_id,
+        actor=user,
+        link_id=link_id,
+    )
+    item = next(
+        row
+        for row in links.list_links(
+            session,
+            project_id=project_id,
+            document_id=document_id,
+            version_id=version_id,
+        )
+        if row["id"] == link.id
+    )
+    return ChapterLinkOut(**item)
 
 
 @router.delete("/{link_id}", status_code=204)

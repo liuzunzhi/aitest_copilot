@@ -1044,6 +1044,47 @@ def _chapter_link_analyze(client: TestClient, db: Session, monkeypatch) -> None:
     assert response.status_code == 200, response.text
 
 
+def _chapter_link_approve(client: TestClient, db: Session, monkeypatch) -> None:
+    """12.5 期：采纳一条待评审的章节引用边。
+
+    直接插一条 `source='ai', status='pending'` 的边（不经模型）——
+    这里验的是「采纳这个动作写不写审计」，不该被模型输出干扰。
+    用 `mentions_entity` 边：只需一个章节 + 实体名，不依赖文档里有两个章节。
+    """
+    from app.models.chapter_link import DocumentChapterLink
+
+    project, user, headers, body = _uploaded(client, db)
+    chapter_id = db.scalar(
+        select(DocumentChapter.id)
+        .where(DocumentChapter.version_id == body["version"]["id"])
+        .limit(1)
+    )
+    assert chapter_id is not None
+    link = DocumentChapterLink(
+        version_id=body["version"]["id"],
+        from_chapter_id=chapter_id,
+        to_chapter_id=None,
+        link_type="mentions_entity",
+        entity="待采纳的审计功能",
+        source="ai",
+        status="pending",
+        created_by=user.id,
+    )
+    db.add(link)
+    db.flush()
+
+    response = client.post(
+        CHAPTER_LINKS.format(
+            project_id=project.id,
+            document_id=body["document"]["id"],
+            version_id=body["version"]["id"],
+        )
+        + f"/{link.id}/approve",
+        headers=headers,
+    )
+    assert response.status_code == 200, response.text
+
+
 def _chapter_link_create(client: TestClient, db: Session, monkeypatch) -> None:
     """05 第二期：人工补一条章节引用边。"""
     project, _, headers, body = _uploaded(client, db)
@@ -1482,6 +1523,7 @@ SCENARIOS = {
     "incremental.apply.run": _incremental_apply_run,
     "document.chapter_link.create": _chapter_link_create,
     "document.chapter_link.analyze": _chapter_link_analyze,
+    "document.chapter_link.approve": _chapter_link_approve,
     "document.chapter_link.delete": _chapter_link_delete,
     "llm.provider.create": _llm_provider_create,
     "llm.provider.update": _llm_provider_update,
