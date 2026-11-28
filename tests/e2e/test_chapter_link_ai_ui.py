@@ -110,7 +110,7 @@ def _open_link_drawer(page: Page, project_name: str, document_id: int, version_i
 
 
 def _shot_drawer(page: Page, label: str) -> Path:
-    """只截抽屉面板区域——版本历史弹窗会盖住整页截图。
+    """只截抽屉面板区域——全页截图会把左侧导航和表格一起带进来。
 
     antd v6 的抽屉**没有** `.ant-drawer-content`，面板是 `.ant-drawer-section`
     （内容区是 `.ant-drawer-body`）。这是实测 DOM 出来的，不是猜的。

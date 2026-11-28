@@ -86,8 +86,8 @@ def _chapters(api, project_id: int, document_id: int, version_id: int) -> list[d
 def _open_link_drawer(page: Page, project_name: str, document_id: int, version_id: int):
     """进「文档」Tab → 版本历史 → 版本行「引用图」，返回抽屉内容区。
 
-    与 12 期的同一入口；**不关版本历史弹窗**（抽屉遮罩盖住它的关闭按钮），
-    截图只截 `.ant-drawer-section`。
+    与 12 期的同一入口。**点「引用图」后版本历史弹窗会自动关闭**（它 z-index
+    高于抽屉，不收起来会盖在引用图上），所以这里断言弹窗已消失。
     """
     page.goto("/projects")
     page.get_by_role("row").filter(has_text=project_name).get_by_role(
@@ -96,6 +96,7 @@ def _open_link_drawer(page: Page, project_name: str, document_id: int, version_i
     page.get_by_role("tab", name="文档").click()
     page.get_by_test_id(f"versions-{document_id}").click()
     page.get_by_test_id(f"chapter-link-btn-{version_id}").click()
+    expect(page.locator(".ant-modal:visible")).to_have_count(0)
     return page.locator(".ant-drawer-body")
 
 

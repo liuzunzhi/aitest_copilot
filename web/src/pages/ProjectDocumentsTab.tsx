@@ -259,9 +259,12 @@ export default function ProjectDocumentsTab({
             <Button
               size="small"
               data-testid={`chapter-link-btn-${version.id}`}
-              onClick={() =>
+              onClick={() => {
+                // 引用图是抽屉，z-index 低于 Modal：版本历史弹窗不收起来会一直
+                // 盖在引用图上，用户得先手动关弹窗才看得到引用图。
+                setVersionDoc(null)
                 setLinkVersion({ documentId: versionDoc.id, versionId: version.id })
-              }
+              }}
             >
               引用图
             </Button>
