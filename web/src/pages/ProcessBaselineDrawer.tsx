@@ -95,6 +95,8 @@ export default function ProcessBaselineDrawer({
   const [linkRows, setLinkRows] = useState<ProcessLink[]>([])
   const [pendingTargets, setPendingTargets] = useState<string[]>([])
   const [targets, setTargets] = useState<ProcessLinkableTarget[]>([])
+  /** 可关联目标是否还在加载（加载期间下拉置 loading + disabled，见 `ProcessLinkSelect`）。 */
+  const [loadingTargets, setLoadingTargets] = useState(false)
 
   const locked = inReview && canManage && !isCreate
 
@@ -143,9 +145,13 @@ export default function ProcessBaselineDrawer({
 
   useEffect(() => {
     if (!open || !canManage) return
+    // 先清空再拉取：重新打开抽屉时不会短暂显示上次的（可能是别的项目的）目标。
+    setTargets([])
+    setLoadingTargets(true)
     listProcessLinkableTargets(projectId)
       .then(setTargets)
       .catch((error) => message.error(errorMessage(error)))
+      .finally(() => setLoadingTargets(false))
   }, [open, canManage, projectId, message])
 
   /** 把下拉里选中的目标并入已选列表（同一目标不重复）。 */
@@ -317,6 +323,7 @@ export default function ProcessBaselineDrawer({
                   value={pendingTargets}
                   onChange={setPendingTargets}
                   testId="process-baseline-link-select"
+                  loading={loadingTargets}
                 />
                 <Button
                   size="small"

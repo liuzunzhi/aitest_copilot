@@ -436,8 +436,11 @@
     （可见的 `.ant-select-dropdown` 再也不出现，`.ant-select-item-option` 明明在 DOM 里）。
     **修法**：加载期间给 Select 加 `loading` + `disabled`，把「可点但数据未就绪」的窗口关掉；
     e2e 侧再补条件等待（`not_to_have_class(re.compile("ant-select-disabled"))`）双保险。
-    **同类风险未修**：`ProcessBaselineDrawer` 的「关联功能」多选下拉也是打开时异步加载
-    （当前被前面的填表耗时掩盖，暂未暴露）。
+    **同类风险已一并修**（2026-11-28）：`ProcessBaselineDrawer` 的「关联功能」多选下拉
+    同一根因（打开抽屉才异步拉目标列表），已给 `ProcessLinkSelect` 加 `loading` / `disabled`
+    并在抽屉里维护 `loadingTargets`，重新打开时先清空再拉取（避免短暂显示上次的目标）。
+    `test_ac_213` 也从「靠时序侥幸」改成显式等待——它此前只是被填表耗时掩盖，
+    补全量 e2e 时才暴露：文档下拉的等待当初只加在了 `test_t123_closing_ui.py`。
 
 ## 5. 04 收尾完成情况（2026-11-17）
 

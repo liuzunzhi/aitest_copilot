@@ -219,17 +219,25 @@ export function buildProcessLinkColumns({
  *
  * 选中项先落在下拉里，点「加入关联」才并入已选列表——
  * 这样用户能一次选多个再统一确认，不会「点一下就多一行」。
+ *
+ * `loading` 用来挡住「可点但数据未就绪」的窗口：调用方是打开抽屉时才异步
+ * 拉目标列表，此时 `options` 还是空数组；用户在这个窗口里点开下拉，
+ * 数据到达后 `options` 由 `[]` 变成有值会让 antd Select 重渲染并**关掉下拉**
+ * （表现为「点一下闪一下就没了」）。加载期间直接置为 loading + disabled，
+ * 同时把 placeholder 换成加载提示，用户不会以为「这里没东西可选」。
  */
 export function ProcessLinkSelect({
   targets,
   value,
   onChange,
   testId,
+  loading = false,
 }: {
   targets: ProcessLinkableTarget[]
   value: string[]
   onChange: (next: string[]) => void
   testId: string
+  loading?: boolean
 }) {
   return (
     <Select
@@ -237,8 +245,10 @@ export function ProcessLinkSelect({
       allowClear
       showSearch
       optionFilterProp="label"
-      placeholder="选择要关联的功能 / 功能点"
+      placeholder={loading ? '正在加载可关联的功能…' : '选择要关联的功能 / 功能点'}
       style={{ width: 360 }}
+      loading={loading}
+      disabled={loading}
       value={value}
       onChange={(next) => onChange(next as string[])}
       options={targets.map((target) => ({

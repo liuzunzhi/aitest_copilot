@@ -213,7 +213,10 @@ def test_ac_214_process_baseline_full_flow(wide_admin_page: Page, api, shot) -> 
         "连续 5 次输入错误密码"
     )
     wide_admin_page.get_by_test_id("process-baseline-step-expected-input-1").fill("提示账号已被锁定")
-    wide_admin_page.get_by_test_id("process-baseline-link-select").click()
+    # 目标列表异步加载中下拉是 disabled，等就绪再点（避免重渲染关掉下拉）
+    link_select = wide_admin_page.get_by_test_id("process-baseline-link-select")
+    expect(link_select).not_to_have_class(re.compile(r"ant-select-disabled"))
+    link_select.click()
     wide_admin_page.locator(
         ".ant-select-dropdown:visible .ant-select-item-option",
         has_text="用户扫码登录",

@@ -203,7 +203,11 @@ def test_ac_213_create_scenario_and_edit_steps_ui(wide_admin_page: Page, api, sh
     )
     wide_admin_page.get_by_test_id("process-baseline-step-expected-input-1").fill("提示账号已被锁定")
     # 一条关联：多选下拉 → 选功能 → 「加入关联」
-    wide_admin_page.get_by_test_id("process-baseline-link-select").click()
+    # 目标列表是抽屉打开后才异步拉的，加载中下拉是 disabled；等它就绪再点，
+    # 否则点开的瞬间数据到达会重渲染把下拉关掉（详见 ProcessLinkSelect 注释）。
+    link_select = wide_admin_page.get_by_test_id("process-baseline-link-select")
+    expect(link_select).not_to_have_class(re.compile(r"ant-select-disabled"))
+    link_select.click()
     wide_admin_page.locator(
         ".ant-select-dropdown:visible .ant-select-item-option",
         has_text="用户扫码登录",
@@ -295,7 +299,11 @@ def test_ac_213_derive_and_review_ui(wide_admin_page: Page, api, shot) -> None:
     wide_admin_page.get_by_test_id("process-baseline-derive-btn").click()
     modal = wide_admin_page.get_by_test_id("process-baseline-derive-modal")
     expect(modal).to_be_visible()
-    wide_admin_page.get_by_test_id("process-baseline-derive-doc-select").click()
+    # 文档列表是弹窗打开后才异步拉的，加载中下拉是 disabled；等它就绪再点，
+    # 否则这一下点空、下拉再也不出来（详见 ProcessBaselineDeriveModal 注释）。
+    doc_select = wide_admin_page.get_by_test_id("process-baseline-derive-doc-select")
+    expect(doc_select).not_to_have_class(re.compile(r"ant-select-disabled"))
+    doc_select.click()
     wide_admin_page.locator(
         ".ant-select-dropdown:visible .ant-select-item-option",
         has_text="支付需求",
