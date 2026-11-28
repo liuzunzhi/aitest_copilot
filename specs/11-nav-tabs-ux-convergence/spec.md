@@ -590,12 +590,15 @@ admin_page.get_by_role("tab", name="文档").click()
 - 「版本快照」表支持**按文档筛选** / **导出**；
 - 顶层 Tab 支持 **URL 记忆**（`?tab=xxx`）——目前切 Tab 不写 URL，刷新会回到「概览」；
 - 「成员」二级子菜单支持**未读角标**（有 N 条待审批申请时在「成员」Tab 上提示）；
-- **修掉 e2e 既有 flaky**：`tests/e2e/test_t123_closing_ui.py::test_ac_214_process_baseline_full_flow`
+- [x] **修掉 e2e 既有 flaky**（2026-11-28 已修）：`tests/e2e/test_t123_closing_ui.py::test_ac_214_process_baseline_full_flow`
   在「文档反推」那步点 Select 选项会超时
   （`.ant-select-dropdown:visible .ant-select-item-option` has_text="支付需求"）。
-  **T125 / T126 各撞到一次**（单跑与重跑均通过）——属 10 期遗留的时序抖动，
-  疑与 antd Select 的异步加载 / 动画时序有关。本期未修（红线：每任务只碰 ≤ 5 个文件，
-  且该文件不属于本期改动范围），**登记在此等单独排期**。
+  **根因**（实测采样定位，不是「慢」也不是动画时序）：`ProcessBaselineDeriveModal`
+  打开时才异步拉文档列表，在数据到达前点开下拉，`options` 由 `[]` 变有值触发重渲染，
+  **antd Select 把下拉关掉了**——之后 30 秒 `.ant-select-dropdown:visible` 恒为 0
+  （而 `.ant-select-item-option` 一直在 DOM 里）。
+  **修法**：加载期间给文档下拉加 `loading` + `disabled`；e2e 补条件等待。
+  连跑 3 次 + 全量 e2e 77 passed 稳定。坑位见 `PROGRESS.md` §4 第 13 条。
 
 ---
 

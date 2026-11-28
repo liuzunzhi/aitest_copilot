@@ -24,6 +24,8 @@
 **零真实 socket**：造数一律走 Playwright 的 `APIRequestContext`。
 """
 
+import re
+
 import pytest
 from playwright.sync_api import Page, expect
 
@@ -269,7 +271,11 @@ def test_ac_214_process_baseline_full_flow(wide_admin_page: Page, api, shot) -> 
     # ---- 3. 文档反推：选文档 + 生效版本 → 反推 → 勾选 → 采纳 ----
     wide_admin_page.get_by_test_id("process-baseline-derive-btn").click()
     expect(wide_admin_page.get_by_test_id("process-baseline-derive-modal")).to_be_visible()
-    wide_admin_page.get_by_test_id("process-baseline-derive-doc-select").click()
+    # 等文档列表加载完再点下拉：加载期间下拉是 disabled，此时点开会被
+    # 「options 从空变有值」引发的重渲染关掉（下拉一闪而过，再点也没用）。
+    doc_select = wide_admin_page.get_by_test_id("process-baseline-derive-doc-select")
+    expect(doc_select).not_to_have_class(re.compile(r"ant-select-disabled"))
+    doc_select.click()
     wide_admin_page.locator(
         ".ant-select-dropdown:visible .ant-select-item-option",
         has_text="支付需求",

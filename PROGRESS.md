@@ -429,6 +429,15 @@
     断言「哪块拿到哪个响应」会随机挂。
     **按 Prompt 内容分派**（阶段一含「## 本批章节」、阶段二含「## 全局章节目录」）
     而不是靠队列顺序。
+13. **异步加载的 Select 在数据到达前点开会「闪一下就关」**（2026-11-28 修 `test_ac_214` flaky 时定位）：
+    弹窗/抽屉一打开就异步请求 options，此时 `options` 是 `[]`。在这个窗口里点开下拉，
+    数据到达后 `options` 由空变有值，**antd Select 重渲染会把下拉关掉**——
+    用户看到「点一下闪一下就没了，得再点一次」；e2e 上则是**等 30s 超时**
+    （可见的 `.ant-select-dropdown` 再也不出现，`.ant-select-item-option` 明明在 DOM 里）。
+    **修法**：加载期间给 Select 加 `loading` + `disabled`，把「可点但数据未就绪」的窗口关掉；
+    e2e 侧再补条件等待（`not_to_have_class(re.compile("ant-select-disabled"))`）双保险。
+    **同类风险未修**：`ProcessBaselineDrawer` 的「关联功能」多选下拉也是打开时异步加载
+    （当前被前面的填表耗时掩盖，暂未暴露）。
 
 ## 5. 04 收尾完成情况（2026-11-17）
 
@@ -1336,10 +1345,12 @@ e2e 全量 **77 passed**（70 基线 + 7 新增）；`npm run build` 通过（li
     但表上没有 `reviewed_by` / `reviewed_at` 列
   - **批量删除**——本期只做批量采纳
 - **11 期欠账**（2026-11-25 收官时登记，详见 `specs/11-nav-tabs-ux-convergence/spec.md` §10）：
-  - **修 e2e 既有 flaky**：`tests/e2e/test_t123_closing_ui.py::test_ac_214_process_baseline_full_flow`
-    在「文档反推」那步点 Select 选项会超时——**已连续撞到 3 期**（T125 / T126 / T128），
-    疑与 antd Select 的异步加载 / 动画时序有关。再拖下去会污染每次回归的**信号质量**，
-    **建议排第一**
+  - [x] **修 e2e 既有 flaky**（2026-11-28 已修）：`test_ac_214_process_baseline_full_flow`
+    在「文档反推」点 Select 超时——**根因不是「慢」，也不是动画时序**：
+    弹窗打开时异步请求文档列表，在数据到达前点开下拉，
+    `options` 由 `[]` 变有值触发重渲染 → **下拉被关掉**，之后 30 秒都处于关闭态。
+    修法：加载期间 Select 置 `loading` + `disabled`（前端），e2e 补条件等待。
+    连跑 3 次 + 全量 e2e 77 passed 稳定。坑位见 §4 第 13 条。
   - **顶层 Tab 支持 URL 记忆**（`?tab=xxx`）——目前切 Tab 不写 URL，刷新会回到「概览」；
     Tab 收敛到 8 个之后这一点更明显
   - **「加入申请」子 Tab 支持审批操作**（当前只读展示，与原「申请」Tab 行为一致）——

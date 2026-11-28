@@ -61,6 +61,16 @@ export default function ProcessBaselineDeriveModal({
   const [documents, setDocuments] = useState<DocumentItem[]>([])
   const [versions, setVersions] = useState<DocVersion[]>([])
   const [templates, setTemplates] = useState<AvailablePromptTemplate[]>([])
+  /**
+   * 文档列表是否还在加载。
+   *
+   * **为什么必须挡住这段时间的点击**：弹窗一打开就异步请求文档列表，
+   * 此时 `options` 还是空数组。如果用户（或 e2e）在这个窗口里点开下拉，
+   * 请求返回后 `options` 由 `[]` 变成有值，antd Select 会重渲染并**把下拉关掉**——
+   * 表现为「点一下闪一下就没了，得再点一次」。
+   * 加载期间直接把下拉置为 loading + disabled，就没有这个窗口了。
+   */
+  const [loadingDocs, setLoadingDocs] = useState(false)
   const [documentId, setDocumentId] = useState<number | undefined>()
   const [versionId, setVersionId] = useState<number | undefined>()
   const [templateId, setTemplateId] = useState<number | undefined>()
@@ -81,6 +91,7 @@ export default function ProcessBaselineDeriveModal({
   useEffect(() => {
     if (!open) return
     reset()
+    setLoadingDocs(true)
     Promise.all([
       listDocuments(projectId),
       listAvailablePromptTemplates('process_baseline'),
@@ -91,6 +102,7 @@ export default function ProcessBaselineDeriveModal({
         setTemplateId(items[0]?.id)
       })
       .catch((error) => message.error(errorMessage(error)))
+      .finally(() => setLoadingDocs(false))
   }, [open, projectId, reset, message])
 
   const changeDocument = useCallback(
@@ -258,10 +270,11 @@ export default function ProcessBaselineDeriveModal({
         <Form layout="vertical">
           <Form.Item label="需求文档" required>
             <Select
-              placeholder="选择项目内的文档"
+              placeholder={loadingDocs ? '正在加载文档…' : '选择项目内的文档'}
               data-testid="process-baseline-derive-doc-select"
               value={documentId}
-              disabled={running}
+              loading={loadingDocs}
+              disabled={loadingDocs || running}
               onChange={(value) => void changeDocument(value)}
               options={documents.map((item) => ({
                 value: item.id,
